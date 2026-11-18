@@ -57,6 +57,7 @@
   --primary: #08635b;
   --primary-foreground: #fff;
   --destructive: #a12230;
+  --market-ema: #a25700;
   --card-foreground: var(--foreground);
   --popover: var(--card);
   --popover-foreground: var(--foreground);
@@ -93,6 +94,7 @@
   --primary: #78e0ce;
   --primary-foreground: #112924;
   --destructive: #ffadb4;
+  --market-ema: #ffbc65;
   --card-foreground: var(--foreground);
   --popover: var(--card);
   --popover-foreground: var(--foreground);
