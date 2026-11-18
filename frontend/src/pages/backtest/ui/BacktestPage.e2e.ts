@@ -14,6 +14,9 @@ test('the owner can run a backtest without saving settings or selecting an accou
           : { status: 401, json: { code: 'UNAUTHENTICATED' } });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 7, maxEmaPeriod: 1000 } });
+      case '/api/strategy':
+        expect(request.method()).toBe('GET');
+        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null } });
       case '/api/strategy/futures':
         expect(url.searchParams.get('q')).toBe('IMOEXF');
         return route.fulfill({ json: [{
@@ -24,6 +27,7 @@ test('the owner can run a backtest without saving settings or selecting an accou
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
           instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-11-18', to: '2026-11-19',
+          commission: 0, slippage: 0,
         });
         if (++requests === 2) return route.fulfill({ status: 422, json: { code: 'BACKTEST_EMA_MISSING' } });
         return route.fulfill({ json: {
@@ -33,9 +37,9 @@ test('the owner can run a backtest without saving settings or selecting an accou
           }, {
             time: Date.UTC(2026, 10, 18, 13), open: 103, high: 106, low: 102, close: 105, complete: true, ema: 102,
           }],
-          executions: [{ time: Date.UTC(2026, 10, 18, 13), direction: 'buy', lots: 3, price: 103 }],
+          executions: [{ time: Date.UTC(2026, 10, 18, 13), direction: 'buy', lots: 3, price: 103, commission: 0 }],
           finalSignal: null,
-          result: { closed: 0, open: 60, total: 60, position: 3 },
+          result: { closed: 0, open: 60, total: 60, position: 3, maxDrawdown: 0 },
           cutoff: null,
         } });
       }
@@ -62,9 +66,13 @@ test('the owner can run a backtest without saving settings or selecting an accou
   await run.click();
   await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
   await expect(page.getByText(/Комиссия и проскальзывание не учитываются/)).toBeVisible();
+  await expect(page.getByText('Макс. просадка')).toBeVisible();
   await expect(page.getByText('Покупка')).toBeVisible();
   await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
   await run.click();
+  // A failed rerun keeps the last successful report visible instead of passing it off as the new result.
   await expect(page.getByText(/Брокер не вернул EMA/)).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
+  // The parameters are unchanged, so the surviving report is not flagged as stale.
+  await expect(page.getByText('Параметры изменены')).toHaveCount(0);
 });

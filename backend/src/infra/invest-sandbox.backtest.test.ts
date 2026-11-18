@@ -40,7 +40,7 @@ test('sandbox supports the requested historical coverage and exposes futures pri
             return points;
           },
         }, async () => token);
-        const result = await history.check({ instrumentUid, timeframe, emaPeriod, lots: 1, from, to: lastDate });
+        const result = await history.check({ instrumentUid, timeframe, emaPeriod, lots: 1, from, to: lastDate, commission: 0, slippage: 0 });
         assert.equal(result.cutoff, null, 'Use a final date that has already ended in Moscow');
         // A seam value read in more than one chunk proves the overlap was real and that its values
         // agreed (check merges them with a tolerance). A seam on a session close or a weekend has no

@@ -8,7 +8,8 @@ import { createApp } from './app.js';
 const password = 'backtest-test-owner-password';
 const hour = 3_600_000;
 const start = Date.parse('2026-11-17T21:00:00Z');
-const form = { instrumentUid: 'future', emaPeriod: 55, lots: 3, timeframe: '1h', from: '2026-11-18', to: '2026-11-18' };
+const form = { instrumentUid: 'future', emaPeriod: 55, lots: 3, timeframe: '1h', from: '2026-11-18', to: '2026-11-18',
+  commission: 0, slippage: 0 };
 const candle = (time: number, close: number, complete = true) => ({
   time, open: close, high: close, low: close, close, complete,
 });
@@ -82,6 +83,7 @@ test('only the owner can check a bounded Moscow period independently of the robo
   for (const invalid of [
     { lots: 0 }, { lots: 1.5 }, { emaPeriod: 1001 }, { timeframe: '1m' }, { instrumentUid: '' },
     { from: '2026-11-31' }, { from: '2026-11-19' }, { to: '2026-11-20' },
+    { commission: -0.1 }, { slippage: '1' }, { commission: null }, { slippage: Infinity },
   ]) assert.equal((await request('backtest/history', { ...form, ...invalid }, cookie)).status, 400);
   const tooLong = await request('backtest/history', { ...form, from: '2026-11-11' }, cookie);
   assert.equal(tooLong.body.code, 'BACKTEST_PERIOD_TOO_LONG');
@@ -229,12 +231,12 @@ test('running the backtest reports executions and money without touching the rob
   assert.equal(body.currency, 'rub');
   assert.equal(body.pointValue, 10);
   assert.deepEqual(body.executions, [
-    { time: start + hour, direction: 'buy', lots: 3, price: 101 },
-    { time: start + 2 * hour, direction: 'sell', lots: 6, price: 103 },
-    { time: start + 5 * hour, direction: 'buy', lots: 6, price: 112 },
+    { time: start + hour, direction: 'buy', lots: 3, price: 101, commission: 0 },
+    { time: start + 2 * hour, direction: 'sell', lots: 6, price: 103, commission: 0 },
+    { time: start + 5 * hour, direction: 'buy', lots: 6, price: 112, commission: 0 },
   ]);
   assert.equal(body.finalSignal, null);
-  assert.deepEqual(body.result, { closed: -210, open: 0, total: -210, position: 3 });
+  assert.deepEqual(body.result, { closed: -210, open: 0, total: -210, position: 3, maxDrawdown: 510 });
   assert.equal(body.candles.length, 6);
   assert.ok(!JSON.stringify(body).includes('private-test-token'));
 });
@@ -252,7 +254,7 @@ test('a complete period without crossings yields a report with zero executions',
   const response = await request('backtest/run', form, cookie);
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.executions, []);
-  assert.deepEqual(response.body.result, { closed: 0, open: 0, total: 0, position: 0 });
+  assert.deepEqual(response.body.result, { closed: 0, open: 0, total: 0, position: 0, maxDrawdown: 0 });
 });
 
 test('a signal on the final candle is reported without an execution', async t => {
@@ -278,4 +280,52 @@ test('a contract without money parameters cannot produce a money report', async 
   const response = await request('backtest/run', form, cookie);
   assert.equal(response.status, 422);
   assert.equal(response.body.code, 'BACKTEST_CONTRACT_PARAMS_MISSING');
+});
+
+// An entry, a full reversal to the other side, and an open remainder at the last close.
+function costData() {
+  const bars = [
+    runCandle(start - hour, 89, 90),          // baseline below the EMA
+    runCandle(start, 100, 105),               // crossing up
+    runCandle(start + hour, 101, 98),         // crossing down -> reverse
+    runCandle(start + 2 * hour, 103, 95),
+    runCandle(start + 3 * hour, 99, 97),
+    runCandle(start + 4 * hour, 96, 94),      // remainder stays short
+  ];
+  const ema = bars.map(({ time }) => ({ time, value: 100 }));
+  const broker: BacktestBroker = {
+    async backtestFuture() {
+      return { firstTrade: undefined, lastTrade: undefined, currency: 'rub', priceStep: 0.5, priceStepAmount: 5, lot: 1 };
+    },
+    async candles(_token, _uid, _timeframe, from, to) {
+      return bars.filter(({ time }) => time >= +from && time <= +to).reverse();
+    },
+    async ema(_token, _uid, _timeframe, _period, from, to) {
+      return ema.filter(({ time }) => time >= +from && time <= +to);
+    },
+  };
+  return { broker, bars };
+}
+
+test('costs and drawdown match a precomputed example over both sides, a reversal and a remainder', async t => {
+  const { broker } = costData();
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const withCosts = await request('backtest/run', { ...form, commission: 25 }, cookie);
+  assert.equal(withCosts.status, 200);
+  const { body } = withCosts;
+  assert.deepEqual(body.executions, [
+    { time: start + hour, direction: 'buy', lots: 3, price: 101, commission: 757.5 },
+    { time: start + 2 * hour, direction: 'sell', lots: 6, price: 103, commission: 1545 },
+  ]);
+  assert.deepEqual(body.result, { closed: -1470, open: -502.5, total: -1972.5, position: -3, maxDrawdown: 2062.5 });
+
+  const zeroCost = await request('backtest/run', { ...form, commission: 0, slippage: 0 }, cookie);
+  assert.equal(zeroCost.status, 200);
+  // Without costs the execution prices equal the opens and the money result has no fees.
+  assert.deepEqual(zeroCost.body.executions, [
+    { time: start + hour, direction: 'buy', lots: 3, price: 101, commission: 0 },
+    { time: start + 2 * hour, direction: 'sell', lots: 6, price: 103, commission: 0 },
+  ]);
+  assert.deepEqual(zeroCost.body.result, { closed: 60, open: 270, total: 330, position: -3, maxDrawdown: 90 });
 });

@@ -4,15 +4,22 @@ import { isTimeframe } from '../core/timeframe.js';
 import type { BacktestParameters } from '../core/backtest.js';
 import { brokerIdLimit, isPositiveInt32, isPrintableAscii } from './request-validation.js';
 
+function isNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
 function readParameters(body: unknown): BacktestParameters | null {
   if (typeof body !== 'object' || body === null) return null;
-  const { instrumentUid, timeframe, emaPeriod, lots, from, to } = body as Record<string, unknown>;
+  const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage } = body as Record<string, unknown>;
   if (!isPrintableAscii(instrumentUid, brokerIdLimit) || !isTimeframe(timeframe)
     || !isPositiveInt32(emaPeriod) || emaPeriod > backtestLimits.maxEmaPeriod
     || !isPositiveInt32(lots) || typeof from !== 'string' || typeof to !== 'string') {
     return null;
   }
-  return { instrumentUid, timeframe, emaPeriod, lots, from, to };
+  const commissionValue = commission === undefined ? 0 : commission;
+  const slippageValue = slippage === undefined ? 0 : slippage;
+  if (!isNonNegativeNumber(commissionValue) || !isNonNegativeNumber(slippageValue)) return null;
+  return { instrumentUid, timeframe, emaPeriod, lots, from, to, commission: commissionValue, slippage: slippageValue };
 }
 
 const errorStatus = (error: BacktestError) =>

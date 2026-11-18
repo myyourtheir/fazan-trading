@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { hasStatus } from "@/shared/api";
 import {
   Alert,
@@ -16,6 +17,7 @@ import {
   strategyApi,
   timeframeLabels,
   timeframes,
+  type BacktestDraft,
   type StrategyConfig,
 } from "@/entities/strategy";
 import { sandboxErrorMessage } from "@/entities/sandbox";
@@ -52,6 +54,7 @@ export function StrategyForm({
   });
   const [save, { isLoading, isSuccess, error, reset }] =
     strategyApi.useSaveStrategyMutation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (hasStatus(futures.error, 401) || hasStatus(error, 401))
@@ -68,6 +71,23 @@ export function StrategyForm({
     selectedMatch &&
     emaPeriod &&
     lots;
+
+  // The backtest hand-off carries a snapshot of the current draft, including unsaved edits, and does
+  // not inherit the save restrictions tied to the robot or account state.
+  const openBacktest = () => {
+    void navigate({
+      to: "/backtest",
+      state: {
+        backtestDraft: {
+          instrumentUid: selectedMatch?.uid ?? "",
+          ticker: selectedMatch?.ticker ?? initialTicker,
+          timeframe,
+          emaPeriod,
+          lots,
+        } satisfies BacktestDraft,
+      },
+    });
+  };
 
   return (
     <>
@@ -201,6 +221,9 @@ export function StrategyForm({
         </FieldGroup>
         <Button type="submit" disabled={!canSave}>
           {isLoading ? "Сохраняем…" : "Сохранить настройки"}
+        </Button>
+        <Button type="button" variant="outline" onClick={openBacktest}>
+          Бэктест
         </Button>
         {isSuccess && (
           <p role="status" className="text-sm text-primary">

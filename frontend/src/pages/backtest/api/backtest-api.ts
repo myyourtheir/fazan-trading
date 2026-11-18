@@ -3,9 +3,10 @@ import type { Timeframe } from '@/entities/strategy';
 
 export type BacktestParameters = {
   instrumentUid: string; timeframe: Timeframe; emaPeriod: number; lots: number; from: string; to: string;
+  commission: number; slippage: number;
 };
 export type HistoricalCandle = { time: number; open: number; high: number; low: number; close: number; ema: number };
-export type BacktestExecution = { time: number; direction: 'buy' | 'sell'; lots: number; price: number };
+export type BacktestExecution = { time: number; direction: 'buy' | 'sell'; lots: number; price: number; commission: number };
 export type BacktestSignal = { candleTime: number; direction: 'buy' | 'sell'; targetPosition: number };
 export type BacktestReport = {
   parameters: BacktestParameters;
@@ -17,7 +18,7 @@ export type BacktestReport = {
   candles: HistoricalCandle[];
   executions: BacktestExecution[];
   finalSignal: BacktestSignal | null;
-  result: { closed: number; open: number; total: number; position: number };
+  result: { closed: number; open: number; total: number; position: number; maxDrawdown: number };
   cutoff: number | null;
 };
 type BacktestLimits = { maxDays: number; maxEmaPeriod: number };

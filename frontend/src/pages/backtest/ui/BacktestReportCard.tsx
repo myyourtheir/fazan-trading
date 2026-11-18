@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { timeframeLabels } from '@/entities/strategy';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
+import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
 import type { BacktestReport } from '../api/backtest-api';
 
 const HistoryChart = lazy(() => import('./HistoryChart'));
@@ -8,6 +8,7 @@ const HistoryChart = lazy(() => import('./HistoryChart'));
 const moscowTime = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' });
 const moneyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const priceFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
+const percentFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -18,14 +19,20 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function BacktestReportCard({ report, dark }: { report: BacktestReport; dark: boolean }) {
+export function BacktestReportCard({ report, stale, dark }: {
+  report: BacktestReport; stale: boolean; dark: boolean;
+}) {
   const { parameters, currency, result, executions, finalSignal, pointValue, priceStep, priceStepAmount, lot } = report;
   const currencyCode = currency.toUpperCase();
   const money = (value: number) => `${moneyFormat.format(value)} ${currencyCode}`;
+  const noCosts = parameters.commission === 0 && parameters.slippage === 0;
   return (
     <Card>
       <CardHeader>
-        <CardTitle><h2>Отчёт по стратегии</h2></CardTitle>
+        <CardTitle className="flex flex-wrap items-center gap-2">
+          <h2>Отчёт по стратегии</h2>
+          {stale && <Badge variant="secondary">Параметры изменены</Badge>}
+        </CardTitle>
         <CardDescription>
           {parameters.from} — {parameters.to} · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
           {' · '}{parameters.lots} лот.
@@ -33,11 +40,12 @@ export function BacktestReportCard({ report, dark }: { report: BacktestReport; d
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           <Stat label="Результат" value={money(result.total)} />
           <Stat label="Закрытые сделки" value={money(result.closed)} />
           <Stat label="Открытая позиция" value={money(result.open)} />
           <Stat label="Остаток позиции" value={`${result.position} лот.`} />
+          <Stat label="Макс. просадка" value={money(result.maxDrawdown)} />
           <Stat label="Исполнений" value={String(executions.length)} />
         </dl>
         <p className="text-sm text-muted-foreground">
@@ -45,7 +53,11 @@ export function BacktestReportCard({ report, dark }: { report: BacktestReport; d
           {' '}моделируется по цене открытия следующей свечи внутри периода.
         </p>
         <p className="text-sm text-muted-foreground">
-          Комиссия и проскальзывание не учитываются. Деньги пересчитаны из пунктов цены: шаг {priceFormat.format(priceStep)}{' '}
+          {noCosts
+            ? 'Комиссия и проскальзывание не учитываются.'
+            : `Комиссия ${percentFormat.format(parameters.commission)}%, проскальзывание ${percentFormat.format(parameters.slippage)}%`
+              + ' от цены исполнения против владельца.'}{' '}
+          Деньги пересчитаны из пунктов цены: шаг {priceFormat.format(priceStep)}{' '}
           стоит {moneyFormat.format(priceStepAmount)} {currencyCode}, поэтому коэффициент{' '}
           {moneyFormat.format(pointValue)} {currencyCode} за пункт на лот (лот — {lot} контракт).
           {' '}Используются параметры контракта на момент прогона.
@@ -68,7 +80,8 @@ export function BacktestReportCard({ report, dark }: { report: BacktestReport; d
                 <th className="py-1 pr-4 font-normal">Время (МСК)</th>
                 <th className="py-1 pr-4 font-normal">Направление</th>
                 <th className="py-1 pr-4 text-right font-normal">Лоты</th>
-                <th className="py-1 text-right font-normal">Цена</th>
+                <th className="py-1 pr-4 text-right font-normal">Цена</th>
+                <th className="py-1 text-right font-normal">Комиссия</th>
               </tr>
             </thead>
             <tbody>
@@ -77,7 +90,8 @@ export function BacktestReportCard({ report, dark }: { report: BacktestReport; d
                   <td className="py-1 pr-4">{moscowTime.format(execution.time)}</td>
                   <td className="py-1 pr-4">{execution.direction === 'buy' ? 'Покупка' : 'Продажа'}</td>
                   <td className="py-1 pr-4 text-right">{execution.lots}</td>
-                  <td className="py-1 text-right">{priceFormat.format(execution.price)}</td>
+                  <td className="py-1 pr-4 text-right">{priceFormat.format(execution.price)}</td>
+                  <td className="py-1 text-right">{moneyFormat.format(execution.commission)}</td>
                 </tr>
               ))}
             </tbody>
