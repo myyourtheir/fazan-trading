@@ -1,0 +1,9 @@
+import type { UTCTimestamp } from "lightweight-charts";
+
+export const price = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 9 });
+export const utc = new Intl.DateTimeFormat("ru-RU", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "UTC",
+});
+export const chartTime = (time: number) => Math.floor(time / 1000) as UTCTimestamp;
