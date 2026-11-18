@@ -36,6 +36,13 @@
       "skillPath": "skills/engineering/implement/SKILL.md",
       "computedHash": "560465496ad0669329993bfdd0604e5c93b5c2446309a76f486040010b063908"
     },
+    "lightweight-charts": {
+      "source": "tradingview/lightweight-charts",
+      "commit": "c29c51e1e5bc61981da5832c97797cb8283d120f",
+      "sourceType": "github",
+      "skillPath": ".github/skills/lightweight-charts/SKILL.md",
+      "computedHash": "1c7658cf601b98c2f0c0be78c13d63aedba7aa63e48754634cee97e816856304"
+    },
     "retro": {
       "source": "mattpocock/skills",
       "commit": "5863806dd4e15c63174bee4e7515a4256792ecfa",
