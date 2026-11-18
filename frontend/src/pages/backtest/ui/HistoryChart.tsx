@@ -1,18 +1,24 @@
-import { CandlestickSeries, LineSeries, TickMarkType, createChart, type ISeriesApi, type Time } from 'lightweight-charts';
+import {
+  CandlestickSeries, LineSeries, TickMarkType, createChart, createSeriesMarkers,
+  type ISeriesApi, type ISeriesMarkersPluginApi, type Time,
+} from 'lightweight-charts';
 import { useEffect, useRef } from 'react';
 import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, priceChartTheme } from '@/shared/lib/price-chart';
-import type { HistoricalCandle } from '../api/backtest-api';
+import type { BacktestExecution, HistoricalCandle } from '../api/backtest-api';
 
 const zone = 'Europe/Moscow';
 const day = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: 'numeric', month: 'short' });
 const clock = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, hour: '2-digit', minute: '2-digit' });
 const full = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, dateStyle: 'short', timeStyle: 'short' });
 
-export default function HistoryChart({ candles, dark }: { candles: HistoricalCandle[]; dark: boolean }) {
+export default function HistoryChart({ candles, executions, dark }: {
+  candles: HistoricalCandle[]; executions: BacktestExecution[]; dark: boolean;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
   const barsRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const emaRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   useEffect(() => {
     if (!container.current) return;
     const chart = createChart(container.current, {
@@ -31,8 +37,9 @@ export default function HistoryChart({ candles, dark }: { candles: HistoricalCan
     chartRef.current = chart;
     barsRef.current = chart.addSeries(CandlestickSeries, { borderVisible: false });
     emaRef.current = chart.addSeries(LineSeries, { priceLineVisible: false });
+    markersRef.current = createSeriesMarkers(barsRef.current, []);
     return () => {
-      chartRef.current = barsRef.current = emaRef.current = null;
+      chartRef.current = barsRef.current = emaRef.current = markersRef.current = null;
       chart.remove();
     };
   }, []);
@@ -45,6 +52,14 @@ export default function HistoryChart({ candles, dark }: { candles: HistoricalCan
     emaRef.current?.setData(candles.map(({ time, ema }) => ({ time: chartTime(time), value: ema })));
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
+  useEffect(() => {
+    markersRef.current?.setMarkers(executions.map(({ time, direction }) => ({
+      time: chartTime(time),
+      position: direction === 'buy' ? 'belowBar' as const : 'aboveBar' as const,
+      shape: direction === 'buy' ? 'arrowUp' as const : 'arrowDown' as const,
+      color: direction === 'buy' ? '#22c55e' : '#ef4444',
+    })));
+  }, [executions]);
   useEffect(() => {
     if (!container.current) return;
     const theme = priceChartTheme(container.current);

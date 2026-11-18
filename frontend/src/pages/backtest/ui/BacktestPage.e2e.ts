@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
-test('the owner can check historical data without saving settings or selecting an account', async ({ page }) => {
-  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked history check.');
+test('the owner can run a backtest without saving settings or selecting an account', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
   let signedIn = false;
   let requests = 0;
   await page.route('/api/**', route => {
@@ -20,16 +20,23 @@ test('the owner can check historical data without saving settings or selecting a
           uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
           exchange: 'MOEX', expirationDate: null,
         }] });
-      case '/api/backtest/history': {
+      case '/api/backtest/run': {
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
           instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-11-18', to: '2026-11-19',
         });
         if (++requests === 2) return route.fulfill({ status: 422, json: { code: 'BACKTEST_EMA_MISSING' } });
         return route.fulfill({ json: {
-          parameters, cutoff: Date.UTC(2026, 10, 19, 12), candles: [{
+          parameters, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
+          candles: [{
             time: Date.UTC(2026, 10, 18, 12), open: 101, high: 104, low: 100, close: 103, complete: true, ema: 102,
+          }, {
+            time: Date.UTC(2026, 10, 18, 13), open: 103, high: 106, low: 102, close: 105, complete: true, ema: 102,
           }],
+          executions: [{ time: Date.UTC(2026, 10, 18, 13), direction: 'buy', lots: 3, price: 103 }],
+          finalSignal: null,
+          result: { closed: 0, open: 60, total: 60, position: 3 },
+          cutoff: null,
         } });
       }
       default:
@@ -42,7 +49,7 @@ test('the owner can check historical data without saving settings or selecting a
   signedIn = true;
   await page.goto('/backtest');
   await expect(page.getByRole('heading', { name: 'Бэктест' })).toBeVisible();
-  await expect(page.getByText(/Лимит проверки: 7 календарных дней/)).toBeVisible();
+  await expect(page.getByText(/Лимит прогона: 7 календарных дней/)).toBeVisible();
   await page.getByLabel('Поиск фьючерса').fill('IMOEXF');
   await page.getByRole('button', { name: 'Найти' }).click();
   await page.getByLabel('Контракт').selectOption('future');
@@ -51,11 +58,13 @@ test('the owner can check historical data without saving settings or selecting a
   await page.getByLabel('С даты').fill('2026-11-18');
   await page.getByLabel('По дату').fill('2026-11-19');
   expect(requests).toBe(0);
-  const check = page.getByRole('button', { name: 'Проверить данные' });
-  await check.click();
+  const run = page.getByRole('button', { name: 'Запустить бэктест' });
+  await run.click();
+  await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
+  await expect(page.getByText(/Комиссия и проскальзывание не учитываются/)).toBeVisible();
+  await expect(page.getByText('Покупка')).toBeVisible();
   await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
-  await expect(page.getByText(/Последний день ещё не закончился: проверка до .*15:00 МСК/)).toBeVisible();
-  await check.click();
+  await run.click();
   await expect(page.getByText(/Брокер не вернул EMA/)).toBeVisible();
-  await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toHaveCount(0);
 });

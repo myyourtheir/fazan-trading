@@ -184,3 +184,98 @@ test('today reports the effective cutoff and does not treat a forming candle as 
   assert.equal(result.body.cutoff, cutoff);
   assert.deepEqual(result.body.candles.map((bar: { time: number }) => bar.time), [start, start + 12 * hour]);
 });
+
+function runCandle(time: number, open: number, close: number, complete = true) {
+  return { time, open, high: Math.max(open, close), low: Math.min(open, close), close, complete };
+}
+
+// A period with a constant EMA at 100 and closes that cross it up, down, touch, then cross up again.
+function runData() {
+  const bars = [
+    runCandle(start - hour, 89, 90),          // baseline below the EMA
+    runCandle(start, 100, 105),               // crossing up
+    runCandle(start + hour, 101, 98),         // crossing down
+    runCandle(start + 2 * hour, 103, 100),    // touch, keeps the short side
+    runCandle(start + 3 * hour, 104, 95),
+    runCandle(start + 4 * hour, 97, 110),     // crossing up again
+    runCandle(start + 5 * hour, 112, 112),
+  ];
+  const ema = bars.map(({ time }) => ({ time, value: 100 }));
+  const broker: BacktestBroker = {
+    async backtestFuture() {
+      return { firstTrade: undefined, lastTrade: undefined, currency: 'rub', priceStep: 0.5, priceStepAmount: 5, lot: 1 };
+    },
+    async candles(_token, _uid, _timeframe, from, to) {
+      return bars.filter(({ time }) => time >= +from && time <= +to).reverse();
+    },
+    async ema(_token, _uid, _timeframe, _period, from, to) {
+      return ema.filter(({ time }) => time >= +from && time <= +to);
+    },
+  };
+  return { broker, bars };
+}
+
+test('running the backtest reports executions and money without touching the robot or account', async t => {
+  const { broker } = runData();
+  // The run goes through BacktestBroker (candles/ema/backtestFuture only): the fake has no order,
+  // stream, robot, or journal methods, so a successful report here proves none were used.
+  const { request, authorize } = await serve(t, broker);
+  assert.equal((await request('backtest/run', form)).status, 401);
+  const cookie = await authorize();
+  const response = await request('backtest/run', form, cookie);
+  assert.equal(response.status, 200);
+  const { body } = response;
+  assert.deepEqual(body.parameters, form);
+  assert.equal(body.currency, 'rub');
+  assert.equal(body.pointValue, 10);
+  assert.deepEqual(body.executions, [
+    { time: start + hour, direction: 'buy', lots: 3, price: 101 },
+    { time: start + 2 * hour, direction: 'sell', lots: 6, price: 103 },
+    { time: start + 5 * hour, direction: 'buy', lots: 6, price: 112 },
+  ]);
+  assert.equal(body.finalSignal, null);
+  assert.deepEqual(body.result, { closed: -210, open: 0, total: -210, position: 3 });
+  assert.equal(body.candles.length, 6);
+  assert.ok(!JSON.stringify(body).includes('private-test-token'));
+});
+
+test('a complete period without crossings yields a report with zero executions', async t => {
+  const { broker, bars } = runData();
+  const flat = bars.map(bar => ({ ...bar, close: 90 }));
+  const ema = bars.map(({ time }) => ({ time, value: 100 }));
+  broker.candles = async (_token, _uid, _timeframe, from, to) =>
+    flat.filter(({ time }) => time >= +from && time <= +to).reverse();
+  broker.ema = async (_token, _uid, _timeframe, _period, from, to) =>
+    ema.filter(({ time }) => time >= +from && time <= +to);
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const response = await request('backtest/run', form, cookie);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.executions, []);
+  assert.deepEqual(response.body.result, { closed: 0, open: 0, total: 0, position: 0 });
+});
+
+test('a signal on the final candle is reported without an execution', async t => {
+  const { broker, bars } = runData();
+  broker.candles = async (_token, _uid, _timeframe, from, to) =>
+    bars.slice(0, 3).filter(({ time }) => time >= +from && time <= +to).reverse();
+  broker.ema = async (_token, _uid, _timeframe, _period, from, to) =>
+    bars.slice(0, 3).map(({ time }) => ({ time, value: 100 })).filter(({ time }) => time >= +from && time <= +to);
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const response = await request('backtest/run', form, cookie);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.executions.length, 1);
+  assert.deepEqual(response.body.finalSignal, { candleTime: start + hour, direction: 'sell', targetPosition: -3 });
+});
+
+test('a contract without money parameters cannot produce a money report', async t => {
+  const { broker } = runData();
+  broker.backtestFuture = async () => ({ firstTrade: undefined, lastTrade: undefined,
+    currency: 'rub', priceStep: null, priceStepAmount: 5, lot: 1 });
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const response = await request('backtest/run', form, cookie);
+  assert.equal(response.status, 422);
+  assert.equal(response.body.code, 'BACKTEST_CONTRACT_PARAMS_MISSING');
+});

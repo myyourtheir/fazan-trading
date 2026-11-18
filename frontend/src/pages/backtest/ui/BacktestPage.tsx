@@ -1,5 +1,5 @@
 import { skipToken } from '@reduxjs/toolkit/query/react';
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { sandboxErrorMessage } from '@/entities/sandbox';
 import { FuturesSearchForm, strategyApi, timeframeLabels, timeframes } from '@/entities/strategy';
 import { hasStatus } from '@/shared/api';
@@ -8,24 +8,24 @@ import {
   FieldGroup, FieldLabel, Input, NativeSelect, NativeSelectOption,
 } from '@/shared/ui';
 import { backtestApi } from '../api/backtest-api';
+import { BacktestReportCard } from './BacktestReportCard';
 
-const HistoryChart = lazy(() => import('./HistoryChart'));
-const moscowTime = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' });
-const historyErrors = {
+const runErrors = {
   BACKTEST_PERIOD_TOO_LONG: 'Сократите диапазон до указанного лимита.',
   BACKTEST_CONTRACT_PERIOD: 'Диапазон выходит за период торгов выбранного контракта.',
   BACKTEST_CANDLES_MISSING: 'Не хватает завершённых свечей. Сократите или сдвиньте период.',
   BACKTEST_EMA_MISSING: 'Брокер не вернул EMA для всех завершённых свечей. Сократите или сдвиньте период.',
   BACKTEST_BASELINE_MISSING: 'Не удалось определить сторону EMA до начала периода. Сдвиньте начало периода.',
   BACKTEST_HISTORY_CONFLICT: 'Данные брокера не совпали на стыке диапазонов. Сократите или сдвиньте период.',
+  BACKTEST_CONTRACT_PARAMS_MISSING: 'Нет параметров контракта для пересчёта цены в деньги. Выберите другой контракт.',
   SANDBOX_OPERATION_REJECTED: 'Песочница отклонила запрос истории. Проверьте контракт и период.',
 } as const;
 
 function errorMessage(error: unknown) {
   const data = typeof error === 'object' && error && 'data' in error ? error.data : null;
   const code = typeof data === 'object' && data && 'code' in data ? data.code : undefined;
-  return typeof code === 'string' && Object.hasOwn(historyErrors, code)
-    ? historyErrors[code as keyof typeof historyErrors] : sandboxErrorMessage(error);
+  return typeof code === 'string' && Object.hasOwn(runErrors, code)
+    ? runErrors[code as keyof typeof runErrors] : sandboxErrorMessage(error);
 }
 
 export function BacktestPage({ dark, refreshSession }: { dark: boolean; refreshSession: () => void }) {
@@ -33,7 +33,7 @@ export function BacktestPage({ dark, refreshSession }: { dark: boolean; refreshS
   const [instrumentUid, setInstrumentUid] = useState('');
   const futures = strategyApi.useSearchFuturesQuery(query || skipToken);
   const limits = backtestApi.useBacktestLimitsQuery();
-  const [check, result] = backtestApi.useCheckBacktestHistoryMutation();
+  const [run, result] = backtestApi.useRunBacktestMutation();
   const contracts = futures.currentData ?? [];
   const selected = contracts.find(contract => contract.uid === instrumentUid);
   const errors = futures.error ?? limits.error ?? result.error;
@@ -46,7 +46,7 @@ export function BacktestPage({ dark, refreshSession }: { dark: boolean; refreshS
       <Card>
         <CardHeader>
           <CardTitle><h1>Бэктест</h1></CardTitle>
-          <CardDescription>Проверка свечей и EMA, которые вернул брокер. Сделки и результат стратегии не рассчитываются.</CardDescription>
+          <CardDescription>Исторический прогон стратегии «Сёрфинг» на завершённых свечах. Заявки не отправляются, торговля не меняется.</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
           <FuturesSearchForm initialTicker="" disabled={result.isLoading} isFetching={futures.isFetching}
@@ -64,7 +64,7 @@ export function BacktestPage({ dark, refreshSession }: { dark: boolean; refreshS
             const form = new FormData(event.currentTarget);
             const timeframe = timeframes.find(value => value === form.get('timeframe'));
             if (!timeframe) return;
-            void check({
+            void run({
               instrumentUid: selected.uid, timeframe, emaPeriod: Number(form.get('emaPeriod')), lots: Number(form.get('lots')),
               from: String(form.get('from')), to: String(form.get('to')),
             });
@@ -109,34 +109,17 @@ export function BacktestPage({ dark, refreshSession }: { dark: boolean; refreshS
               </FieldGroup>
             </fieldset>
             <p id="backtest-period" className="text-sm text-muted-foreground">
-              Обе даты включительно, часовой пояс — Москва. {limits.data && `Лимит проверки: ${limits.data.maxDays} календарных дней. `}
+              Обе даты включительно, часовой пояс — Москва. {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
               Доступность истории зависит от контракта и параметров EMA.
             </p>
             <Button type="submit" className="justify-self-start"
               disabled={!limits.data || !selected || futures.isFetching || futures.isError || result.isLoading}>
-              {result.isLoading ? 'Проверяем данные…' : 'Проверить данные'}
+              {result.isLoading ? 'Считаем…' : 'Запустить бэктест'}
             </Button>
           </form>
         </CardContent>
       </Card>
-      {result.data && <Card>
-        <CardHeader>
-          <CardTitle><h2>Исторические свечи и EMA</h2></CardTitle>
-          <CardDescription>
-            {result.data.parameters.from} — {result.data.parameters.to} · {timeframeLabels[result.data.parameters.timeframe]}
-            {' · '}EMA {result.data.parameters.emaPeriod} · Свечей: {result.data.candles.length}
-            {result.data.cutoff !== null && <>. Последний день ещё не закончился: проверка до {moscowTime.format(result.data.cutoff)} МСК.</>}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-2">
-          <p className="text-sm text-muted-foreground">
-            Свечи и EMA сопоставлены. Если оба источника пропустили один и тот же интервал, этот график не выявит пропуск.
-          </p>
-          <Suspense fallback={<p role="status">Загружаем график…</p>}>
-            <HistoryChart candles={result.data.candles} dark={dark} />
-          </Suspense>
-        </CardContent>
-      </Card>}
+      {result.data && <BacktestReportCard report={result.data} dark={dark} />}
     </div>
   );
 }

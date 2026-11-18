@@ -1,5 +1,7 @@
-import type { MarketBroker, MarketCandle, MarketSelection } from './market-data.js';
+import type { MarketBroker, MarketCandle } from './market-data.js';
 import { timeframeMs } from './timeframe.js';
+import { runBacktest, type BacktestContract, type BacktestDataset, type BacktestParameters, type BacktestReport, type BacktestCandle } from './backtest.js';
+import type { Side } from './crossing.js';
 
 const dayMs = 86_400_000;
 const maxChunkMs = 6 * dayMs;
@@ -9,8 +11,6 @@ export const backtestLimits = { maxDays: 7, maxEmaPeriod: 1000 };
 const moscowDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow', dateStyle: 'short' });
 const moscowOffset = new Intl.DateTimeFormat('en', { timeZone: 'Europe/Moscow', timeZoneName: 'longOffset' });
 
-export type BacktestParameters = MarketSelection & { lots: number; from: string; to: string };
-
 export interface BacktestBroker extends Pick<MarketBroker, 'candles' | 'ema'> {
   backtestFuture(token: string, uid: string): Promise<{
     firstTrade: Date | undefined; lastTrade: Date | undefined; currency: string;
@@ -19,7 +19,10 @@ export interface BacktestBroker extends Pick<MarketBroker, 'candles' | 'ema'> {
 }
 
 type BacktestErrorCode = 'INVALID_REQUEST' | 'BACKTEST_PERIOD_TOO_LONG' | 'BACKTEST_CONTRACT_PERIOD'
-  | 'BACKTEST_CANDLES_MISSING' | 'BACKTEST_EMA_MISSING' | 'BACKTEST_BASELINE_MISSING' | 'BACKTEST_HISTORY_CONFLICT';
+  | 'BACKTEST_CANDLES_MISSING' | 'BACKTEST_EMA_MISSING' | 'BACKTEST_BASELINE_MISSING' | 'BACKTEST_HISTORY_CONFLICT'
+  | 'BACKTEST_CONTRACT_PARAMS_MISSING';
+
+type RawBacktestDataset = Omit<BacktestDataset, 'contract'> & { contract: BacktestContract };
 
 export class BacktestError extends Error {
   constructor(readonly code: BacktestErrorCode) {
@@ -75,6 +78,22 @@ export class BacktestHistory {
   ) {}
 
   async check(parameters: BacktestParameters) {
+    const { parameters: selected, candles, cutoff } = await this.gather(parameters);
+    return { parameters: selected, candles, cutoff };
+  }
+
+  async run(parameters: BacktestParameters): Promise<BacktestReport> {
+    const dataset = await this.gather(parameters);
+    const { priceStep, priceStepAmount, lot, currency } = dataset.contract;
+    if (!currency || priceStep === null || !Number.isFinite(priceStep) || priceStep <= 0
+      || priceStepAmount === null || !Number.isFinite(priceStepAmount) || priceStepAmount <= 0
+      || !Number.isFinite(lot) || lot <= 0) {
+      throw new BacktestError('BACKTEST_CONTRACT_PARAMS_MISSING');
+    }
+    return runBacktest({ ...dataset, contract: { currency, priceStep, priceStepAmount, lot } });
+  }
+
+  private async gather(parameters: BacktestParameters): Promise<RawBacktestDataset> {
     const fromDay = parseDate(parameters.from);
     const toDay = parseDate(parameters.to);
     const from = moscowMidnight(fromDay);
@@ -124,21 +143,29 @@ export class BacktestHistory {
       || [...ema.keys()].some(time => time >= from && !candles.has(time))) {
       throw new BacktestError('BACKTEST_CANDLES_MISSING');
     }
-    const rows = selected.map(bar => {
+    const rows: BacktestCandle[] = selected.map(bar => {
       const value = ema.get(bar.time);
       if (value === undefined || !Number.isFinite(value)) throw new BacktestError('BACKTEST_EMA_MISSING');
       return { ...bar, ema: value };
     });
 
-    // Check the tail in order; do not use an old baseline across a hole in just one feed.
+    // Find the last known strict side before the period in order; do not use an old baseline across a
+    // hole in just one feed. Equality preserves the previous strict side, so the nearest strict candle
+    // below `from` fully determines the initial side.
     const before = [...new Set([...ema.keys(), ...elapsed.map(bar => bar.time)])]
       .filter(time => time + interval <= from).sort((a, b) => b - a);
+    let initialSide: Side | null = null;
     for (const time of before) {
       const bar = candles.get(time);
       const value = ema.get(time);
       if (!bar?.complete || !Number.isFinite(bar.close) || value === undefined || !Number.isFinite(value)) break;
-      if (bar.close !== value) return { parameters, candles: rows, cutoff: end < to ? end : null };
+      if (bar.close !== value) { initialSide = bar.close > value ? 1 : -1; break; }
     }
-    throw new BacktestError('BACKTEST_BASELINE_MISSING');
+    if (initialSide === null) throw new BacktestError('BACKTEST_BASELINE_MISSING');
+
+    const contractData: BacktestContract = {
+      currency: contract.currency, priceStep: contract.priceStep, priceStepAmount: contract.priceStepAmount, lot: contract.lot,
+    };
+    return { parameters, candles: rows, contract: contractData, initialSide, cutoff: end < to ? end : null };
   }
 }
