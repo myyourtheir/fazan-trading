@@ -17,6 +17,7 @@ import {
   type StrategyConfig,
 } from "../api/strategy-api";
 import { sandboxErrorMessage } from "@/entities/sandbox";
+import { timeframeLabels, timeframes } from "../model/timeframe";
 import { FuturesSearchForm } from "./FuturesSearchForm";
 
 const maxInt = 2_147_483_647;
@@ -29,7 +30,7 @@ function label(contract: FutureContract) {
   const expiration =
     contract.expirationDate &&
     dateFormat.format(new Date(contract.expirationDate));
-  return [contract.ticker].filter(Boolean).join(" · ");
+  return [contract.ticker, expiration, contract.uid].filter(Boolean).join(" · ");
 }
 
 export type StrategyAccountProps = {
@@ -48,6 +49,9 @@ export function StrategyForm({
     config.settings?.instrument.ticker ?? config.defaults.ticker;
   const [query, setQuery] = useState(initialTicker);
   const [contract, setContract] = useState(config.settings?.instrument);
+  const [timeframe, setTimeframe] = useState(
+    config.settings?.timeframe ?? config.defaults.timeframe,
+  );
   const [emaPeriod, setEmaPeriod] = useState(
     String(config.settings?.emaPeriod ?? config.defaults.emaPeriod),
   );
@@ -117,6 +121,7 @@ export function StrategyForm({
           void save({
             accountId,
             instrumentUid: selectedMatch.uid,
+            timeframe,
             emaPeriod: Number(emaPeriod),
             lots: Number(lots),
           });
@@ -159,6 +164,24 @@ export function StrategyForm({
             </p>
           )}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,6rem),1fr))] gap-4">
+            <Field>
+              <FieldLabel htmlFor="strategy-timeframe">Таймфрейм</FieldLabel>
+              <NativeSelect
+                id="strategy-timeframe"
+                className="w-full"
+                value={timeframe}
+                disabled={!canEdit}
+                onChange={(event) => {
+                  const selected = timeframes.find((value) => value === event.target.value);
+                  if (selected) setTimeframe(selected);
+                  reset();
+                }}
+              >
+                {timeframes.map((value) => (
+                  <NativeSelectOption key={value} value={value}>{timeframeLabels[value]}</NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </Field>
             <Field>
               <FieldLabel htmlFor="strategy-ema">Период EMA</FieldLabel>
               <Input

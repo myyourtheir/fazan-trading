@@ -7,14 +7,15 @@ import {
   OrderDirection, OrderExecutionReportStatus, OrderIdType, OrderType,
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
 import { ClientError, Status } from 'nice-grpc';
-import { hourMs, type MarketHistory, type MarketUpdate } from '../core/market-data.js';
+import type { MarketHistory, MarketUpdate } from '../core/market-data.js';
+import { timeframeMs } from '../core/timeframe.js';
 import { Robot, type OrderIntent, type TradingConfig } from '../core/robot.js';
 import { InvestSandbox } from './invest-sandbox.js';
 import { connectToPostgres, migrateDatabase, PostgresTradingStore } from './postgres.js';
 
 const intent = {
   id: randomUUID(), accountId: 'test-account', instrumentUid: 'test-future', ticker: 'TEST',
-  candleTime: Date.UTC(2026, 10, 18, 12), signalTime: Date.UTC(2026, 10, 18, 13),
+  candleTime: Date.UTC(2026, 10, 18, 12), signalTime: Date.UTC(2026, 10, 18, 13), timeframe: '1h',
   action: 'ema-crossing', manualCloseTime: null, signalPrice: 101, ema: 100,
   direction: 'sell', lots: 1, fromPosition: 0, targetPosition: -1,
 } satisfies OrderIntent;
@@ -83,7 +84,7 @@ test('SDK position check does not mistake a blocked or unidentified balance for 
   }) as unknown as NodeApiClient);
   const broker = new InvestSandbox();
   const { accountId, instrumentUid, ticker, lots } = intent;
-  const config: TradingConfig = { accountId, instrumentUid, ticker, lots, token: 'fake', emaPeriod: 55 };
+  const config: TradingConfig = { accountId, instrumentUid, ticker, lots, token: 'fake', emaPeriod: 55, timeframe: '1h' };
   assert.deepEqual(await broker.accountState(config), { position: null, activeOrders: true });
   futures = [{ instrumentUid: '', balance: 1, blocked: 0 }];
   assert.deepEqual(await broker.accountState(config), { position: null, activeOrders: false });
@@ -153,9 +154,10 @@ test('explicit sandbox smoke: sends one virtual market order and saves broker fi
   const broker = new InvestSandbox();
   let listener: ((update: MarketUpdate) => void) | undefined;
   // Deterministic candle input isolates the SDK order/fill contract from the live EMA crossing.
+  const hourMs = timeframeMs['1h'];
   const opening = Math.floor(Date.now() / hourMs) * hourMs;
   let now = opening + hourMs / 2;
-  const config: TradingConfig = { token, accountId, instrumentUid, ticker: 'SMOKE', emaPeriod: 5, lots: 1 };
+  const config: TradingConfig = { token, accountId, instrumentUid, ticker: 'SMOKE', emaPeriod: 5, lots: 1, timeframe: '1h' };
   const store = new PostgresTradingStore(db);
   const robot = new Robot(broker, store, {
     async subscribe(callback) { listener = callback; return () => { listener = undefined; }; },
@@ -167,7 +169,7 @@ test('explicit sandbox smoke: sends one virtual market order and saves broker fi
     });
     await robot.start();
     const baseline = candle(opening - hourMs, 99);
-    const selection = { instrumentUid, emaPeriod: config.emaPeriod };
+    const selection = { instrumentUid, emaPeriod: config.emaPeriod, timeframe: config.timeframe };
     listener?.({ stream: 'live', history: { ...selection, candles: [baseline] } });
     now = opening + hourMs + 1;
     listener?.({ stream: 'live', history: { ...selection, candles: [baseline, candle(opening, 101)] } });

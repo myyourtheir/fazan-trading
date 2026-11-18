@@ -20,11 +20,11 @@ test('market REST and WebSocket require an owner session; logout closes the live
   const market = new MarketData({
     async candles() { return []; },
     async ema() { return []; },
-    async *stream(_token, _uid, signal) {
+    async *stream(_token, _uid, _timeframe, signal) {
       yield { kind: 'subscribed' };
       await delay(60_000, undefined, { signal }).catch(() => {});
     },
-  }, async () => ({ token: 'not-for-browser', instrumentUid: 'future', emaPeriod: 55 }));
+  }, async () => ({ token: 'not-for-browser', instrumentUid: 'future', emaPeriod: 55, timeframe: '30m' }));
   const server = createServer();
   const marketSocket = attachMarketSocket(server, auth, market);
   server.on('request', createApp({ auth, market, marketSocket, secureCookies: false }));
@@ -57,7 +57,7 @@ test('market REST and WebSocket require an owner session; logout closes the live
   const cookie = login.headers.get('set-cookie')!.split(';')[0];
   assert.equal(await rejected('http://different.example', cookie), 403);
   const rest = await fetch(`${origin}/api/market`, { headers: { cookie } });
-  assert.deepEqual(await rest.json(), { instrumentUid: 'future', emaPeriod: 55, candles: [] });
+  assert.deepEqual(await rest.json(), { instrumentUid: 'future', emaPeriod: 55, timeframe: '30m', candles: [] });
 
   const ws = new WebSocket(url, { origin, headers: { cookie } });
   const events: unknown[] = [];
@@ -69,7 +69,7 @@ test('market REST and WebSocket require an owner session; logout closes the live
   await liveHistory;
   assert.deepEqual(events, [
     { stream: 'connecting' }, { stream: 'live' },
-    { stream: 'live', history: { instrumentUid: 'future', emaPeriod: 55, candles: [] } },
+    { stream: 'live', history: { instrumentUid: 'future', emaPeriod: 55, timeframe: '30m', candles: [] } },
   ]);
   const closed = once(ws, 'close');
   const logout = await fetch(`${origin}/api/auth/logout`, {

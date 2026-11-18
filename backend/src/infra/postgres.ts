@@ -65,12 +65,12 @@ export class PostgresStrategySettings implements StrategyStore {
   async load() {
     const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
     if (!saved) return null;
-    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots } = saved;
-    return { instrument: { uid, ticker, name, classCode, exchange, expirationDate }, emaPeriod, lots };
+    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots, timeframe } = saved;
+    return { instrument: { uid, ticker, name, classCode, exchange, expirationDate }, emaPeriod, lots, timeframe };
   }
 
-  async save({ instrument, emaPeriod, lots }: SavedStrategy) {
-    const values = { ...instrument, emaPeriod, lots };
+  async save({ instrument, emaPeriod, lots, timeframe }: SavedStrategy) {
+    const values = { ...instrument, emaPeriod, lots, timeframe };
     await this.db.insert(strategySettings).values({ id: 1, ...values })
       .onConflictDoUpdate({ target: strategySettings.id, set: values });
   }

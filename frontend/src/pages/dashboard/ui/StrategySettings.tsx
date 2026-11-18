@@ -17,7 +17,7 @@ export function StrategySettings({ settingsHint, ...props }: StrategyAccountProp
         <CardTitle><h2 id="strategy-title" className="flex items-center gap-2 font-semibold">
           <SlidersHorizontal aria-hidden="true" className="size-4 text-primary" /> Настройки стратегии
         </h2></CardTitle>
-        <CardDescription>Выберите фьючерс, период EMA и размер позиции в лотах.</CardDescription>
+        <CardDescription>Выберите фьючерс, таймфрейм, период EMA и размер позиции в лотах.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         {settingsHint && <p className="text-sm text-muted-foreground">{settingsHint}</p>}

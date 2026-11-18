@@ -1,13 +1,14 @@
 import { mutationHeaders, rootApi } from '@/shared/api';
+import type { Timeframe } from '../model/timeframe';
 
 export type FutureContract = {
   uid: string; ticker: string; name: string; classCode: string; exchange: string; expirationDate: string | null;
 };
 export type StrategyConfig = {
-  defaults: { ticker: string; emaPeriod: number };
-  settings: { instrument: FutureContract; emaPeriod: number; lots: number } | null;
+  defaults: { ticker: string; emaPeriod: number; timeframe: Timeframe };
+  settings: { instrument: FutureContract; emaPeriod: number; lots: number; timeframe: Timeframe } | null;
 };
-type StrategyUpdate = { accountId: string; instrumentUid: string; emaPeriod: number; lots: number };
+type StrategyUpdate = { accountId: string; instrumentUid: string; emaPeriod: number; lots: number; timeframe: Timeframe };
 
 export const strategyApi = rootApi.injectEndpoints({
   endpoints: builder => ({

@@ -6,6 +6,7 @@ import { Alert, AlertTitle, Badge, Button, Card, CardContent, CardDescription, C
 import { marketApi } from '../api/market-api';
 import { strategyApi } from '../api/strategy-api';
 import type { StreamState } from '../model/market-data';
+import { timeframeLabels } from '../model/timeframe';
 
 const TradingChart = lazy(() => import('./TradingChart'));
 
@@ -20,7 +21,7 @@ export function MarketChart({ dark, refreshSession }: { dark: boolean; refreshSe
   const config = strategyApi.useStrategyQuery();
   const settings = !config.isError && config.data?.settings;
   const market = marketApi.useMarketQuery(settings
-    ? { instrumentUid: settings.instrument.uid, emaPeriod: settings.emaPeriod }
+    ? { instrumentUid: settings.instrument.uid, emaPeriod: settings.emaPeriod, timeframe: settings.timeframe }
     : skipToken);
   useEffect(() => {
     if (hasStatus(market.error, 401)) refreshSession();
@@ -32,9 +33,9 @@ export function MarketChart({ dark, refreshSession }: { dark: boolean; refreshSe
     <Card role="region" aria-labelledby="market-title" className="min-w-0">
       <CardHeader>
         <CardTitle><h2 id="market-title" className="flex items-center gap-2">
-          <ChartCandlestick aria-hidden="true" className="size-4 text-primary" /> Часовые свечи и EMA
+          <ChartCandlestick aria-hidden="true" className="size-4 text-primary" /> Свечи и EMA
         </h2></CardTitle>
-        <CardDescription>{settings ? `${settings.instrument.ticker} · 1 час · EMA ${settings.emaPeriod}`
+        <CardDescription>{settings ? `${settings.instrument.ticker} · ${timeframeLabels[settings.timeframe]} · EMA ${settings.emaPeriod}`
           : 'Сохраните настройки стратегии, чтобы увидеть график.'}</CardDescription>
       </CardHeader>
       {settings && <CardContent className="grid gap-4">
@@ -46,9 +47,9 @@ export function MarketChart({ dark, refreshSession }: { dark: boolean; refreshSe
         </>}
         {data && <Badge role="status" variant="outline">{streamLabels[data.stream]}</Badge>}
         {data?.historyAvailable && !latest &&
-          <p className="text-sm text-muted-foreground">Нет часовых свечей за последние семь дней.</p>}
+          <p className="text-sm text-muted-foreground">Нет свечей за последние семь дней.</p>}
         {data && latest && <Suspense fallback={<p className="text-sm text-muted-foreground">Загружаем график…</p>}>
-          <TradingChart key={JSON.stringify([data.instrumentUid, data.emaPeriod])} candles={data.candles} dark={dark} />
+          <TradingChart key={JSON.stringify([data.instrumentUid, data.emaPeriod, data.timeframe])} candles={data.candles} dark={dark} />
         </Suspense>}
       </CardContent>}
     </Card>

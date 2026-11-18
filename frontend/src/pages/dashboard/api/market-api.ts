@@ -1,5 +1,5 @@
 import { rootApi } from '@/shared/api';
-import { addCandles, type MarketChartData, type MarketHistory, type MarketSelection } from '../model/market-data';
+import { addCandles, sameMarketSelection, type MarketChartData, type MarketHistory, type MarketSelection } from '../model/market-data';
 import { watchMarket } from './watch-market';
 
 export const marketApi = rootApi.injectEndpoints({
@@ -11,7 +11,7 @@ export const marketApi = rootApi.injectEndpoints({
         const { data, error } = await fetchMarket('market');
         if (error?.status === 401) return { error };
         const history = data as MarketHistory | null | undefined;
-        const matches = history?.instrumentUid === selection.instrumentUid && history.emaPeriod === selection.emaPeriod;
+        const matches = !!history && sameMarketSelection(history, selection);
         return { data: { ...selection, candles: matches ? history.candles : [], historyAvailable: matches, stream: 'connecting' } };
       },
       merge(cache, incoming) {

@@ -1,3 +1,6 @@
+import type { MarketHistory } from './market-data.js';
+import { timeframeMs } from './timeframe.js';
+
 export type Side = -1 | 1;
 
 export function crossing(previous: Side | null, close: number, ema: number) {
@@ -5,14 +8,14 @@ export function crossing(previous: Side | null, close: number, ema: number) {
   return { side, direction: previous !== null && side !== previous ? side : null };
 }
 
-export function findLiveCrossing(candles: MarketHistory['candles'], { since, now, lastAttempted }: {
+export function findLiveCrossing({ candles, timeframe }: MarketHistory, { since, now, lastAttempted }: {
   since: number; now: number; lastAttempted: number;
 }) {
   let side: Side | null = null;
   let historicalEmaPending = false;
   // Rebuild from ordered snapshots: late confirmation can change the strict side before an equality.
   for (const candle of candles) {
-    const signalTime = candle.time + hourMs;
+    const signalTime = candle.time + timeframeMs[timeframe];
     if (signalTime > now) continue;
     if (!candle.complete || candle.confirmedEma === null) {
       if (signalTime > since) break;
@@ -34,4 +37,3 @@ export function positionDelta(position: number, target: number) {
   if (delta === 0) return null;
   return { direction: delta > 0 ? 'buy' as const : 'sell' as const, lots: Math.abs(delta) };
 }
-import { hourMs, type MarketHistory } from './market-data.js';

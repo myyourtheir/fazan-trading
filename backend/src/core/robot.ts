@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { findLiveCrossing, positionDelta } from './crossing.js';
-import type { MarketData, MarketHistory, MarketUpdate } from './market-data.js';
+import { sameMarketSelection, type MarketData, type MarketHistory, type MarketSelection, type MarketUpdate } from './market-data.js';
+import type { Timeframe } from './timeframe.js';
 
-export type TradingConfig = {
-  token: string; accountId: string; instrumentUid: string; ticker: string; emaPeriod: number; lots: number;
+export type TradingConfig = MarketSelection & {
+  token: string; accountId: string; ticker: string; lots: number;
 };
 export type OrderIntent = {
-  id: string; accountId: string; instrumentUid: string; ticker: string;
+  id: string; accountId: string; instrumentUid: string; ticker: string; timeframe: Timeframe;
   action: 'ema-crossing' | 'manual-close';
   candleTime: number | null; signalTime: number | null; signalPrice: number | null; ema: number | null;
   manualCloseTime: number | null;
@@ -324,7 +325,7 @@ export class Robot {
   private async close(selection: Selection) {
     await this.requireNoUnresolved();
     const config = await this.loadConfig();
-    const { accountId, instrumentUid, ticker } = config;
+    const { accountId, instrumentUid, ticker, timeframe } = config;
     if (!sameSelection(config, selection)) {
       throw new RobotError('ROBOT_SELECTION_CHANGED');
     }
@@ -333,7 +334,7 @@ export class Robot {
     const delta = positionDelta(fromPosition, 0);
     if (!delta) return;
     const intent: OrderIntent = {
-      id: randomUUID(), accountId, instrumentUid, ticker, fromPosition, targetPosition: 0, ...delta,
+      id: randomUUID(), accountId, instrumentUid, ticker, timeframe, fromPosition, targetPosition: 0, ...delta,
       action: 'manual-close', manualCloseTime: this.now(), candleTime: null, signalTime: null, signalPrice: null, ema: null,
     };
     if (!await this.store.reserve(intent)) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
@@ -375,7 +376,7 @@ export class Robot {
       return;
     }
     if (stream !== 'live') return;
-    if (history && (history.instrumentUid !== run.config.instrumentUid || history.emaPeriod !== run.config.emaPeriod)) return;
+    if (history && !sameMarketSelection(history, run.config)) return;
     const reconnecting = this.mode === 'reconnecting';
     const since = reconnecting ? recoveredAt : run.session?.since ?? this.now();
     if (since === undefined || (reconnecting && !history)) return;
@@ -392,7 +393,7 @@ export class Robot {
       return;
     }
     session.queued = undefined;
-    const crossing = findLiveCrossing(history.candles, {
+    const crossing = findLiveCrossing(history, {
       since: session.since, now: this.now(), lastAttempted: run.lastAttemptedCandleOpenMs,
     });
     if (!crossing) return;
@@ -419,9 +420,9 @@ export class Robot {
       this.publish();
       return;
     }
-    const { accountId, instrumentUid, ticker } = run.config;
+    const { accountId, instrumentUid, ticker, timeframe } = run.config;
     const intent: OrderIntent = {
-      ...signal, id: randomUUID(), accountId, instrumentUid, ticker, fromPosition, ...delta,
+      ...signal, id: randomUUID(), accountId, instrumentUid, ticker, timeframe, fromPosition, ...delta,
       action: 'ema-crossing', manualCloseTime: null,
     };
     if (!await this.store.reserve(intent)) {

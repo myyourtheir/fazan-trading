@@ -1,5 +1,5 @@
 import { watchSocket } from '@/shared/api';
-import { addCandles, sameCandle, type ChartCandle, type MarketChartData, type MarketHistory, type MarketSelection, type StreamState } from '../model/market-data';
+import { addCandles, sameCandle, sameMarketSelection, type ChartCandle, type MarketChartData, type MarketHistory, type MarketSelection, type StreamState } from '../model/market-data';
 
 type MarketUpdate = {
   stream: StreamState;
@@ -28,7 +28,7 @@ export async function watchMarket(
     },
     onMessage(message: MarketUpdate) {
       const payload = message.history ?? message.tick;
-      if (payload && (payload.instrumentUid !== selection.instrumentUid || payload.emaPeriod !== selection.emaPeriod)) return;
+      if (payload && !sameMarketSelection(payload, selection)) return;
       update(cache => {
         if (message.history) {
           const snapshot = message.history.candles;

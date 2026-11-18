@@ -120,7 +120,7 @@ test('the server rejects trading settings changes until stopped and broker-confi
     async reserve() { assert.fail('No reservation expected'); },
     async record() { assert.fail('No order expected'); },
   }, { async subscribe() { return () => {}; } }, async () => ({
-    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1,
+    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1, timeframe: '1h',
   }));
   const { request } = await serve(t, sandbox, strategy, robot);
   const selection = { accountId: 'existing', instrumentUid: 'contract-a' };
@@ -138,7 +138,7 @@ test('the server rejects trading settings changes until stopped and broker-confi
   assert.equal((await close(selection)).status, 400);
   assert.equal((await close({ ...selection, confirmed: 'true' })).status, 400);
   await request('strategy/futures?q=IMOEXF');
-  const save = () => request('strategy', 'PUT', { ...selection, instrumentUid: 'contract-b', emaPeriod: 34, lots: 2 });
+  const save = () => request('strategy', 'PUT', { ...selection, instrumentUid: 'contract-b', emaPeriod: 34, lots: 2, timeframe: '15m' });
   const create = () => request('sandbox/accounts', 'POST');
   assert.equal((await request('robot/start', 'POST')).status, 204);
   for (const attempt of [save, create, () => close({ ...selection, confirmed: true })]) {
@@ -168,7 +168,7 @@ test('replacing unusable credentials for a restarted order is allowed only for i
   } }, cipher, broker);
   const order: JournalEntry = {
     id: 'original', accountId: 'existing', instrumentUid: 'contract-a', ticker: 'IMOEXF',
-    action: 'manual-close', manualCloseTime: 1, candleTime: null, signalTime: null, signalPrice: null, ema: null,
+    action: 'manual-close', manualCloseTime: 1, candleTime: null, signalTime: null, signalPrice: null, ema: null, timeframe: '1h',
     direction: 'sell', lots: 1, fromPosition: 1, targetPosition: 0, status: 'reserved',
     brokerOrderId: null, brokerStatus: 'unknown', executedLots: null, executions: [], position: null,
   };
@@ -192,7 +192,7 @@ test('replacing unusable credentials for a restarted order is allowed only for i
     async reserve() { assert.fail('No reservation expected'); },
     async record(_id, result) { Object.assign(order, result); },
   }, { async subscribe() { assert.fail('Must stay stopped'); } }, async () => ({
-    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1,
+    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1, timeframe: '1h',
   }));
   await robot.restore();
   assert.equal(lookups, 0);
@@ -276,14 +276,14 @@ test('strategy saving uses offered contracts without fetching the broker catalog
   const sandbox = new SandboxConnection(store, cipher, broker);
   const strategy = new StrategySettings(strategyStore, sandbox);
   const { request } = await serve(t, sandbox, strategy);
-  const config = { accountId: 'existing', instrumentUid: 'contract-b', emaPeriod: 55, lots: 3 };
+  const config = { accountId: 'existing', instrumentUid: 'contract-b', emaPeriod: 55, lots: 3, timeframe: '15m' };
   const put = (body: object) => request('strategy', 'PUT', body);
   assert.equal((await request('strategy')).status, 401);
   assert.equal((await request('strategy/futures?q=IMOEXF')).status, 401);
   assert.equal((await put(config)).status, 401);
   await request('auth/login', 'POST', { password });
   assert.deepEqual((await request('strategy')).body, {
-    defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null,
+    defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null,
   });
   await request('sandbox/connection', 'PUT', { token });
   assert.equal((await put(config)).status, 422);
@@ -301,6 +301,9 @@ test('strategy saving uses offered contracts without fetching the broker catalog
     assert.equal((await put({ ...config, emaPeriod: invalid })).status, 400);
     assert.equal((await put({ ...config, lots: invalid })).status, 400);
   }
+  for (const timeframe of [undefined, null, 15, '1d', 'constructor']) {
+    assert.equal((await put({ ...config, timeframe })).status, 400);
+  }
   for (const instrumentUid of ['IMOEXF', 'unknown', 'unavailable']) {
     assert.equal((await put({ ...config, instrumentUid })).status, 422);
   }
@@ -314,5 +317,5 @@ test('strategy saving uses offered contracts without fetching the broker catalog
   assert.deepEqual(await put(config), { status: 409, body: { code: 'FUTURE_SELECTION_EXPIRED' } });
   await request('sandbox/accounts', 'POST');
   assert.equal((await put({ ...config, lots: 9 })).status, 422, 'A stale account cannot save over the settings');
-  assert.deepEqual((await request('strategy')).body.settings, { instrument: matches[1], emaPeriod: 55, lots: 3 });
+  assert.deepEqual((await request('strategy')).body.settings, { instrument: matches[1], emaPeriod: 55, lots: 3, timeframe: '15m' });
 });

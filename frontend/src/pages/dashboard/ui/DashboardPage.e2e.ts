@@ -6,7 +6,7 @@ import type { ChartCandle } from '../model/market-data';
 async function mockMarket(page: Page, options: { failInitialHistory?: boolean; historySize?: number; blockAccountSwitch?: boolean } = {}) {
   const instrument = { uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
     exchange: 'MOEX', expirationDate: null };
-  const selection = { instrumentUid: instrument.uid, emaPeriod: 3 };
+  const selection = { instrumentUid: instrument.uid, emaPeriod: 3, timeframe: '1h' };
   const time = Date.UTC(2026, 10, 18, 12);
   const candle = { time, open: 100, high: 110, low: 98, close: 104, complete: true,
     confirmedEma: 102, previewEma: null };
@@ -72,8 +72,8 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
         expect(url.searchParams.get('accountId')).toBe(accountId);
         return route.fulfill({ json: { accountId, rubles: accountId === 'virtual-account' ? 1_000 : 2_000 } });
       case '/api/strategy':
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 },
-          settings: { instrument, emaPeriod: 3, lots: 1 } } });
+        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+          settings: { instrument, emaPeriod: 3, lots: 1, timeframe: selection.timeframe } } });
       case '/api/strategy/futures':
         return route.fulfill({ json: [instrument] });
       case '/api/market':
@@ -102,7 +102,7 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
 }
 
 const filledOrder = (candle: ChartCandle): JournalEntry => ({
-  id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account',
+  id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account', timeframe: '1h',
   action: 'ema-crossing', manualCloseTime: null,
   candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
   lots: 1, fromPosition: 0, targetPosition: 1, brokerStatus: 'filled', status: 'confirmed',
@@ -110,7 +110,7 @@ const filledOrder = (candle: ChartCandle): JournalEntry => ({
   executions: [{ tradeId: 'trade', lots: 1, price: 105.25, time: candle.time + 3_605_000 }],
 });
 
-const chartCanvas = (page: Page) => page.getByRole('group', { name: 'График часовых свечей' })
+const chartCanvas = (page: Page) => page.getByRole('group', { name: 'График свечей' })
   .getByRole('row').first().getByRole('cell').nth(1).locator('canvas').last();
 
 test('starts the robot and refreshes its separate signal and fill after a live notification', async ({ page }) => {
@@ -205,7 +205,7 @@ test('keeps balance and journal on the confirmed account and reflows on mobile',
   const balance = page.getByRole('status', { name: 'Деньги на счёте' });
   const robot = page.getByRole('region', { name: 'Управление роботом' });
   const strategy = page.getByRole('region', { name: 'Настройки стратегии' });
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
   await expect(page.getByRole('banner').getByRole('combobox', { name: 'Виртуальный счёт' })).toHaveCount(0);
   await expect(page.getByRole('main').getByRole('group', { name: 'Счёт песочницы' })).toBeVisible();
@@ -282,9 +282,9 @@ test('charts REST history, replaces live candles, and restores the chart after a
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, candle, nextCandle, sockets } = await mockMarket(page);
   await page.goto('/');
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   const latest = chart.getByLabel('Последняя свеча');
-  const plot = chart.getByRole('group', { name: 'График часовых свечей' });
+  const plot = chart.getByRole('group', { name: 'График свечей' });
   await expect(plot).toBeVisible();
   await expect(chart.getByText(/1 св\./)).toBeVisible();
   await expect(latest).toContainText('Подтверждённая EMA102,0');
@@ -328,7 +328,7 @@ test('live ticks remain visible when initial REST history fails', async ({ page 
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, sockets } = await mockMarket(page, { failInitialHistory: true });
   await page.goto('/');
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   await expect(chart.getByText('Не удалось загрузить историю свечей.')).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
   sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...selection, candle: { ...nextCandle, close: 107 } } }));
@@ -345,7 +345,7 @@ test('browser sockets reconnect and catch up over REST without losing newer live
   const market = await mockMarket(page);
   await page.goto('/');
   await page.getByRole('button', { name: 'Запустить робота' }).click();
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   await expect(chart.getByText(/1 св\./)).toBeVisible();
   await expect(page.getByText('Робот запущен')).toBeVisible();
   await expect.poll(() => market.sockets.length).toBe(1);
@@ -385,7 +385,7 @@ test('REST on reconnect replaces a stale candle at the same timestamp', async ({
   const market = await mockMarket(page);
   await page.goto('/');
   await expect.poll(() => market.sockets.length).toBe(1);
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   const last = chart.getByLabel('Последняя свеча');
   market.sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: market.nextCandle } }));
   await expect(chart.getByText(/2 св\./)).toBeVisible();
@@ -402,8 +402,8 @@ test('zooming and scrolling history keeps the selected time across live updates 
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, history, sockets } = await mockMarket(page, { historySize: 80 });
   await page.goto('/');
-  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
-  const plot = chart.getByRole('group', { name: 'График часовых свечей' });
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
+  const plot = chart.getByRole('group', { name: 'График свечей' });
   const canvas = chartCanvas(page);
   await canvas.scrollIntoViewIfNeeded();
   const box = (await canvas.boundingBox())!;

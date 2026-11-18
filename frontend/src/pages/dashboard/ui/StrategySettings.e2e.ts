@@ -1,4 +1,5 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type WebSocketRoute } from '@playwright/test';
+import type { Timeframe } from '../model/timeframe';
 
 test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and restores saved values', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked futures catalogue.');
@@ -8,7 +9,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
     { uid: 'quarterly-uid', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
       exchange: 'MOEX', expirationDate: '2027-03-18T00:00:00.000Z' },
   ];
-  let saved: { instrument: (typeof contracts)[number]; emaPeriod: number; lots: number } | null = null;
+  let saved: { instrument: (typeof contracts)[number]; emaPeriod: number; lots: number; timeframe: Timeframe } | null = null;
   let available = true;
   let catalogue = contracts;
   await page.route('/api/**', route => {
@@ -28,22 +29,26 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
         return route.fulfill({ json: ['IMOEXF', 'Мосбиржи'].includes(url.searchParams.get('q') ?? '') ? catalogue : [] });
       case '/api/market':
         return route.fulfill({ json: saved
-          ? { instrumentUid: saved.instrument.uid, emaPeriod: saved.emaPeriod, candles: [] }
+          ? { instrumentUid: saved.instrument.uid, emaPeriod: saved.emaPeriod, timeframe: saved.timeframe, candles: [] }
           : null });
       case '/api/strategy':
         if (request.method() === 'GET') {
-          return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: saved } });
+          return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: saved } });
         }
         expect(request.postDataJSON()).toEqual({
-          accountId: 'sandbox-1', instrumentUid: 'quarterly-uid', emaPeriod: 34, lots: 3,
+          accountId: 'sandbox-1', instrumentUid: 'quarterly-uid', emaPeriod: 34, lots: 3, timeframe: '15m',
         });
-        saved = { instrument: contracts[1], emaPeriod: 34, lots: 3 };
+        saved = { instrument: contracts[1], emaPeriod: 34, lots: 3, timeframe: '15m' };
         return route.fulfill({ status: 204 });
       default:
         return route.fulfill({ status: 404 });
     }
   });
-  await page.routeWebSocket('**/api/market/live', socket => socket.send(JSON.stringify({ stream: 'live' })));
+  let marketSocket: WebSocketRoute | undefined;
+  await page.routeWebSocket('**/api/market/live', socket => {
+    marketSocket = socket;
+    socket.send(JSON.stringify({ stream: 'live' }));
+  });
   await page.routeWebSocket('**/api/robot/live', () => {});
 
   await page.goto('/');
@@ -51,10 +56,12 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   const search = strategy.getByLabel('Поиск фьючерса');
   const select = strategy.getByLabel('Контракт');
   const period = strategy.getByLabel('Период EMA');
+  const timeframe = strategy.getByLabel('Таймфрейм');
   const lots = strategy.getByLabel('Объём, лотов');
   const save = strategy.getByRole('button', { name: 'Сохранить настройки' });
   await expect(search).toHaveValue('IMOEXF');
   await expect(period).toHaveValue('55');
+  await expect(timeframe).toHaveValue('1h');
   await expect(lots).toHaveValue('');
   await expect(select.getByRole('option')).toHaveCount(3);
   await expect(select.getByRole('option', { name: /18\.03\.2027.*quarterly-uid/ })).toHaveCount(1);
@@ -67,12 +74,31 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await expect(select.getByRole('option')).toHaveCount(3);
   await select.selectOption('quarterly-uid');
   await period.fill('34');
+  await timeframe.selectOption('15m');
   await save.click();
   await expect(strategy.getByText('Настройки сохранены.')).toBeVisible();
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
+  await expect(chart).toContainText('IMOEXF · 15 минут · EMA 34');
+  await expect(chart.getByText('Поток подключён')).toBeVisible();
+  const candle = { time: Date.UTC(2026, 10, 18, 12), open: 101, high: 105, low: 100, close: 104,
+    complete: false, confirmedEma: null, previewEma: null };
+  const sendTick = (timeframe: Timeframe) => marketSocket!.send(JSON.stringify({
+    stream: 'live', tick: { instrumentUid: 'quarterly-uid', emaPeriod: 34, timeframe, candle },
+  }));
+  sendTick('1h');
+  // Use a matching snapshot as a delivery barrier without adding any candles.
+  marketSocket!.send(JSON.stringify({ stream: 'connecting', history: {
+    instrumentUid: 'quarterly-uid', emaPeriod: 34, timeframe: '15m', candles: [],
+  } }));
+  await expect(chart.getByText('Подключаем поток…')).toBeVisible();
+  await expect(chart.getByText('Нет свечей за последние семь дней.')).toBeVisible();
+  sendTick('15m');
+  await expect(chart.getByRole('group', { name: 'График свечей' })).toBeVisible();
 
   await page.reload();
   await expect(select).toHaveValue('quarterly-uid');
   await expect(period).toHaveValue('34');
+  await expect(timeframe).toHaveValue('15m');
   await expect(lots).toHaveValue('3');
 
   catalogue = [contracts[0]];
@@ -87,6 +113,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await expect(strategy.getByText(/Выбран контракт:.*quarterly-uid/)).toBeVisible();
   await expect(period).toHaveValue('34');
   await expect(lots).toHaveValue('3');
+  await expect(timeframe).toBeDisabled();
   await expect(save).toBeDisabled();
   await page.setViewportSize({ width: 360, height: 800 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);

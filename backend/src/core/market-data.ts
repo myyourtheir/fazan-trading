@@ -1,14 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises';
+import { timeframeMs, type Timeframe } from './timeframe.js';
 
-export const hourMs = 60 * 60_000;
-const historyMs = 7 * 24 * hourMs;
+const historyMs = 7 * 24 * timeframeMs['1h'];
 
-export type HourlyCandle = {
+export type MarketCandle = {
   time: number; // UTC opening time in milliseconds
   open: number; high: number; low: number; close: number; complete: boolean;
 };
-type ChartCandle = HourlyCandle & { confirmedEma: number | null; previewEma: number | null };
-type MarketSelection = { instrumentUid: string; emaPeriod: number };
+type ChartCandle = MarketCandle & { confirmedEma: number | null; previewEma: number | null };
+export type MarketSelection = { instrumentUid: string; emaPeriod: number; timeframe: Timeframe };
 type MarketConfig = MarketSelection & { token: string };
 export type MarketHistory = MarketSelection & { candles: ChartCandle[] };
 type StreamState = 'unconfigured' | 'connecting' | 'live' | 'disconnected';
@@ -19,22 +19,25 @@ export type MarketUpdate = {
   recoveredAt?: number; // Trading cutoff of the authoritative snapshot that ended a broker reconnect.
 };
 type MarketListener = (update: MarketUpdate) => void;
-type BrokerEvent = { kind: 'subscribed' } | { kind: 'candle'; candle: HourlyCandle };
-type BrokerSnapshot = { candles: HourlyCandle[]; ema: { time: number; value: number }[] | null };
+type BrokerEvent = { kind: 'subscribed' } | { kind: 'candle'; candle: MarketCandle };
+type BrokerSnapshot = { candles: MarketCandle[]; ema: { time: number; value: number }[] | null };
 
 export interface MarketBroker {
-  candles(token: string, uid: string, from: Date, to: Date, signal?: AbortSignal): Promise<HourlyCandle[]>;
-  ema(token: string, uid: string, period: number, from: Date, to: Date, signal?: AbortSignal):
+  candles(token: string, uid: string, timeframe: Timeframe, from: Date, to: Date, signal?: AbortSignal): Promise<MarketCandle[]>;
+  ema(token: string, uid: string, timeframe: Timeframe, period: number, from: Date, to: Date, signal?: AbortSignal):
     Promise<{ time: number; value: number }[]>;
-  stream(token: string, uid: string, signal: AbortSignal): AsyncIterable<BrokerEvent>;
+  stream(token: string, uid: string, timeframe: Timeframe, signal: AbortSignal): AsyncIterable<BrokerEvent>;
 }
 
-function hasRecoveryBaseline({ candles, ema }: BrokerSnapshot, cutoff: number) {
+export function sameMarketSelection(a: MarketSelection, b: MarketSelection) {
+  return a.instrumentUid === b.instrumentUid && a.emaPeriod === b.emaPeriod && a.timeframe === b.timeframe;
+}
+
+function hasRecoveryBaseline({ candles, ema }: BrokerSnapshot, cutoff: number, intervalMs: number) {
   const closed = new Map(candles.filter(candle => candle.complete).map(candle => [candle.time, candle.close]));
   const indicators = new Map(ema?.map(({ time, value }) => [time, value]));
-  // Without a trading calendar an absent hour could be a missing close, not a market break.
-  // A strict side at or after any uncertain hour supersedes that uncertainty.
-  for (let time = Math.floor(cutoff / hourMs) * hourMs - hourMs; ; time -= hourMs) {
+  // Without a trading calendar a missing interval could be a missing close, not a market break.
+  for (let time = Math.floor(cutoff / intervalMs) * intervalMs - intervalMs; ; time -= intervalMs) {
     const close = closed.get(time);
     const value = indicators.get(time);
     if (close === undefined || value === undefined) return false;
@@ -43,7 +46,7 @@ function hasRecoveryBaseline({ candles, ema }: BrokerSnapshot, cutoff: number) {
 }
 
 class MarketSeries {
-  private readonly candles = new Map<number, HourlyCandle>();
+  private readonly candles = new Map<number, MarketCandle>();
   private readonly ema = new Map<number, number>();
   private readonly liveTimes = new Set<number>();
 
@@ -51,13 +54,13 @@ class MarketSeries {
 
   resetStream() { this.liveTimes.clear(); }
 
-  tick(candle: HourlyCandle) {
+  tick(candle: MarketCandle) {
     if (this.candles.get(candle.time)?.complete) return;
     this.candles.set(candle.time, { ...candle, complete: false });
     this.liveTimes.add(candle.time);
   }
 
-  merge(candles: HourlyCandle[], ema: { time: number; value: number }[]) {
+  merge(candles: MarketCandle[], ema: { time: number; value: number }[]) {
     for (const candle of candles) {
       if (candle.complete || (!this.candles.get(candle.time)?.complete && !this.liveTimes.has(candle.time))) {
         this.candles.set(candle.time, candle);
@@ -77,17 +80,17 @@ class MarketSeries {
     }
     let lastConfirmed: number | null = null;
     const sorted = [...this.candles.values()].sort((a, b) => a.time - b.time);
+    const { instrumentUid, emaPeriod, timeframe } = this.selection;
     const candles = sorted.map((candle, index): ChartCandle => {
       const confirmedEma = this.ema.get(candle.time) ?? null;
-      const previewEma = index === sorted.length - 1 && !candle.complete && now < candle.time + hourMs
+      const previewEma = index === sorted.length - 1 && !candle.complete && now < candle.time + timeframeMs[timeframe]
         && lastConfirmed !== null
-        ? lastConfirmed + (candle.close - lastConfirmed) * 2 / (this.selection.emaPeriod + 1)
+        ? lastConfirmed + (candle.close - lastConfirmed) * 2 / (emaPeriod + 1)
         : null;
       if (confirmedEma !== null) lastConfirmed = confirmedEma;
       return { ...candle, confirmedEma, previewEma };
     });
-    const { instrumentUid, emaPeriod } = this.selection;
-    return { instrumentUid, emaPeriod, candles };
+    return { instrumentUid, emaPeriod, timeframe, candles };
   }
 }
 
@@ -99,8 +102,8 @@ class MarketFeed {
 
   constructor(readonly config: MarketConfig) {}
 
-  matches({ instrumentUid, emaPeriod, token }: MarketConfig) {
-    return this.config.instrumentUid === instrumentUid && this.config.emaPeriod === emaPeriod && this.config.token === token;
+  matches(config: MarketConfig) {
+    return this.config.token === config.token && sameMarketSelection(this.config, config);
   }
 
   publish(update: MarketUpdate) {
@@ -158,15 +161,15 @@ export class MarketData {
     };
   }
 
-  private async refresh(series: MarketSeries, { token, instrumentUid, emaPeriod }: MarketConfig, signal?: AbortSignal) {
+  private async refresh(series: MarketSeries, { token, instrumentUid, emaPeriod, timeframe }: MarketConfig, signal?: AbortSignal) {
     const now = this.now();
     const from = new Date(now - historyMs);
     const to = new Date(now);
-    const candles = await this.broker.candles(token, instrumentUid, from, to, signal);
+    const candles = await this.broker.candles(token, instrumentUid, timeframe, from, to, signal);
     if (signal?.aborted) return;
     // Read the indicator after observing completion, not in parallel with that check.
     const ema = candles.some(candle => candle.complete)
-      ? await this.broker.ema(token, instrumentUid, emaPeriod, from, to, signal).catch(() => null)
+      ? await this.broker.ema(token, instrumentUid, timeframe, emaPeriod, from, to, signal).catch(() => null)
       : [];
     if (!signal?.aborted) series.merge(candles, ema ?? []);
     return { candles, ema };
@@ -190,7 +193,7 @@ export class MarketData {
         } catch { /* Keep the last successful snapshot and retry. */ }
         if (!signal.aborted && (snapshot || feed.history)) {
           const cutoff = this.now();
-          if (recovering && snapshot && hasRecoveryBaseline(snapshot, cutoff)) {
+          if (recovering && snapshot && hasRecoveryBaseline(snapshot, cutoff, timeframeMs[config.timeframe])) {
             recovering = false;
             // A socket acknowledgement alone is not a trading baseline after a gap.
             publishHistory('live', cutoff);
@@ -205,7 +208,7 @@ export class MarketData {
       const signal = AbortSignal.any([attempt.signal, controller.signal]);
       let polling: Promise<void> | undefined;
       try {
-        for await (const event of this.broker.stream(config.token, config.instrumentUid, signal)) {
+        for await (const event of this.broker.stream(config.token, config.instrumentUid, config.timeframe, signal)) {
           if (signal.aborted) break;
           if (event.kind === 'subscribed') {
             if (!recovering) feed.publish({ stream: 'live' });
@@ -214,9 +217,9 @@ export class MarketData {
             series.tick(event.candle);
             if (feed.history) publishHistory();
             else {
-              const { instrumentUid, emaPeriod, candles } = series.history(this.now());
+              const { candles, ...selection } = series.history(this.now());
               const candle = candles.find(candle => candle.time === event.candle.time);
-              if (candle) feed.publish({ stream: feed.state, tick: { instrumentUid, emaPeriod, candle } });
+              if (candle) feed.publish({ stream: feed.state, tick: { ...selection, candle } });
             }
           }
         }

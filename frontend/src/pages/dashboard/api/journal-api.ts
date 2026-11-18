@@ -1,7 +1,8 @@
 import { rootApi } from '@/shared/api';
+import type { Timeframe } from '../model/timeframe';
 
 export type JournalEntry = {
-  id: string; accountId: string; instrumentUid: string; ticker: string;
+  id: string; accountId: string; instrumentUid: string; ticker: string; timeframe: Timeframe;
   action: 'ema-crossing' | 'manual-close'; manualCloseTime: number | null;
   candleTime: number | null; signalTime: number | null; signalPrice: number | null; ema: number | null;
   direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;

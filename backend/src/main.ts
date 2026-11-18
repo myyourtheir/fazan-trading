@@ -34,14 +34,14 @@ async function main() {
     const market = new MarketData(broker, async () => {
       const { settings } = await strategy.get();
       return settings && { instrumentUid: settings.instrument.uid, emaPeriod: settings.emaPeriod,
-        token: await sandbox.marketDataToken() };
+        timeframe: settings.timeframe, token: await sandbox.marketDataToken() };
     });
     const robot = new Robot(broker, new PostgresTradingStore(db), market, async () => {
       const { settings } = await strategy.get();
       if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
       return {
         ...await sandbox.tradingCredentials(), instrumentUid: settings.instrument.uid,
-        ticker: settings.instrument.ticker, emaPeriod: settings.emaPeriod, lots: settings.lots,
+        ticker: settings.instrument.ticker, emaPeriod: settings.emaPeriod, lots: settings.lots, timeframe: settings.timeframe,
       };
     });
     await robot.restore();

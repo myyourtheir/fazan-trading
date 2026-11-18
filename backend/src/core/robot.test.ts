@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
-import { hourMs, type MarketHistory, type MarketUpdate } from './market-data.js';
+import type { MarketHistory, MarketUpdate } from './market-data.js';
 import { Robot, type Broker, type JournalEntry, type TradingConfig, type TradingStore } from './robot.js';
+import { timeframeMs, type Timeframe } from './timeframe.js';
 
+const hourMs = timeframeMs['1h'];
 type Candle = MarketHistory['candles'][number];
 const config: TradingConfig = {
-  token: 'fake', accountId: 'account', instrumentUid: 'future', ticker: 'FUT', emaPeriod: 55, lots: 3,
+  token: 'fake', accountId: 'account', instrumentUid: 'future', ticker: 'FUT', emaPeriod: 55, lots: 3, timeframe: '1h',
 };
 const opening = Date.UTC(2026, 10, 18, 12);
 function deferred() {
@@ -20,19 +22,23 @@ function candle(offset: number, close: number, confirmedEma: number | null = 100
     confirmedEma, previewEma: complete ? null : 100 };
 }
 
-function setup({ autoConnect = true } = {}) {
+function setup({ autoConnect = true, timeframe = config.timeframe }: { autoConnect?: boolean; timeframe?: Timeframe } = {}) {
+  const tradingConfig = { ...config, timeframe };
+  const selection = { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, timeframe };
+  const interval = timeframeMs[timeframe];
   const entries: JournalEntry[] = [];
   const submitted: JournalEntry[] = [];
   const lookups: [string, string | null][] = [];
   let listener: ((update: MarketUpdate) => void) | undefined;
   let reconnecting = false;
-  let now = opening + hourMs / 2;
+  let now = opening + interval / 2;
   let position = 0;
   let activeOrders = false;
   const store: TradingStore = {
     async reserve(order) {
       if (await store.hasUnresolved()) return false;
-      if (order.candleTime !== null && entries.some(row => row.candleTime === order.candleTime)) return false;
+      if (order.candleTime !== null && entries.some(row =>
+        row.candleTime === order.candleTime && row.timeframe === order.timeframe)) return false;
       entries.push({ ...order, status: 'reserved', brokerStatus: 'unknown', brokerOrderId: null, position: null,
         executedLots: null, executions: [] });
       return true;
@@ -43,7 +49,7 @@ function setup({ autoConnect = true } = {}) {
     async unresolved() { return entries.find(row => row.status === 'reserved' || row.status === 'unconfirmed') ?? null; },
   };
   const broker: Broker = {
-    async verifySelection(selection) { assert.deepEqual(selection, config); },
+    async verifySelection(selection) { assert.deepEqual(selection, tradingConfig); },
     async accountState() { return { position, activeOrders }; },
     async submit(token, order) {
       const saved = entries.find(row => row.id === order.id);
@@ -61,33 +67,52 @@ function setup({ autoConnect = true } = {}) {
   };
   const robot = new Robot(broker, store, {
     async subscribe(callback, pinned) {
-      assert.deepEqual(pinned, config);
+      assert.deepEqual(pinned, tradingConfig);
       listener = callback;
       if (autoConnect) listener({ stream: 'live' });
       return () => { listener = undefined; };
     },
-  }, async () => config, () => now);
+  }, async () => tradingConfig, () => now);
+  async function historyFor(timeframe: Timeframe, ...candles: Candle[]) {
+    const recoveredAt = reconnecting ? now : undefined;
+    reconnecting = false;
+    listener?.({ stream: 'live', recoveredAt, history: { ...selection, timeframe, candles } });
+    await setImmediate();
+  }
   return {
     robot, broker, store, submitted, lookups,
     isSubscribed: () => listener !== undefined,
-    setNow: (offset: number) => { now = opening + offset * hourMs; },
+    setNow: (offset: number) => { now = opening + offset * interval; },
     setAccount: (lots: number, active = false) => { position = lots; activeOrders = active; },
     disconnect: () => {
       reconnecting = true;
       listener?.({ stream: 'disconnected' });
     },
     backfill: (...candles: Candle[]) => listener?.({
-      stream: 'connecting', history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles },
+      stream: 'connecting', history: { ...selection, candles },
     }),
-    async history(...candles: Candle[]) {
-      const recoveredAt = reconnecting ? now : undefined;
-      reconnecting = false;
-      listener?.({ stream: 'live', recoveredAt,
-        history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles } });
-      await setImmediate();
-    },
+    history: (...candles: Candle[]) => historyFor(timeframe, ...candles),
+    historyFor,
   };
 }
+
+test('a 15-minute strategy trades at its own close, never on a different timeframe or without confirmed EMA', async () => {
+  const { robot, submitted, history, historyFor, setNow } = setup({ timeframe: '15m' });
+  const baseline = { ...candle(-1, 99), time: opening - timeframeMs['15m'] };
+  const signal = candle(0, 101);
+  await robot.start();
+  await history(baseline, signal);
+  assert.equal(submitted.length, 0, 'The selected interval has not closed');
+  setNow(1);
+  await historyFor('5m', { ...baseline, time: opening }, { ...signal, time: opening + timeframeMs['5m'] });
+  await history(baseline, { ...signal, confirmedEma: null });
+  assert.equal(submitted.length, 0, 'Only matching, confirmed EMA can trigger a trade');
+  await history(baseline, signal);
+  await history(baseline, signal);
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].signalTime, opening + timeframeMs['15m']);
+  assert.equal(submitted[0].timeframe, '15m');
+});
 
 for (const direction of [1, -1] as const) {
   test(`first crossing opens ${direction > 0 ? 'long' : 'short'} at N lots and records actual execution`, async () => {
@@ -746,7 +771,7 @@ test('startup keeps an unseen reserved request blocked; later reconciliation use
   const { accountId, instrumentUid, ticker } = config;
   await store.reserve({
     id: 'persisted-request', accountId, instrumentUid, ticker, action: 'ema-crossing',
-    candleTime: opening - hourMs, signalTime: opening, signalPrice: 101, ema: 100, manualCloseTime: null,
+    candleTime: opening - hourMs, signalTime: opening, signalPrice: 101, ema: 100, manualCloseTime: null, timeframe: '1h',
     direction: 'buy', lots: 3, fromPosition: 0, targetPosition: 3,
   });
   const orderState = broker.orderState;

@@ -1,6 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { StrategySettings } from '../core/strategy-settings.js';
+import { isTimeframe } from '../core/timeframe.js';
 
 function positiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
@@ -20,13 +21,13 @@ export function strategyRoutes(strategy: StrategySettings, requireOwner: Request
     res.json(await strategy.search(query));
   });
   router.put('/', async (req, res) => {
-    const { accountId, instrumentUid, emaPeriod, lots } = req.body ?? {};
+    const { accountId, instrumentUid, emaPeriod, lots, timeframe } = req.body ?? {};
     if (!isPrintableAscii(accountId, brokerIdLimit) || !isPrintableAscii(instrumentUid, brokerIdLimit)
-      || !positiveInt(emaPeriod) || !positiveInt(lots)) {
+      || !positiveInt(emaPeriod) || !positiveInt(lots) || !isTimeframe(timeframe)) {
       res.status(400).json({ code: 'INVALID_REQUEST' });
       return;
     }
-    await changeSettings(() => strategy.save({ accountId, instrumentUid, emaPeriod, lots }));
+    await changeSettings(() => strategy.save({ accountId, instrumentUid, emaPeriod, lots, timeframe }));
     onStrategyChange?.();
     res.status(204).end();
   });

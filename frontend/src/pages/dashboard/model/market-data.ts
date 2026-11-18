@@ -1,4 +1,6 @@
-export type MarketSelection = { instrumentUid: string; emaPeriod: number };
+import type { Timeframe } from './timeframe';
+
+export type MarketSelection = { instrumentUid: string; emaPeriod: number; timeframe: Timeframe };
 export type ChartCandle = {
   time: number; open: number; high: number; low: number; close: number; complete: boolean;
   confirmedEma: number | null; previewEma: number | null;
@@ -10,6 +12,10 @@ export type MarketChartData = MarketHistory & {
   historyAvailable: boolean;
   catchUp?: { receivedSnapshot: boolean; liveTimes: Record<number, true> };
 };
+
+export function sameMarketSelection(a: MarketSelection, b: MarketSelection) {
+  return a.instrumentUid === b.instrumentUid && a.emaPeriod === b.emaPeriod && a.timeframe === b.timeframe;
+}
 
 export function sameCandle(a: ChartCandle | undefined, b: ChartCandle) {
   return !!a && a.complete === b.complete && a.close === b.close && a.open === b.open

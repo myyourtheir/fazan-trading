@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/shared/ui';
 import type { JournalEntry } from '../api/journal-api';
 import { brokerStatuses } from '../lib/order-labels';
+import { timeframeLabels } from '../model/timeframe';
 
 const orderStatuses: Record<JournalEntry['status'], string> = {
   reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена', reconciled: 'Заявка и позиция сверены',
@@ -34,6 +35,7 @@ export function JournalOrder({ order }: { order: JournalEntry }) {
         <div className="grid gap-3 border-t p-3">
           {!manual && <section className="grid content-start gap-1">
             <h3 className="font-medium">Сигнал</h3>
+            <span>Таймфрейм: {timeframeLabels[order.timeframe]}</span>
             <span>Закрытие: {formatTime(order.signalTime)}</span>
             <span>Цена сигнала: {formatPrice(order.signalPrice)}</span>
             <span>EMA: {formatPrice(order.ema)}</span>

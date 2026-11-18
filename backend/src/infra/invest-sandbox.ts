@@ -11,8 +11,9 @@ import {
 import { AccountStatus } from '@ttech-pub/grpc-node-client/compiled/users.js';
 import { Status } from 'nice-grpc';
 import { SandboxError, virtualFundingRubles, type SandboxBroker } from '../core/sandbox.js';
-import type { HourlyCandle, MarketBroker } from '../core/market-data.js';
+import type { MarketCandle, MarketBroker } from '../core/market-data.js';
 import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from '../core/robot.js';
+import type { Timeframe } from '../core/timeframe.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
 const requestOptions = (signal?: AbortSignal, timeoutMs = 8_000) => {
@@ -25,12 +26,35 @@ const definiteRejections = new Set<unknown>([
 ]);
 const grpcCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 
-const hourlySubscription = SubscriptionInterval.SUBSCRIPTION_INTERVAL_ONE_HOUR;
+const intervals = {
+  '5m': {
+    candles: CandleInterval.CANDLE_INTERVAL_5_MIN,
+    ema: GetTechAnalysisRequest_IndicatorInterval.INDICATOR_INTERVAL_FIVE_MINUTES,
+    stream: SubscriptionInterval.SUBSCRIPTION_INTERVAL_FIVE_MINUTES,
+  },
+  '15m': {
+    candles: CandleInterval.CANDLE_INTERVAL_15_MIN,
+    ema: GetTechAnalysisRequest_IndicatorInterval.INDICATOR_INTERVAL_FIFTEEN_MINUTES,
+    stream: SubscriptionInterval.SUBSCRIPTION_INTERVAL_FIFTEEN_MINUTES,
+  },
+  '30m': {
+    candles: CandleInterval.CANDLE_INTERVAL_30_MIN,
+    ema: GetTechAnalysisRequest_IndicatorInterval.INDICATOR_INTERVAL_30_MIN,
+    stream: SubscriptionInterval.SUBSCRIPTION_INTERVAL_30_MIN,
+  },
+  '1h': {
+    candles: CandleInterval.CANDLE_INTERVAL_HOUR,
+    ema: GetTechAnalysisRequest_IndicatorInterval.INDICATOR_INTERVAL_ONE_HOUR,
+    stream: SubscriptionInterval.SUBSCRIPTION_INTERVAL_ONE_HOUR,
+  },
+} satisfies Record<Timeframe, {
+  candles: CandleInterval; ema: GetTechAnalysisRequest_IndicatorInterval; stream: SubscriptionInterval;
+}>;
 const price = ({ units, nano }: Quotation) => units + nano / 1e9;
 const brokerDirection = (direction: OrderIntent['direction']) =>
   direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL;
 
-function hourlyCandle({ time, open, high, low, close }: HistoricCandle | Candle, complete: boolean): HourlyCandle | null {
+function marketCandle({ time, open, high, low, close }: HistoricCandle | Candle, complete: boolean): MarketCandle | null {
   if (!time || !open || !high || !low || !close) return null;
   return { time: time.getTime(), open: price(open), high: price(high), low: price(low), close: price(close), complete };
 }
@@ -182,20 +206,20 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
     });
   }
 
-  candles(token: string, instrumentId: string, from: Date, to: Date, signal?: AbortSignal) {
+  candles(token: string, instrumentId: string, timeframe: Timeframe, from: Date, to: Date, signal?: AbortSignal) {
     return this.call(token, async ({ marketdata }) => {
       const { candles } = await marketdata.getCandles({
-        instrumentId, from, to, interval: CandleInterval.CANDLE_INTERVAL_HOUR,
+        instrumentId, from, to, interval: intervals[timeframe].candles,
       }, requestOptions(signal));
-      return candles.map(candle => hourlyCandle(candle, candle.isComplete)).filter(candle => candle !== null);
+      return candles.map(candle => marketCandle(candle, candle.isComplete)).filter(candle => candle !== null);
     });
   }
 
-  ema(token: string, instrumentUid: string, length: number, from: Date, to: Date, signal?: AbortSignal) {
+  ema(token: string, instrumentUid: string, timeframe: Timeframe, length: number, from: Date, to: Date, signal?: AbortSignal) {
     return this.call(token, async ({ marketdata }) => {
       const { technicalIndicators } = await marketdata.getTechAnalysis({
         instrumentUid, from, to, length,
-        interval: GetTechAnalysisRequest_IndicatorInterval.INDICATOR_INTERVAL_ONE_HOUR,
+        interval: intervals[timeframe].ema,
         indicatorType: GetTechAnalysisRequest_IndicatorType.INDICATOR_TYPE_EMA,
         typeOfPrice: GetTechAnalysisRequest_TypeOfPrice.TYPE_OF_PRICE_CLOSE,
       }, requestOptions(signal));
@@ -206,14 +230,15 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
     });
   }
 
-  async *stream(token: string, instrumentId: string, signal: AbortSignal) {
+  async *stream(token: string, instrumentId: string, timeframe: Timeframe, signal: AbortSignal) {
+    const interval = intervals[timeframe].stream;
     const silence = new AbortController();
     const watchdog = setTimeout(() => silence.abort(), 45_000);
     try {
       const responses = await this.call(token, async ({ marketdataStream }) => marketdataStream.marketDataServerSideStream({
         subscribeCandlesRequest: {
           subscriptionAction: SubscriptionAction.SUBSCRIPTION_ACTION_SUBSCRIBE, waitingClose: false,
-          instruments: [{ instrumentId, interval: hourlySubscription }],
+          instruments: [{ instrumentId, interval }],
         },
         pingSettings: { pingDelayMs: 15_000 },
       }, { signal: AbortSignal.any([signal, silence.signal]) }));
@@ -222,13 +247,13 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
         watchdog.refresh();
         if (subscribeCandlesResponse) {
           subscribed = subscribeCandlesResponse.candlesSubscriptions.some(subscription =>
-            subscription.instrumentUid === instrumentId && subscription.interval === hourlySubscription
+            subscription.instrumentUid === instrumentId && subscription.interval === interval
             && subscription.subscriptionStatus === SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS);
           if (!subscribed) throw new SandboxError('SANDBOX_OPERATION_REJECTED');
           yield { kind: 'subscribed' } as const;
         }
-        if (subscribed && candle?.instrumentUid === instrumentId && candle.interval === hourlySubscription) {
-          const update = hourlyCandle(candle, false);
+        if (subscribed && candle?.instrumentUid === instrumentId && candle.interval === interval) {
+          const update = marketCandle(candle, false);
           if (update) yield { kind: 'candle', candle: update } as const;
         }
       }

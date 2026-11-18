@@ -48,7 +48,7 @@ export default function TradingChart({
         <div
           ref={container}
           role="group"
-          aria-label="График часовых свечей"
+          aria-label="График свечей"
           className="h-80 w-full sm:h-96"
           onPointerEnter={() => {
             pointerInside.current = true;
