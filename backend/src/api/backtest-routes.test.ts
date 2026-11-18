@@ -145,6 +145,27 @@ test('an expired contract or conflicting EMA cannot produce a successful check',
   assert.equal(conflict.body.code, 'BACKTEST_HISTORY_CONFLICT');
 });
 
+test('EMA values that differ only by float rounding at a chunk seam do not conflict', async t => {
+  const { broker, candles } = data();
+  const boundary = start + (5 * 24 - 1) * hour;
+  candles.push(candle(boundary, 109));
+  const readEma = broker.ema;
+  broker.ema = async (...args) => {
+    const points = await readEma(...args);
+    const [, , , , from, to] = args;
+    // GetTechAnalysis recomputes EMA from its own start, so the same seam time can come back a few ulps apart.
+    if (+from <= boundary && boundary <= +to) {
+      points.push({ time: boundary, value: 2459.314608 + Number(+from > start) * 1e-6 });
+    }
+    return points;
+  };
+  const { request, authorize } = await serve(t, broker, start + 8 * 24 * hour);
+  const cookie = await authorize();
+  const response = await request('backtest/history', { ...form, to: '2026-11-24' }, cookie);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.candles.filter((row: { time: number }) => row.time === boundary).length, 1);
+});
+
 test('today reports the effective cutoff and does not treat a forming candle as history', async t => {
   const { broker, candles, ema } = data();
   const current = start + 13 * hour;

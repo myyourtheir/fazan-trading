@@ -49,6 +49,15 @@ function merge<T>(entries: Map<number, T>, time: number, value: T, equal: (a: T,
   entries.set(time, value);
 }
 
+// GetTechAnalysis recomputes EMA from each request's own start, so a value read on both sides of a
+// chunk seam can drift by a small relative amount without meaning the broker returned conflicting data.
+const emaSeamTolerance = 1e-9;
+function closeEnough(a: number, b: number) {
+  if (a === b) return true;
+  const scale = Math.max(Math.abs(a), Math.abs(b));
+  return Math.abs(a - b) <= scale * emaSeamTolerance;
+}
+
 function mergeCandle(entries: Map<number, MarketCandle>, candle: MarketCandle) {
   const previous = entries.get(candle.time);
   if (previous?.complete && !candle.complete) return;
@@ -99,7 +108,7 @@ export class BacktestHistory {
       for (const point of points) {
         // A forming candle cannot provide a confirmed value or a conflict with another request.
         if (point.time >= start && point.time <= stop && point.time < to && point.time + interval <= now) {
-          merge(ema, point.time, point.value, Object.is);
+          merge(ema, point.time, point.value, closeEnough);
         }
       }
       if (stop === end) break;
