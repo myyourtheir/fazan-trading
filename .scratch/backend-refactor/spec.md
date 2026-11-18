@@ -1,6 +1,6 @@
 # Спецификация: Слоистая структура бекенда
 
-Status: ready-for-agent
+Status: done
 
 ## Проблема
 

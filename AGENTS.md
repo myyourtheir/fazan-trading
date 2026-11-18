@@ -13,6 +13,7 @@
 - Keep signal and position-delta logic pure. The backend `Robot` owns feed lifecycle and order reconciliation; test its public behavior with fake `Broker` and `TradingStore` implementations, without a token or real hour-long waits.
 - Candle `time` is the opening timestamp in milliseconds. Streams and local EMA previews update the chart; orders require a completed candle and broker EMA for that same timestamp. Backfill sets the baseline but never trades, and first entry still requires a confirmed crossing.
 - Preserve reserve-before-send ordering through `TradingStore.reserve`. An ambiguous submission is reconciled using the original order ID, not retried as a new order. Stopping the robot does not flatten the position.
+- The backend source is layered: `src/core` holds the domain and scenarios and must not import `src/infra` or `src/api`; `src/infra` implements the ports that `core` declares; `src/api` is the HTTP/WS surface and never imports infra; `src/main.ts` is the only composition root. The check script in the backend `test` run enforces the matrix; see `docs/adr/0001-backend-layering.md`.
 
 ## Commits
 

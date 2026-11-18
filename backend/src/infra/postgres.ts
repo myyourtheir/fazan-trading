@@ -8,7 +8,7 @@ import type { SavedStrategy, StrategyStore } from '../core/strategy-settings.js'
 import type { OrderIntent, OrderResult, TradingStore } from '../core/robot.js';
 import * as schema from './db/schema.js';
 
-const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
+const migrationsFolder = fileURLToPath(new URL('../../migrations/', import.meta.url));
 const { ownerSessions, sandboxConnection, strategySettings, tradeOrders, tradeExecutions } = schema;
 type Database = NodePgDatabase<typeof schema>;
 
