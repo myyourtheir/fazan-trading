@@ -21,6 +21,7 @@ services:
       PGUSER: serfing
       PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       OWNER_PASSWORD: ${OWNER_PASSWORD:?Set OWNER_PASSWORD in .env}
+      SANDBOX_TOKEN_KEY: ${SANDBOX_TOKEN_KEY:?Set SANDBOX_TOKEN_KEY in .env}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
     depends_on:
       postgres:

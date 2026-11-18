@@ -1,5 +1,7 @@
 import express, { type ErrorRequestHandler, type Request, type RequestHandler } from 'express';
 import type { OwnerAuth } from './auth.js';
+import { SandboxError, type SandboxConnection } from './sandbox.js';
+import { sandboxRoutes } from './sandbox-routes.js';
 
 const cookieName = 'serfing_session';
 
@@ -8,7 +10,9 @@ function sessionToken(request: Request) {
     .find(value => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
 }
 
-export function createApp({ auth, secureCookies }: { auth: OwnerAuth; secureCookies: boolean }) {
+export function createApp({ auth, secureCookies, sandbox }: {
+  auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection;
+}) {
   const app = express();
   app.disable('x-powered-by');
   const api = express.Router();
@@ -66,10 +70,15 @@ export function createApp({ auth, secureCookies }: { auth: OwnerAuth; secureCook
     authenticated: true, remainingMs: res.locals.sessionRemainingMs,
   }));
   api.get('/dashboard', requireOwner, (_req, res) => res.json({ mode: 'stopped' }));
+  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner));
   api.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND' }));
 
   const onError: ErrorRequestHandler = (error: unknown, _req, res, next) => {
     if (res.headersSent) return next(error);
+    if (error instanceof SandboxError) {
+      res.status(error.status).json({ code: error.code });
+      return;
+    }
     const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
     if (status === 400 || status === 413) {
       res.status(status).json({ code: 'INVALID_REQUEST' });

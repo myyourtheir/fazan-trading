@@ -3,10 +3,11 @@ import { and, eq, gt, lte } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { SessionStore } from './auth.js';
+import type { SandboxStore, SavedSandboxConnection } from './sandbox.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
-const { ownerSessions } = schema;
+const { ownerSessions, sandboxConnection } = schema;
 type Database = NodePgDatabase<typeof schema>;
 
 export function connectToPostgres(connectionString: string | undefined) {
@@ -37,5 +38,21 @@ export class PostgresSessions implements SessionStore {
 
   async revoke(digest: string) {
     await this.db.delete(ownerSessions).where(eq(ownerSessions.tokenDigest, digest));
+  }
+}
+
+export class PostgresSandboxConnection implements SandboxStore {
+  constructor(private readonly db: Database) {}
+
+  async load() {
+    const { encryptedToken, accountId } = sandboxConnection;
+    const [saved] = await this.db.select({ encryptedToken, accountId }).from(sandboxConnection)
+      .where(eq(sandboxConnection.id, 1));
+    return saved ?? null;
+  }
+
+  async save(connection: SavedSandboxConnection) {
+    await this.db.insert(sandboxConnection).values({ id: 1, ...connection })
+      .onConflictDoUpdate({ target: sandboxConnection.id, set: connection });
   }
 }

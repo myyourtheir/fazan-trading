@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const project = `serfing-test-${randomBytes(6).toString('hex')}`;
 const password = randomBytes(24).toString('hex');
 const env = { ...process.env, OWNER_PASSWORD: password, POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
-  COOKIE_SECURE: 'false', FRONTEND_PORT: '0' };
+  SANDBOX_TOKEN_KEY: randomBytes(32).toString('hex'), COOKIE_SECURE: 'false', FRONTEND_PORT: '0' };
 const cwd = fileURLToPath(new URL('..', import.meta.url));
 const compose = (...args) => execFileSync('docker', ['compose', '-p', project, ...args], {
   cwd, env, encoding: 'utf8', timeout: 180_000,
@@ -32,7 +32,7 @@ try {
   }
   compose('up', '--build', '--wait');
   const origin = `http://${compose('port', 'frontend', '80')}/api`;
-  assert.equal(migrations(), '1');
+  assert.equal(migrations(), '2');
   assert.equal((await fetch(`${origin}/dashboard`)).status, 401);
   if (legacyToken) {
     const response = await fetch(`${origin}/dashboard`, { headers: { cookie: `serfing_session=${legacyToken}` } });
@@ -48,7 +48,7 @@ try {
 
   // Force a new backend container without touching the frontend or the database.
   compose('up', '-d', '--no-deps', '--force-recreate', '--wait', 'backend');
-  assert.equal(migrations(), '1');
+  assert.equal(migrations(), '2');
   let status = (await dashboard()).status;
   for (let attempt = 0; status === 502 && attempt < 6; attempt++) {
     await delay(1_000);

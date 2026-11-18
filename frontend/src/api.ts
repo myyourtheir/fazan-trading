@@ -3,16 +3,51 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 type Authenticated = { authenticated: true };
 type Session = Authenticated & { remainingMs: number };
 type Dashboard = { mode: 'stopped' };
+type SandboxAccount = { id: string; name: string };
+export type SandboxStatus = {
+  accountId: string | null;
+  accounts: SandboxAccount[];
+} & ({ status: 'connected'; virtualFundingRubles: number }
+  | { status: 'unconfigured' }
+  | { status: 'unavailable'; code: string });
+
+export function hasStatus(error: unknown, status: number) {
+  return typeof error === 'object' && error !== null && 'status' in error && error.status === status;
+}
+
 const mutationHeaders = { 'X-Serfing-Request': '1' };
-const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard'] as const;
+const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard', 'Sandbox'] as const;
+const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox'] as const;
+
+// RTK Query mutation arguments appear in Redux actions. Keep this credential out of Redux.
+export async function saveSandboxToken(token: string): Promise<{ status: number; data: unknown } | null> {
+  const response = await fetch('/api/sandbox/connection', {
+    method: 'PUT', credentials: 'same-origin',
+    headers: { ...mutationHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  return response.ok ? null : { status: response.status, data: await response.json().catch(() => null) };
+}
 
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({ baseUrl: '/api', credentials: 'same-origin' }),
-  tagTypes: ['Session', 'Dashboard'],
+  tagTypes: ['Session', 'Dashboard', 'Sandbox'],
   endpoints: builder => ({
     session: builder.query<Session, void>({ query: () => 'auth/session', providesTags: ['Session'] }),
     dashboard: builder.query<Dashboard, void>({ query: () => 'dashboard', providesTags: ['Dashboard'] }),
+    sandbox: builder.query<SandboxStatus, void>({ query: () => 'sandbox', providesTags: ['Sandbox'] }),
+    selectSandboxAccount: builder.mutation<null, string>({
+      query: accountId => ({ url: 'sandbox/account', method: 'PUT', headers: mutationHeaders, body: { accountId } }),
+      invalidatesTags: changedSandboxTags,
+    }),
+    createSandboxAccount: builder.mutation<null, void>({
+      query: () => ({ url: 'sandbox/accounts', method: 'POST', headers: mutationHeaders }),
+      invalidatesTags: changedSandboxTags,
+    }),
+    fundSandboxAccount: builder.mutation<null, string>({
+      query: accountId => ({ url: 'sandbox/funding', method: 'POST', headers: mutationHeaders, body: { accountId } }),
+    }),
     login: builder.mutation<Authenticated, string>({
       query: password => ({ url: 'auth/login', method: 'POST', headers: mutationHeaders, body: { password } }),
       invalidatesTags: changedSessionTags,

@@ -21,6 +21,7 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
         return route.fulfill({ status: 204 });
       }
       if (!signedIn) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
+      if (path.endsWith('/sandbox')) return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
       return route.fulfill({ json: path.endsWith('/dashboard')
         ? { mode: 'stopped' } : { authenticated: true, remainingMs: 60_000 } });
     });
@@ -60,6 +61,9 @@ test('the protected panel closes when a session expires in a focused tab', async
   let expired = false;
   await page.route('**/api/**', route => {
     if (expired) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
+    if (new URL(route.request().url()).pathname.endsWith('/sandbox')) {
+      return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
+    }
     const dashboard = new URL(route.request().url()).pathname.endsWith('/dashboard');
     return route.fulfill({ json: dashboard ? { mode: 'stopped' } : { authenticated: true, remainingMs: 5_000 } });
   });

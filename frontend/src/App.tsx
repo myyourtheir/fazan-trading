@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useState, type FormEvent } from 'react';
 import { Alert, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -6,12 +6,9 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
-import { api } from './api';
+import { api, hasStatus } from './api';
+import { SandboxSettings } from './SandboxSettings';
 import { toggleTheme, useAppDispatch, useAppSelector } from './store';
-
-function hasStatus(error: unknown, status: number) {
-  return typeof error === 'object' && error !== null && 'status' in error && error.status === status;
-}
 
 function Login() {
   const [password, setPassword] = useState('');
@@ -77,7 +74,7 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
       <CardHeader>
         <Badge variant="secondary" className="justify-self-start">Песочница</Badge>
         <CardTitle><h1>Панель робота</h1></CardTitle>
-        <CardDescription>Подключение брокера и торговые команды пока недоступны.</CardDescription>
+        <CardDescription>Настройте подключение к песочнице. Торговые команды пока недоступны.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col items-start gap-3">
         {dashboard.isLoading && <p role="status" className="flex items-center gap-2">
@@ -86,6 +83,7 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
         {dashboard.isError && <Alert variant="destructive"><AlertTitle>Не удалось загрузить состояние робота.</AlertTitle></Alert>}
         {dashboard.isError && <Button variant="outline" onClick={dashboard.refetch}>Повторить</Button>}
         {dashboard.data?.mode === 'stopped' && <Badge variant="outline">Робот остановлен</Badge>}
+        {dashboard.data && <SandboxSettings refreshSession={refreshSession} />}
         {error && <Alert variant="destructive"><AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle></Alert>}
       </CardContent>
       <CardFooter>
@@ -104,6 +102,7 @@ export function App() {
   const session = api.useSessionQuery(undefined, { refetchOnFocus: true, refetchOnReconnect: true });
   const [expiredCheck, setExpiredCheck] = useState<number>();
   const { data, fulfilledTimeStamp, refetch } = session;
+  const refreshSession = useCallback(() => { void refetch(); }, [refetch]);
   useLayoutEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
   }, [dark]);
@@ -128,7 +127,7 @@ export function App() {
           ? <p role="status" className="flex items-center gap-2"><Spinner aria-hidden="true" /> Проверяем сессию…</p>
           : hasStatus(session.error, 401) ? <Login />
           : session.isError ? <RecoveryCard message="Сервер недоступен." action="Повторить" onRetry={refetch} />
-          : data?.authenticated ? <Dashboard refreshSession={() => void refetch()} /> : null}
+          : data?.authenticated ? <Dashboard refreshSession={refreshSession} /> : null}
       </main>
     </div>
   );

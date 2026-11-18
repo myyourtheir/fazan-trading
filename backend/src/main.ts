@@ -1,7 +1,10 @@
 import { once } from 'node:events';
 import { createApp } from './app.js';
 import { OwnerAuth } from './auth.js';
-import { connectToPostgres, migrateDatabase, PostgresSessions } from './postgres.js';
+import { InvestSandbox } from './invest-sandbox.js';
+import { connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions } from './postgres.js';
+import { SandboxConnection } from './sandbox.js';
+import { TokenCipher } from './token-cipher.js';
 
 async function main() {
   const { DATABASE_URL, PGHOST, OWNER_PASSWORD, COOKIE_SECURE = 'true', HOST = '127.0.0.1', PORT = '3000' } = process.env;
@@ -12,12 +15,14 @@ async function main() {
   if (!['true', 'false'].includes(COOKIE_SECURE)) throw new Error('COOKIE_SECURE must be true or false.');
   const port = Number(PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number.');
+  const cipher = new TokenCipher(process.env.SANDBOX_TOKEN_KEY);
 
   const { db, close } = connectToPostgres(DATABASE_URL);
   try {
     await migrateDatabase(db);
     const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
-    const server = createApp({ auth, secureCookies: COOKIE_SECURE === 'true' }).listen(port, HOST);
+    const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, new InvestSandbox());
+    const server = createApp({ auth, sandbox, secureCookies: COOKIE_SECURE === 'true' }).listen(port, HOST);
     await once(server, 'listening');
     console.log(`Serfing API is listening on ${HOST}:${port}.`);
     const shutdown = () => server.close(() => { void close(); });
