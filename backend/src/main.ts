@@ -44,6 +44,7 @@ async function main() {
         ticker: settings.instrument.ticker, emaPeriod: settings.emaPeriod, lots: settings.lots,
       };
     });
+    await robot.restore();
     const server = createServer();
     const marketSocket = attachMarketSocket(server, auth, market, robot);
     server.on('request', createApp({

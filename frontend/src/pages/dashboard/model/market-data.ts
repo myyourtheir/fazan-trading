@@ -10,7 +10,10 @@ export type MarketChartData = MarketHistory & { stream: StreamState; historyAvai
 export function addCandles(candles: ChartCandle[], updates: ChartCandle[]) {
   const byTime = new Map(candles.map(candle => [candle.time, candle]));
   for (const candle of updates) {
-    if (candle.complete || !byTime.get(candle.time)?.complete) byTime.set(candle.time, candle);
+    const previous = byTime.get(candle.time);
+    if (!candle.complete && previous?.complete) continue;
+    const confirmedEma = candle.complete ? candle.confirmedEma ?? previous?.confirmedEma ?? null : null;
+    byTime.set(candle.time, { ...candle, confirmedEma });
   }
   const sorted = [...byTime.values()].sort((a, b) => a.time - b.time);
   return sorted.map((candle, index) =>

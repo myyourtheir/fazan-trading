@@ -90,13 +90,17 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   let streams = 0;
   let now = openTime + 1;
   let reachedSecondAttempt = false;
+  let reconnectEmaAvailable = false;
   let disconnect!: () => void;
   const broker: MarketBroker = {
     async candles() {
       return [candle(previous, 100, true), candle(openTime, 110, reachedSecondAttempt),
         ...(reachedSecondAttempt ? [candle(openTime + hour, 112, false)] : [])];
     },
-    async ema() { return [{ time: previous, value: 102 }, { time: openTime, value: 106 }]; },
+    async ema() {
+      if (reachedSecondAttempt && !reconnectEmaAvailable) throw new Error('EMA temporarily unavailable');
+      return [{ time: previous, value: 102 }, { time: openTime, value: 106 }];
+    },
     async *stream(_token, _uid, signal) {
       reachedSecondAttempt = ++streams === 2;
       yield { kind: 'subscribed' };
@@ -107,7 +111,7 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
       });
     },
   };
-  const market = new MarketData(broker, async () => config, { retryMs: 5, now: () => now });
+  const market = new MarketData(broker, async () => config, { retryMs: 5, refreshMs: 10, now: () => now });
   const first: MarketUpdate[] = [];
   const second: MarketUpdate[] = [];
   t.after(await market.subscribe(update => first.push(update)));
@@ -117,6 +121,10 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   now += hour;
   disconnect();
   await until(() => second.some(update => update.history?.candles.length === 3));
+  const afterDisconnect = second.slice(second.findIndex(update => update.stream === 'disconnected') + 1);
+  assert.ok(afterDisconnect.every(update => update.stream !== 'live'), 'Reconnection stays blocked until EMA backfill succeeds');
+  reconnectEmaAvailable = true;
+  await until(() => second.at(-1)?.stream === 'live');
   const duringBreak = first.find(update => update.stream === 'disconnected')?.history?.candles.at(-1);
   assert.equal(duringBreak?.time, openTime);
   assert.equal(duringBreak?.previewEma, null);

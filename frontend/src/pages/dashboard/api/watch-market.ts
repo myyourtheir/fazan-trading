@@ -18,16 +18,19 @@ export async function watchMarket(
   selection: MarketSelection,
   removed: Promise<void>,
   update: (recipe: (data: MarketChartData) => void) => void,
-  onReload: () => void,
+  { refreshHistory, reloadSelection }: { refreshHistory: () => void; reloadSelection: () => void },
 ) {
   await watchSocket('/api/market/live', removed, {
     onConnect: () => update(data => { data.stream = 'connecting'; }),
+    onReconnect: refreshHistory,
     onMessage(message: MarketUpdate) {
       const payload = message.history ?? message.tick;
       if (payload && (payload.instrumentUid !== selection.instrumentUid || payload.emaPeriod !== selection.emaPeriod)) return;
       update(cache => {
         if (message.history) {
-          cache.candles = message.history.candles;
+          const snapshot = message.history.candles;
+          const from = snapshot[0]?.time ?? -Infinity;
+          cache.candles = addCandles(cache.candles.filter(candle => candle.time >= from), snapshot);
           cache.historyAvailable = true;
         } else if (message.tick) {
           cache.candles = addCandles(cache.candles, [message.tick.candle]);
@@ -37,7 +40,7 @@ export async function watchMarket(
     },
     onClose(code) {
       update(data => setStream(data, 'disconnected'));
-      if (code === 1012) onReload();
+      if (code === 1012) reloadSelection();
     },
   });
 }

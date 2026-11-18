@@ -115,6 +115,7 @@ test('the server rejects trading settings changes until stopped and broker-confi
     async orderState() { assert.fail('No order expected'); },
   }, {
     async hasUnresolved() { return false; },
+    async unresolved() { return null; },
     async history() { return []; },
     async reserve() { assert.fail('No reservation expected'); },
     async record() { assert.fail('No order expected'); },

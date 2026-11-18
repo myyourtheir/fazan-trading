@@ -76,6 +76,8 @@ export class PostgresStrategySettings implements StrategyStore {
   }
 }
 
+const unresolvedOrders = () => inArray(tradeOrders.status, ['reserved', 'unconfirmed']);
+
 export class PostgresTradingStore implements TradingStore {
   constructor(private readonly db: Database) {}
 
@@ -97,13 +99,23 @@ export class PostgresTradingStore implements TradingStore {
 
   async hasUnresolved() {
     const rows = await this.db.select({ id: tradeOrders.id }).from(tradeOrders)
-      .where(inArray(tradeOrders.status, ['reserved', 'unconfirmed'])).limit(1);
+      .where(unresolvedOrders()).limit(1);
     return rows.length > 0;
   }
 
-  async history(accountId?: string) {
+  async unresolved() {
+    // The partial unique index allows at most one unresolved intent.
+    const [order] = await this.readJournal(unresolvedOrders());
+    return order ?? null;
+  }
+
+  history(accountId?: string) {
+    return this.readJournal(accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId));
+  }
+
+  private async readJournal(filter?: ReturnType<typeof eq>) {
     const rows = await this.db.select().from(tradeOrders).leftJoin(tradeExecutions, eq(tradeOrders.id, tradeExecutions.orderId))
-      .where(accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId))
+      .where(filter)
       .orderBy(desc(sql`coalesce(${tradeOrders.signalTime}, ${tradeOrders.manualCloseTime})`), tradeOrders.id, tradeExecutions.sequence);
     const journal = new Map<string, Awaited<ReturnType<TradingStore['history']>>[number]>();
     for (const { trade_orders: order, trade_executions: execution } of rows) {

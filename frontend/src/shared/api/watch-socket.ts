@@ -1,7 +1,12 @@
 export async function watchSocket<Message>(
   path: string,
   removed: Promise<void>,
-  handlers: { onConnect?: () => void; onMessage: (message: Message) => void; onClose?: (code: number) => void },
+  handlers: {
+    onConnect?: () => void;
+    onReconnect?: () => void;
+    onMessage: (message: Message) => void;
+    onClose?: (code: number) => void;
+  },
 ) {
   let socket: WebSocket | undefined;
   let retry: number | undefined;
@@ -10,7 +15,9 @@ export async function watchSocket<Message>(
 
   function connect() {
     handlers.onConnect?.();
+    const reconnecting = socket !== undefined;
     const ws = socket = new WebSocket(url);
+    if (reconnecting) ws.onopen = () => handlers.onReconnect?.();
     ws.onmessage = ({ data }) => {
       try {
         handlers.onMessage(JSON.parse(data) as Message);
@@ -26,7 +33,7 @@ export async function watchSocket<Message>(
   await removed;
   window.clearTimeout(retry);
   if (socket) {
-    socket.onmessage = socket.onclose = null;
+    socket.onopen = socket.onmessage = socket.onclose = null;
     socket.close();
   }
 }

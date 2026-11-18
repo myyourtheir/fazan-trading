@@ -340,6 +340,46 @@ test('live ticks remain visible when initial REST history fails', async ({ page 
   await expect(chart.getByLabel('Последняя свеча')).toContainText('107');
 });
 
+test('browser sockets reconnect and catch up over REST without losing newer live ticks', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market and trading data.');
+  const market = await mockMarket(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Запустить робота' }).click();
+  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  await expect(chart.getByText(/1 св\./)).toBeVisible();
+  await expect(page.getByText('Робот запущен')).toBeVisible();
+  await expect.poll(() => market.sockets.length).toBe(1);
+  await expect.poll(() => market.tradingSockets.length).toBe(1);
+  market.sockets[0].send(JSON.stringify({ stream: 'live', history: { ...market.selection, candles: [market.candle] } }));
+  await expect(chart.getByText('Поток подключён')).toBeVisible();
+
+  const missed = { ...market.nextCandle, complete: true, close: 106, confirmedEma: 103 };
+  const current = { ...market.nextCandle, time: missed.time + 3_600_000, close: 107 };
+  let release!: () => void;
+  const restGate = new Promise<void>(resolve => { release = resolve; });
+  await page.route('**/api/market', async route => {
+    await restGate;
+    await route.fulfill({ json: { ...market.selection, candles: [market.candle, missed, current] } });
+  });
+  const catchUp = page.waitForRequest(request => new URL(request.url()).pathname === '/api/market');
+  await Promise.all([market.sockets[0].close({ code: 1011 }), market.tradingSockets[0].close({ code: 1011 })]);
+  await expect(chart.getByText('Поток прерван')).toBeVisible();
+  market.setOrders(filledOrder(market.candle));
+  try {
+    await expect.poll(() => market.sockets.length).toBe(2);
+    await catchUp;
+    market.sockets[1].send(JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: { ...current, close: 112 } } }));
+    await expect(chart.getByLabel('Последняя свеча')).toContainText('112');
+  } finally {
+    release();
+  }
+  await expect(chart.getByText(/3 св\./)).toBeVisible();
+  await expect(chart.getByLabel('Последняя свеча')).toContainText('112');
+  await expect(page.getByText('Робот запущен')).toBeVisible();
+  await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
+  await expect(page.getByText('Покупка · IMOEXF')).toBeVisible();
+});
+
 test('zooming and scrolling history keeps the selected time across live updates and backfill', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, history, sockets } = await mockMarket(page, { historySize: 80 });

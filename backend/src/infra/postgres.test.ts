@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
-import { hourMs } from '../core/market-data.js';
-import type { OrderIntent } from '../core/robot.js';
+import { hourMs, type MarketUpdate } from '../core/market-data.js';
+import { Robot, type Broker, type OrderIntent } from '../core/robot.js';
 import { SandboxConnection } from '../core/sandbox.js';
 import { fakeBroker, token } from '../core/sandbox.test-support.js';
 import { StrategySettings } from '../core/strategy-settings.js';
@@ -115,6 +116,99 @@ test('PostgreSQL preserves separate orders and executions and rejects duplicate 
     assert.deepEqual(journal.find(row => row.id === close.id), { ...close, ...result, position: 0, executions: [] });
     assert.deepEqual(await store.history(`test-${randomUUID()}`), []);
   } finally {
+    await second.close();
+  }
+});
+
+test('a restarted robot restores persisted settings and the reserved client ID without resending a replay', { skip: !testDatabase }, async () => {
+  const { broker: sandboxBroker } = fakeBroker();
+  const candleTime = Date.UTC(2026, 10, 18, 12);
+  const signalTime = candleTime + hourMs;
+  const first = connectToPostgres(testDatabase);
+  let original!: OrderIntent;
+  try {
+    await migrateDatabase(first.db);
+    const sandbox = new SandboxConnection(new PostgresSandboxConnection(first.db), cipher, sandboxBroker);
+    await sandbox.connect(token);
+    await sandbox.selectAccount('existing');
+    const strategy = new StrategySettings(new PostgresStrategySettings(first.db), sandbox);
+    await strategy.search('IMOEXF');
+    await strategy.save({ accountId: 'existing', instrumentUid: 'contract-a', emaPeriod: 34, lots: 2 });
+    original = {
+      id: randomUUID(), accountId: 'existing', instrumentUid: 'contract-a', ticker: 'IMOEXF',
+      action: 'ema-crossing', candleTime, signalTime, signalPrice: 99, ema: 100, manualCloseTime: null,
+      direction: 'sell', fromPosition: 0, targetPosition: -2, lots: 2,
+    };
+    assert.equal(await new PostgresTradingStore(first.db).reserve(original), true);
+  } finally {
+    await first.close();
+  }
+
+  const second = connectToPostgres(testDatabase);
+  const sandbox = new SandboxConnection(new PostgresSandboxConnection(second.db), cipher, sandboxBroker);
+  const strategy = new StrategySettings(new PostgresStrategySettings(second.db), sandbox);
+  const store = new PostgresTradingStore(second.db);
+  let listener: ((update: MarketUpdate) => void) | undefined;
+  let position = -2;
+  let now = signalTime - 1; // Exercise the database guard even if a clock correction makes a replay look fresh.
+  const submissions: OrderIntent[] = [];
+  const lookups: [string, string | null][] = [];
+  const broker: Broker = {
+    async verifySelection() {},
+    async accountState() { return { position, activeOrders: false }; },
+    async submit(_token, order) {
+      submissions.push(order);
+      position = order.targetPosition;
+      return { brokerOrderId: 'new-exchange-id', brokerStatus: 'filled', executedLots: order.lots };
+    },
+    async orderState(_token, order, id) {
+      lookups.push([order.id, id]);
+      return { brokerOrderId: id ?? 'recovered-exchange-id', brokerStatus: 'filled', executedLots: order.lots,
+        executions: [{ tradeId: 'fill', lots: order.lots, price: 98.5, time: signalTime + 3_000 }] };
+    },
+  };
+  const robot = new Robot(broker, store, {
+    async subscribe(callback, config) {
+      assert.equal(config?.emaPeriod, 34);
+      listener = callback;
+      listener({ stream: 'live' });
+      return () => { listener = undefined; };
+    },
+  }, async () => {
+    const { settings } = await strategy.get();
+    assert.ok(settings);
+    return { ...await sandbox.tradingCredentials(), instrumentUid: settings.instrument.uid,
+      ticker: settings.instrument.ticker, emaPeriod: settings.emaPeriod, lots: settings.lots };
+  }, () => now);
+  const replay = (...closes: number[]) => listener?.({ stream: 'live', history: {
+    instrumentUid: original.instrumentUid, emaPeriod: 34,
+    candles: closes.map((close, index) => ({ time: candleTime + (index - 1) * hourMs,
+      close, open: close, high: close, low: close, complete: true, confirmedEma: 100, previewEma: null })),
+  } });
+  try {
+    await robot.restore();
+    assert.deepEqual(robot.status(), { mode: 'stopped', reason: null, position: -2,
+      recovery: { orderId: original.id, ready: true } });
+    assert.equal(listener, undefined);
+    assert.equal(submissions.length, 0);
+    assert.deepEqual(lookups, [[original.id, null]]);
+    const [restored] = await robot.history(original.accountId);
+    assert.equal(restored.id, original.id);
+    assert.equal(restored.status, 'confirmed');
+    assert.equal(restored.executions[0].price, 98.5);
+    assert.equal((await strategy.get()).settings?.lots, 2);
+    assert.equal(await store.reserve({ ...original, id: randomUUID() }), false);
+
+    await robot.resume();
+    now = signalTime;
+    replay(99, 101); // A corrected replay would reverse the position if its reservation were not deduplicated.
+    await setImmediate();
+    await robot.shutdown();
+    assert.equal(submissions.length, 0);
+    assert.deepEqual(lookups, [[original.id, null]]);
+    assert.equal((await robot.history(original.accountId)).length, 1);
+  } finally {
+    await robot.shutdown();
     await second.close();
   }
 });

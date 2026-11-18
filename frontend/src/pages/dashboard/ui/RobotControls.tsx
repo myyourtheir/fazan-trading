@@ -7,6 +7,7 @@ import { OrderRecovery } from './OrderRecovery';
 const modes: Record<Dashboard['mode'], string> = {
   stopped: 'Робот остановлен', starting: 'Робот запускается',
   running: 'Робот запущен', paused: 'Робот на паузе',
+  reconnecting: 'Робот ждёт восстановления потока',
 };
 
 export function RobotControls({ dashboard, closeTarget, accountId }: {

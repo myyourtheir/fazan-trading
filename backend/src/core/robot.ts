@@ -37,6 +37,7 @@ export interface TradingStore {
   reserve(order: OrderIntent): Promise<boolean>;
   record(id: string, result: OrderResult): Promise<void>;
   hasUnresolved(): Promise<boolean>;
+  unresolved(): Promise<JournalEntry | null>;
   history(accountId?: string): Promise<JournalEntry[]>;
 }
 
@@ -45,9 +46,10 @@ export class RobotError extends Error {
   constructor(readonly code: string) { super(code); }
 }
 
+type LiveSession = { since: number };
 type Run = {
-  config: TradingConfig; liveSince: number | null; lastAttemptedCandleOpenMs: number; hasConfirmedEntry: boolean;
-  cancelledBy?: 'stopped-before-send' | 'feed-lost-before-send';
+  config: TradingConfig; session?: LiveSession; lastAttemptedCandleOpenMs: number; hasConfirmedEntry: boolean;
+  stopped?: boolean;
   unsubscribe?: () => void;
 };
 type Signal = { candleTime: number; signalTime: number; signalPrice: number; ema: number; targetPosition: number };
@@ -59,7 +61,7 @@ const unknownOrder: BrokerOrder = {
 };
 
 export class Robot {
-  private mode: 'stopped' | 'starting' | 'running' | 'paused' = 'stopped';
+  private mode: 'stopped' | 'starting' | 'running' | 'reconnecting' | 'paused' = 'stopped';
   private reason: string | null = null;
   private position: number | null = null;
   private run?: Run;
@@ -116,6 +118,43 @@ export class Robot {
     }
   }
 
+  async restore() {
+    this.requireStopped();
+    this.pending = this.restoreStopped().finally(() => {
+      this.pending = undefined;
+      this.publish();
+    });
+    await this.pending;
+  }
+
+  private async restoreStopped() {
+    const order = await this.store.unresolved();
+    if (order) {
+      const { brokerOrderId, brokerStatus, executedLots, executions } = order;
+      this.recovery = {
+        order, state: { brokerOrderId, brokerStatus, executedLots, executions }, verifiedPosition: null,
+        rejectedBeforeAcceptance: brokerOrderId === null && brokerStatus === 'rejected' && executedLots === 0,
+      };
+      this.reason = 'ROBOT_ORDER_UNRESOLVED';
+    }
+    this.position = null;
+    // A fresh installation (or an unreadable credential) must still allow owner login.
+    const config = await this.loadConfig().catch(() => null);
+    if (!config) return;
+    if (this.recovery) {
+      if (!sameSelection(config, this.recovery.order)) {
+        this.reason = 'ROBOT_SELECTION_CHANGED';
+        return;
+      }
+      await this.reconcileOrder(this.recovery, config);
+    } else {
+      this.reason = await this.readPosition(config, false).then(
+        () => null,
+        error => error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED',
+      );
+    }
+  }
+
   async start() {
     this.requireStopped();
     await this.beginTradingRun(async () => {
@@ -167,7 +206,7 @@ export class Robot {
         this.publish();
         return;
       }
-      const next: Run = { config, liveSince: null, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry };
+      const next: Run = { config, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry };
       this.run = run = next;
       this.reason = null;
       const unsubscribe = await this.market.subscribe(update => this.onMarket(next, update), config);
@@ -190,9 +229,9 @@ export class Robot {
   }
 
   stop() {
-    if (!this.starting && this.recovery?.verifiedPosition != null) this.recovery = undefined;
+    if (!this.starting && !this.pending && this.recovery?.verifiedPosition != null) this.recovery = undefined;
     else if (this.mode === 'stopped') return;
-    if (this.run) this.run.cancelledBy = 'stopped-before-send';
+    if (this.run) this.run.stopped = true;
     this.clearRun();
     this.mode = 'stopped';
     if (!this.recovery) this.reason = null;
@@ -219,7 +258,7 @@ export class Robot {
 
   private async recoveryConfig({ order }: Recovery) {
     const config = await this.loadConfig();
-    if (config.accountId !== order.accountId || config.instrumentUid !== order.instrumentUid) {
+    if (!sameSelection(config, order)) {
       throw new RobotError('ROBOT_SELECTION_CHANGED');
     }
     return config;
@@ -234,11 +273,11 @@ export class Robot {
     await this.pending;
   }
 
-  private async reconcileOrder(recovery: Recovery) {
+  private async reconcileOrder(recovery: Recovery, restoredConfig?: TradingConfig) {
     recovery.verifiedPosition = null;
     this.position = null;
     this.reason = 'ROBOT_ORDER_UNRESOLVED';
-    const config = await this.recoveryConfig(recovery);
+    const config = restoredConfig ?? await this.recoveryConfig(recovery);
     const { order } = recovery;
     // Always ask with the original saved request ID, not a new order or a guessed exchange ID.
     const { state: lookup, account } = await this.readOrderAndAccount(config, order, null);
@@ -273,7 +312,7 @@ export class Robot {
     await this.requireNoUnresolved();
     const config = await this.loadConfig();
     const { accountId, instrumentUid, ticker } = config;
-    if (selection.accountId !== accountId || selection.instrumentUid !== instrumentUid) {
+    if (!sameSelection(config, selection)) {
       throw new RobotError('ROBOT_SELECTION_CHANGED');
     }
     const fromPosition = await this.readPosition(config, false);
@@ -314,20 +353,27 @@ export class Robot {
 
   private onMarket(run: Run, { stream, history }: MarketUpdate) {
     if (this.run !== run) return;
-    if (stream === 'disconnected' || stream === 'unconfigured') {
-      run.cancelledBy = 'feed-lost-before-send';
-      return this.pause(run, 'ROBOT_FEED_LOST');
+    if (stream === 'unconfigured') return this.pause(run, 'ROBOT_FEED_LOST');
+    if (stream === 'disconnected' || (stream === 'connecting' && run.session)) {
+      run.session = undefined;
+      this.mode = 'reconnecting';
+      this.reason = 'ROBOT_FEED_LOST';
+      this.publish();
+      return;
     }
     if (stream !== 'live') return;
-    const since = run.liveSince ??= this.now();
-    if (!history || this.pending) return;
-    if (history.instrumentUid !== run.config.instrumentUid || history.emaPeriod !== run.config.emaPeriod) return;
-    if (this.mode === 'starting') {
+    if (history && (history.instrumentUid !== run.config.instrumentUid || history.emaPeriod !== run.config.emaPeriod)) return;
+    if (this.mode === 'reconnecting' && !history) return;
+    const session = run.session ??= { since: this.now() };
+    if (!history) return;
+    if (this.mode === 'starting' || this.mode === 'reconnecting') {
       this.mode = 'running';
+      this.reason = null;
       this.publish();
     }
-    if (this.recovery) return;
+    if (this.recovery || this.pending) return;
 
+    const { since } = session;
     const now = this.now();
     let side: Side | null = null;
     let historicalEmaPending = false;
@@ -352,16 +398,20 @@ export class Robot {
         signalTime, signalPrice: candle.close, ema: candle.confirmedEma,
         targetPosition: next.direction * run.config.lots,
       };
-      this.pending = this.trade(run, signal).catch(error => {
+      this.pending = this.trade(run, session, signal).catch(error => {
         this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_TRADE_FAILED');
       }).finally(() => { this.pending = undefined; });
       break;
     }
   }
 
-  private async trade(run: Run, signal: Signal) {
-    const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry);
-    if (this.run !== run) return;
+  private async trade(run: Run, session: LiveSession, signal: Signal) {
+    const stillLive = () => this.run === run && run.session === session;
+    const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry).catch(error => {
+      if (stillLive()) throw error;
+      return null;
+    });
+    if (fromPosition === null || !stillLive()) return;
     const delta = positionDelta(fromPosition, signal.targetPosition);
     if (!delta) {
       this.publish();
@@ -377,10 +427,11 @@ export class Robot {
       return;
     }
     this.publish();
-    const accountCheckError = this.run === run ? await this.recheckPosition(run.config, fromPosition) : undefined;
-    if (this.run !== run || accountCheckError) {
-      await this.recordNotSent(intent, run.cancelledBy ?? 'account-check-failed-before-send');
-      if (accountCheckError) this.pause(run, accountCheckError);
+    const accountCheckError = stillLive() ? await this.recheckPosition(run.config, fromPosition) : undefined;
+    if (!stillLive() || accountCheckError) {
+      const cancelled = run.stopped ? 'stopped-before-send' : 'feed-lost-before-send';
+      await this.recordNotSent(intent, stillLive() ? 'account-check-failed-before-send' : cancelled);
+      if (accountCheckError && stillLive()) this.pause(run, accountCheckError);
       this.publish();
       return;
     }
@@ -437,6 +488,10 @@ export class Robot {
     this.reason = reason;
     this.publish();
   }
+}
+
+function sameSelection(a: Selection, b: Selection) {
+  return a.accountId === b.accountId && a.instrumentUid === b.instrumentUid;
 }
 
 function orderProblem(order: OrderIntent, state: BrokerOrder | null, account: Awaited<ReturnType<Broker['accountState']>> | null) {

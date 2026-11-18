@@ -39,6 +39,7 @@ function setup({ autoConnect = true } = {}) {
     async record(id, result) { Object.assign(entries.find(row => row.id === id)!, result); },
     async history() { return entries; },
     async hasUnresolved() { return entries.some(row => row.status === 'reserved' || row.status === 'unconfirmed'); },
+    async unresolved() { return entries.find(row => row.status === 'reserved' || row.status === 'unconfirmed') ?? null; },
   };
   const broker: Broker = {
     async verifySelection(selection) { assert.deepEqual(selection, config); },
@@ -67,9 +68,13 @@ function setup({ autoConnect = true } = {}) {
   }, async () => config, () => now);
   return {
     robot, broker, store, submitted, lookups,
+    isSubscribed: () => listener !== undefined,
     setNow: (offset: number) => { now = opening + offset * hourMs; },
     setAccount: (lots: number, active = false) => { position = lots; activeOrders = active; },
     disconnect: () => { listener?.({ stream: 'disconnected' }); },
+    backfill: (...candles: Candle[]) => listener?.({
+      stream: 'connecting', history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles },
+    }),
     async history(...candles: Candle[]) {
       listener?.({ stream: 'live', history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles } });
       await setImmediate();
@@ -628,16 +633,82 @@ for (const cancel of ['stop', 'disconnect'] as const) {
   });
 }
 
-test('does not open on backfill or after feed loss', async () => {
-  const { robot, history, setNow, disconnect, submitted } = setup();
+test('a broker reconnect uses the missed crossing as baseline and trades only a new completed signal', async () => {
+  const { robot, submitted, history, setNow, disconnect, backfill } = setup();
+  const baseline = candle(-1, 99);
   await robot.start();
-  await history(candle(-2, 99), candle(-1, 101));
+  await history(baseline);
   assert.equal(submitted.length, 0);
   disconnect();
+  assert.equal(robot.status().mode, 'reconnecting');
+  setNow(1);
+  backfill(baseline, candle(0, 101));
+  assert.equal(submitted.length, 0);
+  await history(baseline, candle(0, 101));
+  assert.equal(robot.status().mode, 'running');
+  assert.equal(robot.status().reason, null);
+  assert.equal(submitted.length, 0);
   setNow(2);
   await history(candle(0, 101), candle(1, 99));
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].direction, 'sell');
+  assert.equal(submitted[0].candleTime, opening + hourMs);
+});
+
+test('a fast reconnect cannot send a reservation made on the previous stream', async () => {
+  const { robot, history, disconnect, setNow, store, submitted } = setup();
+  const gate = deferred();
+  const reserve = store.reserve;
+  store.reserve = async order => {
+    const saved = await reserve(order);
+    await gate.promise;
+    return saved;
+  };
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  assert.equal((await robot.history())[0].status, 'reserved');
+  disconnect();
+  await history(candle(-1, 99), candle(0, 101));
+  gate.resolve();
+  await setImmediate();
+  assert.equal((await robot.history())[0].status, 'feed-lost-before-send');
   assert.equal(submitted.length, 0);
-  assert.equal(robot.status().reason, 'ROBOT_FEED_LOST');
+  setNow(2);
+  await history(candle(0, 101), candle(1, 99));
+  assert.equal(submitted.length, 1);
+});
+
+test('stopping while the broker reconnects does not restart trading', async () => {
+  const { robot, history, disconnect, isSubscribed, setNow, submitted } = setup();
+  await robot.start();
+  await history(candle(-1, 99));
+  disconnect();
+  robot.stop();
+  assert.equal(isSubscribed(), false);
+  setNow(2);
+  await history(candle(-1, 99), candle(0, 101), candle(1, 99));
+  assert.equal(robot.status().mode, 'stopped');
+  assert.equal(submitted.length, 0);
+});
+
+test('an ambiguous order sent before a disconnect still blocks a recovered feed', async () => {
+  const { robot, broker, submitted, disconnect, history, setNow } = setup();
+  const gate = deferred();
+  broker.orderState = async () => { await gate.promise; throw new Error('offline'); };
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  assert.equal(submitted.length, 1);
+  disconnect();
+  await history(candle(-1, 99), candle(0, 101));
+  gate.resolve();
+  await setImmediate();
+  assert.equal(robot.status().mode, 'paused');
+  assert.equal(robot.status().recovery?.ready, false);
+  setNow(2);
+  await history(candle(0, 101), candle(1, 99));
+  assert.equal(submitted.length, 1);
 });
 
 test('the first feed connection never trades candles already closed while connecting', async () => {
@@ -649,4 +720,44 @@ test('the first feed connection never trades candles already closed while connec
   setNow(2);
   await history(candle(0, 101), candle(1, 99));
   assert.equal(submitted[0]?.direction, 'sell');
+});
+
+test('startup reads the actual position without opening a feed or sending an order', async () => {
+  const { robot, setAccount, isSubscribed, submitted, lookups } = setup();
+  setAccount(-2);
+  await robot.restore();
+  assert.deepEqual(robot.status(), { mode: 'stopped', reason: null, position: -2 });
+  assert.equal(isSubscribed(), false);
+  assert.equal(lookups.length, 0);
+  assert.equal(submitted.length, 0);
+  await assert.rejects(robot.start(), { code: 'ROBOT_POSITION_NOT_FLAT' });
+});
+
+test('startup keeps an unseen reserved request blocked; later reconciliation uses only its persisted ID', async () => {
+  const { robot, broker, store, submitted, isSubscribed, lookups, setAccount } = setup();
+  const { accountId, instrumentUid, ticker } = config;
+  await store.reserve({
+    id: 'persisted-request', accountId, instrumentUid, ticker, action: 'ema-crossing',
+    candleTime: opening - hourMs, signalTime: opening, signalPrice: 101, ema: 100, manualCloseTime: null,
+    direction: 'buy', lots: 3, fromPosition: 0, targetPosition: 3,
+  });
+  const orderState = broker.orderState;
+  broker.orderState = async (_token, order, brokerId) => {
+    lookups.push([order.id, brokerId]);
+    throw new Error('not found');
+  };
+  await robot.restore();
+  assert.equal(robot.status().mode, 'stopped');
+  assert.deepEqual(robot.status().recovery, { orderId: 'persisted-request', ready: false });
+  assert.equal((await robot.history())[0].status, 'unconfirmed');
+  await assert.rejects(robot.start(), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  await assert.rejects(robot.resume(), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  broker.orderState = orderState;
+  setAccount(3);
+  await robot.reconcile();
+  assert.deepEqual(lookups, [['persisted-request', null], ['persisted-request', null]]);
+  assert.equal((await robot.history())[0].status, 'confirmed');
+  assert.equal(robot.status().mode, 'stopped');
+  assert.equal(isSubscribed(), false);
+  assert.equal(submitted.length, 0);
 });
