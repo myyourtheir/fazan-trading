@@ -32,7 +32,7 @@ try {
   }
   compose('up', '--build', '--wait');
   const origin = `http://${compose('port', 'frontend', '80')}/api`;
-  assert.equal(migrations(), '3');
+  assert.equal(migrations(), '4');
   assert.equal((await fetch(`${origin}/dashboard`)).status, 401);
   if (legacyToken) {
     const response = await fetch(`${origin}/dashboard`, { headers: { cookie: `serfing_session=${legacyToken}` } });
@@ -63,9 +63,26 @@ try {
     live.close();
   }
 
+  const tradingUrl = new URL(`${origin}/robot/live`);
+  tradingUrl.protocol = 'ws:';
+  const trading = new WebSocket(tradingUrl, { headers: { origin: browserOrigin, cookie } });
+  try {
+    const update = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Trading proxy did not deliver a WebSocket message')), 5_000);
+      trading.addEventListener('message', event => { clearTimeout(timer); resolve(event.data); }, { once: true });
+      trading.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(new Error('Trading WebSocket upgrade through nginx failed'));
+      }, { once: true });
+    });
+    assert.deepEqual(JSON.parse(update), { tradingChanged: true });
+  } finally {
+    trading.close();
+  }
+
   // Force a new backend container without touching the frontend or the database.
   compose('up', '-d', '--no-deps', '--force-recreate', '--wait', 'backend');
-  assert.equal(migrations(), '3');
+  assert.equal(migrations(), '4');
   let status = (await dashboard()).status;
   for (let attempt = 0; status === 502 && attempt < 6; attempt++) {
     await delay(1_000);

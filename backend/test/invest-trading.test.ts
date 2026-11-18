@@ -56,6 +56,24 @@ test('SDK posts a sandbox market order with the saved client ID and maps actual 
   assert.deepEqual(state.executions, [{ tradeId: 'fill', lots: 1, price: 98.5, time: fillTime.getTime() }]);
 });
 
+test('SDK position check does not mistake a blocked or unidentified balance for a flat position', async t => {
+  let futures = [{ instrumentUid: intent.instrumentUid, balance: 0, blocked: 1 }];
+  t.mock.method(NodeApiClient, 'create', async () => ({
+    sandbox: {
+      async getSandboxOrders() { return { orders: [] }; },
+      async getSandboxPositions() { return { limitsLoadingInProgress: false, futures }; },
+    },
+  }) as unknown as NodeApiClient);
+  const broker = new InvestSandbox();
+  const { accountId, instrumentUid, ticker, lots } = intent;
+  const config: TradingConfig = { accountId, instrumentUid, ticker, lots, token: 'fake', emaPeriod: 55 };
+  assert.deepEqual(await broker.accountState(config), { position: null, activeOrders: true });
+  futures = [{ instrumentUid: '', balance: 1, blocked: 0 }];
+  assert.deepEqual(await broker.accountState(config), { position: null, activeOrders: false });
+  futures = [{ instrumentUid: intent.instrumentUid, balance: -2, blocked: 0 }];
+  assert.deepEqual(await broker.accountState(config), { position: -2, activeOrders: false });
+});
+
 const { SERFING_TEST_DATABASE_URL: database, SERFING_TEST_SANDBOX_TOKEN: token,
   SERFING_TEST_FUTURE_UID: instrumentUid, SERFING_TEST_SANDBOX_ACCOUNT_ID: accountId,
   SERFING_TEST_PLACE_SANDBOX_ORDER: placeOrder } = process.env;

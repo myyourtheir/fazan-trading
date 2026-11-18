@@ -1,5 +1,5 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import { addCandles, watchMarket, type MarketChartData, type MarketHistory, type MarketSelection } from './market-data';
+import { addCandles, watchMarket, watchTrading, type MarketChartData, type MarketHistory, type MarketSelection } from './market-data';
 
 type Authenticated = { authenticated: true };
 type Session = Authenticated & { remainingMs: number };
@@ -9,7 +9,8 @@ export type JournalEntry = {
   signalTime: number; signalPrice: number; ema: number;
   direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;
   brokerOrderId: string | null; brokerStatus: 'filled' | 'rejected' | 'cancelled' | 'new' | 'partial' | 'unknown';
-  status: 'reserved' | 'confirmed' | 'unconfirmed' | 'not-sent'; executedLots: number | null; position: number | null;
+  status: 'reserved' | 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send';
+  executedLots: number | null; position: number | null;
   executions: { tradeId: string; lots: number; price: number | null; time: number | null }[];
 };
 type SandboxAccount = { id: string; name: string };
@@ -53,7 +54,17 @@ export const api = createApi({
   tagTypes: ['Session', 'Dashboard', 'Sandbox', 'Strategy', 'Journal'],
   endpoints: builder => ({
     session: builder.query<Session, void>({ query: () => 'auth/session', providesTags: ['Session'] }),
-    dashboard: builder.query<Dashboard, void>({ query: () => 'dashboard', providesTags: ['Dashboard'] }),
+    dashboard: builder.query<Dashboard, void>({
+      query: () => 'dashboard', providesTags: ['Dashboard'], keepUnusedDataFor: 0,
+      async onCacheEntryAdded(_arg, { cacheDataLoaded, cacheEntryRemoved, dispatch }) {
+        try {
+          await cacheDataLoaded;
+        } catch {
+          return;
+        }
+        await watchTrading(cacheEntryRemoved, () => { dispatch(api.util.invalidateTags(['Dashboard', 'Journal'])); });
+      },
+    }),
     journal: builder.query<JournalEntry[], void>({
       query: () => 'robot/history', providesTags: ['Journal'], keepUnusedDataFor: 0,
     }),
@@ -86,7 +97,7 @@ export const api = createApi({
         }
         await watchMarket(selection, cacheEntryRemoved, updateCachedData, () => {
           dispatch(api.util.invalidateTags(['Strategy']));
-        }, () => { dispatch(api.util.invalidateTags(['Dashboard', 'Journal'])); });
+        });
       },
     }),
     searchFutures: builder.query<FutureContract[], string>({

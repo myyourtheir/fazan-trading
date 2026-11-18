@@ -18,7 +18,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
       case '/api/dashboard':
-        return route.fulfill({ json: { mode: 'stopped' } });
+        return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/sandbox':
         return route.fulfill({ json: available
           ? { status: 'connected', accountId: 'sandbox-1', accounts: [{ id: 'sandbox-1', name: 'Песочница' }],
@@ -44,6 +44,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
     }
   });
   await page.routeWebSocket('**/api/market/live', socket => socket.send(JSON.stringify({ stream: 'live' })));
+  await page.routeWebSocket('**/api/robot/live', () => {});
 
   await page.goto('/');
   const strategy = page.getByRole('region', { name: 'Настройки стратегии' });

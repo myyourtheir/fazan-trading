@@ -41,7 +41,9 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   });
   const sockets: WebSocketRoute[] = [];
   await page.routeWebSocket('**/api/market/live', socket => { sockets.push(socket); });
-  return { selection, candle, nextCandle, history, sockets, confirmOrder: (order: JournalEntry) => {
+  const tradingSockets: WebSocketRoute[] = [];
+  await page.routeWebSocket('**/api/robot/live', socket => { tradingSockets.push(socket); });
+  return { selection, candle, nextCandle, history, sockets, tradingSockets, confirmOrder: (order: JournalEntry) => {
     dashboard = { ...dashboard, position: order.position };
     journal = [order];
   } };
@@ -52,12 +54,13 @@ const chartCanvas = (page: Page) => page.getByRole('group', { name: 'Графи�
 
 test('starts the robot and refreshes its separate signal and fill after a live notification', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
-  const { candle, sockets, confirmOrder } = await mockMarket(page);
+  const { candle, sockets, tradingSockets, confirmOrder } = await mockMarket(page);
   await page.goto('/');
   await expect(page.getByText('Заявок пока нет.')).toBeVisible();
   await page.getByRole('button', { name: 'Запустить робота' }).click();
   await expect(page.getByText('Робот запущен')).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
+  await expect.poll(() => tradingSockets.length).toBe(1);
   confirmOrder({
     id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account',
     candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
@@ -65,7 +68,7 @@ test('starts the robot and refreshes its separate signal and fill after a live n
     position: 1, executedLots: 1, brokerOrderId: 'exchange-order',
     executions: [{ tradeId: 'trade', lots: 1, price: 105.25, time: candle.time + 3_605_000 }],
   });
-  sockets[0].send(JSON.stringify({ tradingChanged: true }));
+  tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
   await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
   const row = page.getByRole('article');
   await expect(row.getByText('Цена сигнала: 104')).toBeVisible();

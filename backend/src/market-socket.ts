@@ -2,7 +2,6 @@ import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { ownerSessionToken, type OwnerAuth } from './auth.js';
 import type { MarketData } from './market-data.js';
-import type { Robot } from './robot.js';
 
 function hasMatchingOriginHost({ headers }: IncomingMessage) {
   if (!headers.origin) return false;
@@ -14,7 +13,10 @@ function hasMatchingOriginHost({ headers }: IncomingMessage) {
   }
 }
 
-export function attachMarketSocket(server: Server, auth: OwnerAuth, market: MarketData, robot?: Robot) {
+export function attachMarketSocket(
+  server: Server, auth: OwnerAuth, market: MarketData,
+  tradingUpdates?: { subscribe(listener: () => void): () => void },
+) {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   const sessions = new Map<WebSocket, string>();
   let stopping = false;
@@ -25,7 +27,8 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
     void authorize().catch(() => socket.destroy());
 
     async function authorize() {
-      if (request.url !== '/api/market/live') return reject('404 Not Found');
+      const trading = request.url === '/api/robot/live' ? tradingUpdates : undefined;
+      if (request.url !== '/api/market/live' && !trading) return reject('404 Not Found');
       if (!hasMatchingOriginHost(request)) return reject('403 Forbidden');
       const token = ownerSessionToken(request.headers.cookie);
       if (!token || !await auth.remainingMs(token)) return reject('401 Unauthorized');
@@ -35,7 +38,6 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
         socket.off('error', onError);
         sessions.set(ws, token);
         let unsubscribe: (() => void) | undefined;
-        let unsubscribeRobot: (() => void) | undefined;
         let expiry: ReturnType<typeof setTimeout> | undefined;
         let alive = true;
         ws.on('error', () => ws.terminate());
@@ -51,7 +53,6 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
           clearInterval(heartbeat);
           clearTimeout(expiry);
           unsubscribe?.();
-          unsubscribeRobot?.();
         });
         void start().catch(() => ws.close(1011));
 
@@ -66,10 +67,11 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
             if (ws.bufferedAmount > 256 * 1024) return ws.terminate();
             ws.send(JSON.stringify(update));
           };
-          if (robot) {
+          if (trading) {
             const notify = () => send({ tradingChanged: true });
-            unsubscribeRobot = robot.subscribe(notify);
+            unsubscribe = trading.subscribe(notify);
             notify();
+            return;
           }
           const stop = await market.subscribe(send);
           if (ws.readyState === WebSocket.OPEN) unsubscribe = stop;

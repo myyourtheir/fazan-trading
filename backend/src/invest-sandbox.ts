@@ -26,6 +26,8 @@ const definiteRejections = new Set<unknown>([
 
 const hourlySubscription = SubscriptionInterval.SUBSCRIPTION_INTERVAL_ONE_HOUR;
 const price = ({ units, nano }: Quotation) => units + nano / 1e9;
+const brokerDirection = (direction: OrderIntent['direction']) =>
+  direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL;
 
 function hourlyCandle({ time, open, high, low, close }: HistoricCandle | Candle, complete: boolean): HourlyCandle | null {
   if (!time || !open || !high || !low || !close) return null;
@@ -105,10 +107,13 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
     return this.call(token, async ({ sandbox }) => {
       const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
       const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
-      if (positions.limitsLoadingInProgress) throw new Error('Positions are not available yet.');
-      const position = positions.futures.filter(future => future.instrumentUid === instrumentUid)
-        .reduce((total, future) => total + future.balance, 0);
-      return { position, activeOrders: orders.length > 0 };
+      const matching = positions.futures.filter(future => future.instrumentUid === instrumentUid);
+      // The SDK's balance excludes blocked contracts and cannot prove the position is flat in those cases.
+      const blocked = matching.some(future => future.blocked !== 0);
+      const unidentified = positions.futures.some(future => !future.instrumentUid && (future.balance !== 0 || future.blocked !== 0));
+      const position = positions.limitsLoadingInProgress || blocked || unidentified
+        ? null : matching.reduce((total, future) => total + future.balance, 0);
+      return { position, activeOrders: orders.length > 0 || blocked };
     });
   }
 
@@ -117,7 +122,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
       const reply = await sandbox.postSandboxOrder({
         accountId: order.accountId, instrumentId: order.instrumentUid, orderId: order.id, quantity: order.lots,
         orderType: OrderType.ORDER_TYPE_MARKET, timeInForce: TimeInForceType.TIME_IN_FORCE_UNSPECIFIED,
-        direction: order.direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL,
+        direction: brokerDirection(order.direction),
         confirmMarginTrade: order.direction === 'sell', priceType: PriceType.PRICE_TYPE_UNSPECIFIED,
       }, requestOptions());
       return {
@@ -136,7 +141,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
       }, requestOptions());
       if (!state.orderId || (state.orderRequestId && state.orderRequestId !== order.id)
         || state.instrumentUid !== order.instrumentUid || state.lotsRequested !== order.lots
-        || state.direction !== (order.direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL)) {
+        || state.direction !== brokerDirection(order.direction)) {
         throw new Error('Unexpected sandbox order state.');
       }
       return {

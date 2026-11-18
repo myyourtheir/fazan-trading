@@ -36,7 +36,8 @@ export function RobotControls({ dashboard }: { dashboard: Dashboard }) {
 
 const orderStatuses: Record<JournalEntry['status'], string> = {
   reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена',
-  unconfirmed: 'Требуется сверка', 'not-sent': 'Не отправлена',
+  unconfirmed: 'Требуется сверка', 'stopped-before-send': 'Робот остановлен до отправки',
+  'feed-lost-before-send': 'Поток потерян до отправки',
 };
 const brokerStatuses: Record<JournalEntry['brokerStatus'], string> = {
   filled: 'Исполнена', rejected: 'Отклонена', cancelled: 'Отменена',

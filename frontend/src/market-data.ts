@@ -34,39 +34,57 @@ export async function watchMarket(
   removed: Promise<void>,
   update: (recipe: (data: MarketChartData) => void) => void,
   onReload: () => void,
-  onTradingChanged: () => void,
+) {
+  await watchSocket('/api/market/live', removed, {
+    onConnect: () => update(data => { data.stream = 'connecting'; }),
+    onMessage(message: MarketUpdate) {
+      const payload = message.history ?? message.tick;
+      if (payload && (payload.instrumentUid !== selection.instrumentUid || payload.emaPeriod !== selection.emaPeriod)) return;
+      update(cache => {
+        if (message.history) {
+          cache.candles = message.history.candles;
+          cache.historyAvailable = true;
+        } else if (message.tick) {
+          cache.candles = addCandles(cache.candles, [message.tick.candle]);
+        }
+        setStream(cache, message.stream);
+      });
+    },
+    onClose(code) {
+      update(data => setStream(data, 'disconnected'));
+      if (code === 1012) onReload();
+    },
+  });
+}
+
+export function watchTrading(removed: Promise<void>, onTradingChanged: () => void) {
+  return watchSocket('/api/robot/live', removed, {
+    onMessage(message: { tradingChanged: true }) {
+      if (message.tradingChanged === true) onTradingChanged();
+    },
+  });
+}
+
+async function watchSocket<Message>(
+  path: string,
+  removed: Promise<void>,
+  handlers: { onConnect?: () => void; onMessage: (message: Message) => void; onClose?: (code: number) => void },
 ) {
   let socket: WebSocket | undefined;
   let retry: number | undefined;
-  const url = new URL('/api/market/live', window.location.href);
+  const url = new URL(path, window.location.href);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
 
   function connect() {
-    update(data => { data.stream = 'connecting'; });
+    handlers.onConnect?.();
     const ws = socket = new WebSocket(url);
     ws.onmessage = ({ data }) => {
       try {
-        const message = JSON.parse(data) as MarketUpdate | { tradingChanged: true };
-        if ('tradingChanged' in message) {
-          onTradingChanged();
-          return;
-        }
-        const payload = message.history ?? message.tick;
-        if (payload && (payload.instrumentUid !== selection.instrumentUid || payload.emaPeriod !== selection.emaPeriod)) return;
-        update(cache => {
-          if (message.history) {
-            cache.candles = message.history.candles;
-            cache.historyAvailable = true;
-          } else if (message.tick) {
-            cache.candles = addCandles(cache.candles, [message.tick.candle]);
-          }
-          setStream(cache, message.stream);
-        });
+        handlers.onMessage(JSON.parse(data) as Message);
       } catch { /* Ignore invalid messages. */ }
     };
     ws.onclose = ({ code }) => {
-      update(data => setStream(data, 'disconnected'));
-      if (code === 1012) onReload();
+      handlers.onClose?.(code);
       if (code !== 1008) retry = window.setTimeout(connect, 2_000);
     };
   }

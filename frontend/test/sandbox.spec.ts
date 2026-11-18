@@ -12,7 +12,9 @@ test('the owner can check a token and select, create, and fund a sandbox account
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
       case '/api/dashboard':
-        return route.fulfill({ json: { mode: 'stopped' } });
+        return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
+      case '/api/robot/history':
+        return route.fulfill({ json: [] });
       case '/api/strategy':
         return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null } });
       case '/api/strategy/futures':
@@ -43,6 +45,7 @@ test('the owner can check a token and select, create, and fund a sandbox account
     }
   });
 
+  await page.routeWebSocket('**/api/robot/live', () => {});
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto('/');
   await expect(page.getByText('Песочница не подключена.')).toBeVisible();

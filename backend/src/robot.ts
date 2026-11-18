@@ -18,14 +18,14 @@ export type BrokerOrder = {
   executions: Execution[];
 };
 export type OrderResult = BrokerOrder & {
-  status: 'confirmed' | 'unconfirmed' | 'not-sent';
+  status: 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send';
   position: number | null;
 };
 export type JournalEntry = OrderIntent & Omit<OrderResult, 'status'> & { status: OrderResult['status'] | 'reserved' };
 
 export interface Broker {
   verifySelection(config: TradingConfig): Promise<void>;
-  accountState(config: TradingConfig): Promise<{ position: number; activeOrders: boolean }>;
+  accountState(config: TradingConfig): Promise<{ position: number | null; activeOrders: boolean }>;
   submit(token: string, order: OrderIntent): Promise<Omit<BrokerOrder, 'executions'>>;
   orderState(token: string, order: OrderIntent, brokerOrderId: string | null): Promise<BrokerOrder>;
 }
@@ -43,7 +43,8 @@ export class RobotError extends Error {
 }
 
 type Run = {
-  config: TradingConfig; liveSince: number | null; side: Side | null; cursor: number; entered: boolean;
+  config: TradingConfig; liveSince: number | null; lastAttemptedCandleOpenMs: number; entered: boolean;
+  cancelledBy?: 'stopped-before-send' | 'feed-lost-before-send';
   unsubscribe?: () => void;
 };
 
@@ -82,8 +83,12 @@ export class Robot {
 
   private publish() { for (const listener of this.listeners) listener(); }
 
-  async changeSettings(action: () => Promise<void>) {
+  private requireStopped() {
     if (this.mode !== 'stopped' || this.starting || this.pending || this.changing) throw new RobotError('ROBOT_BUSY');
+  }
+
+  async changeSettings(action: () => Promise<void>) {
+    this.requireStopped();
     this.changing = true;
     try {
       await action();
@@ -95,7 +100,7 @@ export class Robot {
   }
 
   async start() {
-    if (this.mode !== 'stopped' || this.starting || this.pending || this.changing) throw new RobotError('ROBOT_BUSY');
+    this.requireStopped();
     this.mode = 'starting';
     this.starting = true;
     this.position = null;
@@ -106,7 +111,7 @@ export class Robot {
       await this.broker.verifySelection(config);
       await this.requireFlat(config);
       if (this.mode !== 'starting') return;
-      const run: Run = { config, liveSince: null, side: null, cursor: -Infinity, entered: false };
+      const run: Run = { config, liveSince: null, lastAttemptedCandleOpenMs: -Infinity, entered: false };
       this.run = run;
       const unsubscribe = await this.market.subscribe(update => this.onMarket(run, update), config);
       if (this.run === run) run.unsubscribe = unsubscribe;
@@ -120,6 +125,7 @@ export class Robot {
   }
 
   stop() {
+    if (this.run) this.run.cancelledBy = 'stopped-before-send';
     this.clearRun();
     this.mode = 'stopped';
     this.reason = null;
@@ -149,12 +155,16 @@ export class Robot {
     const { position, activeOrders } = await this.broker.accountState(config);
     this.position = position;
     if (activeOrders) throw new RobotError('ROBOT_ACTIVE_ORDERS');
+    if (position === null) throw new RobotError('ROBOT_POSITION_UNVERIFIED');
     if (position !== 0) throw new RobotError('ROBOT_POSITION_NOT_FLAT');
   }
 
   private onMarket(run: Run, { stream, history }: MarketUpdate) {
     if (this.run !== run) return;
-    if (stream === 'disconnected' || stream === 'unconfigured') return this.pause(run, 'ROBOT_FEED_LOST');
+    if (stream === 'disconnected' || stream === 'unconfigured') {
+      run.cancelledBy = 'feed-lost-before-send';
+      return this.pause(run, 'ROBOT_FEED_LOST');
+    }
     if (stream !== 'live') return;
     const since = run.liveSince ??= this.now();
     if (!history || run.entered || this.pending) return;
@@ -165,26 +175,26 @@ export class Robot {
     }
 
     const now = this.now();
-    const closed = history.candles.filter(candle => candle.complete && candle.time + hourMs <= now);
-    const latest = closed.at(-1)?.time;
-    for (const candle of closed) {
-      if (candle.time <= run.cursor) continue;
+    let side: Side | null = null;
+    let historicalEmaPending = false;
+    // Feed snapshots are ordered by opening time. Rebuild the history baseline on each snapshot:
+    // a late EMA can change the strict side before a later equality.
+    for (const candle of history.candles) {
       const signalTime = candle.time + hourMs;
+      if (!candle.complete || signalTime > now) continue;
       if (candle.confirmedEma === null) {
-        // Don't infer a crossing across an unconfirmed live close that has already been superseded.
-        if (signalTime > since && candle.time !== latest) {
-          run.side = null;
-          run.cursor = candle.time;
-        }
+        if (signalTime > since) break; // Wait for this live close before considering later ones.
+        historicalEmaPending = true;
         continue;
       }
-      const { side, direction } = crossing(run.side, candle.close, candle.confirmedEma);
-      run.side = side;
-      run.cursor = candle.time;
-      // Old candles set the baseline even when their EMA arrives after Start.
-      if (!direction || signalTime <= since || candle.time !== latest || now - signalTime >= hourMs) continue;
+      if (signalTime > since && historicalEmaPending) break;
+      const next = crossing(side, candle.close, candle.confirmedEma);
+      side = next.side;
+      if (candle.close !== candle.confirmedEma) historicalEmaPending = false;
+      if (!next.direction || signalTime <= since || candle.time <= run.lastAttemptedCandleOpenMs) continue;
+      run.lastAttemptedCandleOpenMs = candle.time;
       const { accountId, instrumentUid, ticker, lots } = run.config;
-      const targetPosition = direction * lots;
+      const targetPosition = next.direction * lots;
       const intent: OrderIntent = {
         id: randomUUID(), accountId, instrumentUid, ticker, candleTime: candle.time,
         signalTime, signalPrice: candle.close, ema: candle.confirmedEma,
@@ -193,6 +203,7 @@ export class Robot {
       this.pending = this.enter(run, intent).catch(error => {
         this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_ENTRY_FAILED');
       }).finally(() => { this.pending = undefined; });
+      break;
     }
   }
 
@@ -204,8 +215,8 @@ export class Robot {
       return;
     }
     this.publish();
-    if (this.run !== run || this.now() - intent.signalTime >= hourMs) {
-      await this.store.record(intent.id, { ...unknownOrder, status: 'not-sent', position: this.position });
+    if (this.run !== run) {
+      await this.store.record(intent.id, { ...unknownOrder, status: run.cancelledBy ?? 'stopped-before-send', position: this.position });
       this.publish();
       return;
     }

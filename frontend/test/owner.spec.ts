@@ -22,13 +22,15 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
         signedIn = false;
         return route.fulfill({ status: 204 });
       }
+      if (path === '/api/robot/history') return route.fulfill({ json: [] });
       if (!signedIn) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
       if (path === '/api/robot/history') return route.fulfill({ json: [] });
       if (path.endsWith('/sandbox')) return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
       if (path === '/api/strategy') return route.fulfill({ json: emptyStrategy });
       return route.fulfill({ json: path.endsWith('/dashboard')
-        ? { mode: 'stopped' } : { authenticated: true, remainingMs: 60_000 } });
+        ? { mode: 'stopped', reason: null, position: null } : { authenticated: true, remainingMs: 60_000 } });
     });
+    await page.routeWebSocket('**/api/robot/live', () => {});
   } else {
     expect((await page.request.get('/api/dashboard')).status()).toBe(401);
   }
@@ -71,9 +73,11 @@ test('the protected panel closes when a session expires in a focused tab', async
       return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
     }
     if (path === '/api/strategy') return route.fulfill({ json: emptyStrategy });
+    if (path === '/api/robot/history') return route.fulfill({ json: [] });
     const dashboard = path.endsWith('/dashboard');
-    return route.fulfill({ json: dashboard ? { mode: 'stopped' } : { authenticated: true, remainingMs: 5_000 } });
+    return route.fulfill({ json: dashboard ? { mode: 'stopped', reason: null, position: null } : { authenticated: true, remainingMs: 5_000 } });
   });
+  await page.routeWebSocket('**/api/robot/live', () => {});
   await page.goto('/');
   const dashboard = page.getByRole('heading', { name: 'Панель робота' });
   await expect(dashboard).toBeVisible();

@@ -14,7 +14,7 @@ server {
         proxy_set_header Host $host;
     }
 
-    location = /api/market/live {
+    location ~ ^/api/(market|robot)/live$ {
         resolver ${BACKEND_RESOLVER} valid=5s ipv6=off;
         set $serfing_backend ${BACKEND_UPSTREAM};
         proxy_pass http://$serfing_backend;

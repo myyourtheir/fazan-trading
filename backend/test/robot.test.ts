@@ -118,6 +118,33 @@ test('ignores intrahour previews and awaits confirmed EMA for the exact closed c
   assert.equal(submitted.length, 1);
 });
 
+test('late historical EMA updates the strict baseline across a historical equality', async () => {
+  const { robot, submitted, history, setNow } = setup();
+  const older = candle(-3, 99);
+  const equal = candle(-1, 100);
+  await robot.start();
+  await history(older, candle(-2, 101, null), equal);
+  setNow(1);
+  await history(older, candle(-2, 101, null), equal, candle(0, 101));
+  await history(older, candle(-2, 101), equal, candle(0, 101));
+  assert.equal(submitted.length, 0, 'Both strict closes were above EMA');
+  setNow(2);
+  await history(older, candle(-2, 101), equal, candle(0, 101), candle(1, 99));
+  assert.equal(submitted[0]?.direction, 'sell');
+});
+
+test('awaits a delayed live EMA in order across a newer close on the same uninterrupted feed', async () => {
+  const { robot, submitted, history, setNow } = setup();
+  const baseline = candle(-1, 99);
+  await robot.start();
+  setNow(2);
+  await history(baseline, candle(0, 101, null), candle(1, 102));
+  assert.equal(submitted.length, 0);
+  await history(baseline, candle(0, 101), candle(1, 102));
+  assert.equal(submitted[0]?.candleTime, opening);
+  assert.equal(submitted.length, 1);
+});
+
 for (const after of [99, 101]) {
   test(`equality preserves the last strict side before close ${after}`, async () => {
     const { robot, history, setNow, submitted } = setup();
@@ -194,28 +221,31 @@ test('unconfirmed order blocks new starts even after stopping', async () => {
   assert.equal(submitted.length, 1);
 });
 
-test('stopping during reserve prevents submission and preserves the intent in history', async () => {
-  const { robot, history, setNow, store, submitted } = setup();
+for (const cancel of ['stop', 'disconnect'] as const) {
+  test(`${cancel} during reserve prevents submission and journals the reason`, async () => {
+  const { robot, history, setNow, store, submitted, disconnect } = setup();
   const gate = deferred();
   const reserve = store.reserve;
   store.reserve = async order => { const saved = await reserve(order); await gate.promise; return saved; };
   await robot.start();
   setNow(1);
   await history(candle(-1, 99), candle(0, 101));
-  robot.stop();
+  if (cancel === 'stop') robot.stop();
+  else disconnect();
   gate.resolve();
   await setImmediate();
   assert.equal(submitted.length, 0);
-  assert.equal((await robot.history())[0].status, 'not-sent');
-});
+  assert.equal((await robot.history())[0].status, cancel === 'stop' ? 'stopped-before-send' : 'feed-lost-before-send');
+  });
+}
 
-test('does not open on stale backfill or after feed loss', async () => {
+test('does not open on backfill or after feed loss', async () => {
   const { robot, history, setNow, disconnect, submitted } = setup();
   await robot.start();
-  setNow(2);
-  await history(candle(-1, 99), candle(0, 101));
+  await history(candle(-2, 99), candle(-1, 101));
   assert.equal(submitted.length, 0);
   disconnect();
+  setNow(2);
   await history(candle(0, 101), candle(1, 99));
   assert.equal(submitted.length, 0);
   assert.equal(robot.status().reason, 'ROBOT_FEED_LOST');
