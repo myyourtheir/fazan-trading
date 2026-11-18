@@ -39,8 +39,16 @@ test('the owner can check a token and select, create, and fund a sandbox account
     }
   });
 
+  await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto('/');
   await expect(page.getByText('Песочница не подключена.')).toBeVisible();
+  const connectionCard = page.getByRole('region', { name: 'Подключение' });
+  const accountsCard = page.getByRole('region', { name: 'Виртуальные счета' });
+  await expect(accountsCard.getByText('Сначала подключите песочницу')).toBeVisible();
+  const connection = (await connectionCard.boundingBox())!;
+  const accountsPanel = (await accountsCard.boundingBox())!;
+  expect(accountsPanel.y).toBe(connection.y);
+  expect(accountsPanel.x).toBeGreaterThan(connection.x + connection.width);
   const input = page.getByLabel('Токен песочницы');
   await expect(input).toHaveAttribute('type', 'password');
   const connect = page.getByRole('button', { name: 'Проверить и сохранить' });
@@ -63,4 +71,11 @@ test('the owner can check a token and select, create, and fund a sandbox account
   await page.reload();
   await expect(page.getByText('Выбран счёт: created')).toBeVisible();
   await expect(input).toHaveValue('');
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  const mobileConnection = (await connectionCard.boundingBox())!;
+  const mobileAccounts = (await accountsCard.boundingBox())!;
+  expect(mobileAccounts.x).toBe(mobileConnection.x);
+  expect(mobileAccounts.y).toBeGreaterThan(mobileConnection.y + mobileConnection.height);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
 });

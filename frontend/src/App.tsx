@@ -70,29 +70,31 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
     return <RecoveryCard message="Сессия истекла." action="Ко входу" onRetry={refreshSession} />;
   }
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <Badge variant="secondary" className="justify-self-start">Песочница</Badge>
-        <CardTitle><h1>Панель робота</h1></CardTitle>
-        <CardDescription>Настройте подключение к песочнице. Торговые команды пока недоступны.</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col items-start gap-3">
-        {dashboard.isLoading && <p role="status" className="flex items-center gap-2">
-          <Spinner aria-hidden="true" /> Загружаем состояние…
-        </p>}
-        {dashboard.isError && <Alert variant="destructive"><AlertTitle>Не удалось загрузить состояние робота.</AlertTitle></Alert>}
-        {dashboard.isError && <Button variant="outline" onClick={dashboard.refetch}>Повторить</Button>}
-        {dashboard.data?.mode === 'stopped' && <Badge variant="outline">Робот остановлен</Badge>}
-        {dashboard.data && <SandboxSettings refreshSession={refreshSession} />}
-        {error && <Alert variant="destructive"><AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle></Alert>}
-      </CardContent>
-      <CardFooter>
+    <div className="grid w-full min-w-0 max-w-5xl gap-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div className="grid gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">Песочница</Badge>
+            {dashboard.data?.mode === 'stopped' && <Badge variant="outline">Робот остановлен</Badge>}
+          </div>
+          <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Панель робота</h1>
+          <p className="text-sm text-muted-foreground">Настройте подключение и выберите виртуальный счёт.</p>
+        </div>
         <Button variant="outline" onClick={() => void logout()} disabled={isLoading}>
           {isLoading && <Spinner aria-hidden="true" data-icon="inline-start" />}
           Выйти
         </Button>
-      </CardFooter>
-    </Card>
+      </div>
+      {dashboard.isLoading && <p role="status" className="flex items-center gap-2 text-sm">
+        <Spinner aria-hidden="true" /> Загружаем состояние…
+      </p>}
+      {dashboard.isError && <div className="grid justify-items-start gap-3">
+        <Alert variant="destructive"><AlertTitle>Не удалось загрузить состояние робота.</AlertTitle></Alert>
+        <Button variant="outline" onClick={dashboard.refetch}>Повторить</Button>
+      </div>}
+      {error && <Alert variant="destructive"><AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle></Alert>}
+      {dashboard.data && <SandboxSettings refreshSession={refreshSession} />}
+    </div>
   );
 }
 
@@ -116,13 +118,15 @@ export function App() {
   }, [data, fulfilledTimeStamp, refetch]);
   return (
     <div className="min-h-dvh">
-      <header className="flex items-center justify-between gap-3 border-b border-border px-4 py-3 sm:px-8 lg:px-16">
-        <span className="text-lg font-extrabold">Сёрфинг</span>
-        <Button variant="outline" onClick={() => dispatch(toggleTheme())}>
-          {dark ? 'Светлая тема' : 'Тёмная тема'}
-        </Button>
+      <header className="border-b border-border bg-card px-4">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 py-3">
+          <span className="text-lg font-extrabold">Сёрфинг</span>
+          <Button variant="outline" onClick={() => dispatch(toggleTheme())}>
+            {dark ? 'Светлая тема' : 'Тёмная тема'}
+          </Button>
+        </div>
       </header>
-      <main className="grid justify-items-center px-4 py-[clamp(2rem,9vh,6rem)]">
+      <main className="grid justify-items-center px-4 py-6 sm:py-10">
         {session.isLoading || (expiredCheck !== undefined && expiredCheck === fulfilledTimeStamp && !session.isError)
           ? <p role="status" className="flex items-center gap-2"><Spinner aria-hidden="true" /> Проверяем сессию…</p>
           : hasStatus(session.error, 401) ? <Login />
