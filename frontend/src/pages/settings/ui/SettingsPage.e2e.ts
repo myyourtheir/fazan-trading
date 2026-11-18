@@ -5,6 +5,7 @@ test('the owner can check a token and select, create, and fund a sandbox account
   const token = 'mock-sandbox-token';
   let configured = false;
   let accountId: string | null = null;
+  let funded = false;
   const accounts = [{ id: 'existing', name: 'Мой счёт' }];
   await page.route('/api/**', route => {
     const request = route.request();
@@ -33,12 +34,18 @@ test('the owner can check a token and select, create, and fund a sandbox account
       case '/api/sandbox/account':
         accountId = request.postDataJSON().accountId;
         return route.fulfill({ status: 204 });
+      case '/api/sandbox/balance': {
+        const id = new URL(request.url()).searchParams.get('accountId');
+        expect(id).toBe(accountId);
+        return route.fulfill({ json: { accountId: id, rubles: id === 'existing' ? null : funded ? 100_000 : 0 } });
+      }
       case '/api/sandbox/accounts':
         accountId = 'created';
         accounts.push({ id: accountId, name: 'Сёрфинг' });
         return route.fulfill({ status: 204 });
       case '/api/sandbox/funding':
         expect(request.postDataJSON().accountId).toBe('created');
+        funded = true;
         return route.fulfill({ status: 204 });
       default:
         return route.fulfill({ status: 404 });
@@ -48,6 +55,13 @@ test('the owner can check a token and select, create, and fund a sandbox account
   await page.routeWebSocket('**/api/robot/live', () => {});
   await page.setViewportSize({ width: 1200, height: 800 });
   await page.goto('/');
+  async function openSettings() {
+    await page.getByRole('button', { name: 'Профиль' }).click();
+    await page.getByRole('menuitem', { name: 'Настройки' }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+  }
+  const openDashboard = () => page.getByRole('banner').getByRole('link', { name: 'Сёрфинг' }).click();
+  await openSettings();
   await expect(page.getByText('Песочница не подключена.')).toBeVisible();
   const connectionCard = page.getByRole('region', { name: 'Подключение' });
   const accountsCard = page.getByRole('region', { name: 'Виртуальные счета' });
@@ -67,15 +81,31 @@ test('the owner can check a token and select, create, and fund a sandbox account
   await expect(page.getByText('Песочница подключена.')).toBeVisible();
   await expect(input).toHaveValue('');
 
-  await page.getByLabel('Виртуальный счёт').selectOption('existing');
-  await page.getByRole('button', { name: 'Выбрать счёт' }).click();
+  const selector = page.getByRole('combobox', { name: 'Виртуальный счёт' });
+  const balance = page.getByRole('status', { name: 'Деньги на счёте' });
+  await expect(selector).toHaveCount(0);
+  await expect(balance).toHaveCount(0);
+  await openDashboard();
+  await expect(balance).toHaveText('Выберите счёт');
+  await selector.selectOption('existing');
+  await expect(selector).toHaveValue('existing');
+  await expect(balance).toHaveText('Недоступно');
+  await openSettings();
   await expect(page.getByText('Выбран счёт: existing')).toBeVisible();
   await page.getByRole('button', { name: 'Создать виртуальный счёт' }).click();
   await expect(page.getByText('Выбран счёт: created')).toBeVisible();
+  await openDashboard();
+  await expect(selector).toHaveValue('created');
+  await expect(balance).toHaveText('0,00 ₽');
+  await openSettings();
   await page.getByRole('button', { name: 'Пополнить на 100 000 ₽' }).click();
   await expect(page.getByText('Виртуальный счёт пополнен на 100 000 ₽.')).toBeVisible();
+  await openDashboard();
+  await expect(balance).toHaveText('100 000,00 ₽');
 
   await page.reload();
+  await expect(selector).toHaveValue('created');
+  await openSettings();
   await expect(page.getByText('Выбран счёт: created')).toBeVisible();
   await expect(input).toHaveValue('');
 
@@ -84,5 +114,5 @@ test('the owner can check a token and select, create, and fund a sandbox account
   const mobileAccounts = (await accountsCard.boundingBox())!;
   expect(mobileAccounts.x).toBe(mobileConnection.x);
   expect(mobileAccounts.y).toBeGreaterThan(mobileConnection.y + mobileConnection.height);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
 });

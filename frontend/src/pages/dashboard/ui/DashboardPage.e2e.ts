@@ -3,7 +3,7 @@ import type { JournalEntry } from '../api/journal-api';
 import type { Dashboard } from '../api/robot-api';
 import type { ChartCandle } from '../model/market-data';
 
-async function mockMarket(page: Page, options: { failInitialHistory?: boolean; historySize?: number } = {}) {
+async function mockMarket(page: Page, options: { failInitialHistory?: boolean; historySize?: number; blockAccountSwitch?: boolean } = {}) {
   const instrument = { uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
     exchange: 'MOEX', expirationDate: null };
   const selection = { instrumentUid: instrument.uid, emaPeriod: 3 };
@@ -17,22 +17,35 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   let historyRequests = 0;
   let dashboard: Dashboard = { mode: 'stopped', reason: null, position: null };
   let journal: JournalEntry[] = [];
+  let accountId = 'virtual-account';
+  let blockAccountSwitch = options.blockAccountSwitch;
+  const accounts = [{ id: accountId, name: 'Первый' }, { id: 'next-account', name: 'Второй' }];
   await page.route('/api/**', route => {
-    switch (new URL(route.request().url()).pathname) {
+    const url = new URL(route.request().url());
+    switch (url.pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
       case '/api/dashboard':
         return route.fulfill({ json: dashboard });
       case '/api/robot/history':
-        return route.fulfill({ json: journal });
+        return route.fulfill({ json: journal.filter(order => order.accountId === url.searchParams.get('accountId')) });
       case '/api/robot/start':
         dashboard = { mode: 'running', reason: null, position: 0 };
         return route.fulfill({ status: 204 });
       case '/api/sandbox':
-        return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
+        return route.fulfill({ json: { status: 'connected', accountId, accounts, virtualFundingRubles: 100_000 } });
+      case '/api/sandbox/account':
+        if (blockAccountSwitch) return route.fulfill({ status: 409, json: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' } });
+        accountId = route.request().postDataJSON().accountId;
+        return route.fulfill({ status: 204 });
+      case '/api/sandbox/balance':
+        expect(url.searchParams.get('accountId')).toBe(accountId);
+        return route.fulfill({ json: { accountId, rubles: accountId === 'virtual-account' ? 1_000 : 2_000 } });
       case '/api/strategy':
         return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 },
           settings: { instrument, emaPeriod: 3, lots: 1 } } });
+      case '/api/strategy/futures':
+        return route.fulfill({ json: [instrument] });
       case '/api/market':
         if (++historyRequests === 1 && options.failInitialHistory) return route.fulfill({ status: 502 });
         return route.fulfill({ json: { ...selection, candles: history } });
@@ -47,8 +60,16 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   return { selection, candle, nextCandle, history, sockets, tradingSockets, confirmOrder: (order: JournalEntry) => {
     dashboard = { ...dashboard, position: order.position };
     journal = [order];
-  } };
+  }, allowAccountSwitch: () => { blockAccountSwitch = false; } };
 }
+
+const filledOrder = (candle: ChartCandle): JournalEntry => ({
+  id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account',
+  candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
+  lots: 1, fromPosition: 0, targetPosition: 1, brokerStatus: 'filled', status: 'confirmed',
+  position: 1, executedLots: 1, brokerOrderId: 'exchange-order',
+  executions: [{ tradeId: 'trade', lots: 1, price: 105.25, time: candle.time + 3_605_000 }],
+});
 
 const chartCanvas = (page: Page) => page.getByRole('group', { name: 'График часовых свечей' })
   .getByRole('row').first().getByRole('cell').nth(1).locator('canvas').last();
@@ -62,19 +83,61 @@ test('starts the robot and refreshes its separate signal and fill after a live n
   await expect(page.getByText('Робот запущен')).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
   await expect.poll(() => tradingSockets.length).toBe(1);
-  confirmOrder({
-    id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account',
-    candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
-    lots: 1, fromPosition: 0, targetPosition: 1, brokerStatus: 'filled', status: 'confirmed',
-    position: 1, executedLots: 1, brokerOrderId: 'exchange-order',
-    executions: [{ tradeId: 'trade', lots: 1, price: 105.25, time: candle.time + 3_605_000 }],
-  });
+  confirmOrder(filledOrder(candle));
   tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
   await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
   const row = page.getByRole('article');
+  await expect(row.getByText('Исполнено лотов: 1')).toBeVisible();
+  await expect(row.getByText('Цена сигнала: 104')).toBeHidden();
+  await row.getByText('Покупка · IMOEXF').click();
   await expect(row.getByText('Цена сигнала: 104')).toBeVisible();
   await expect(row.getByText('Лотов: 1; цена сделки: 105,25')).toBeVisible();
-  await expect(row.getByText('Исполнено лотов: 1')).toBeVisible();
+});
+
+test('keeps balance and journal on the confirmed account and reflows on mobile', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
+  const { candle, confirmOrder, allowAccountSwitch } = await mockMarket(page, { blockAccountSwitch: true });
+  confirmOrder(filledOrder(candle));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const selector = page.getByRole('combobox', { name: 'Виртуальный счёт' });
+  const balance = page.getByRole('status', { name: 'Деньги на счёте' });
+  const robot = page.getByRole('region', { name: 'Управление роботом' });
+  const strategy = page.getByRole('region', { name: 'Настройки стратегии' });
+  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
+  await expect(page.getByRole('banner').getByRole('combobox', { name: 'Виртуальный счёт' })).toHaveCount(0);
+  await expect(page.getByRole('main').getByRole('group', { name: 'Счёт песочницы' })).toBeVisible();
+  await expect(balance).toHaveText('1 000,00 ₽');
+  await expect(journal.getByText('Покупка · IMOEXF')).toBeVisible();
+  const desktop = await Promise.all([robot, strategy, chart, journal].map(panel => panel.boundingBox()));
+  expect(desktop[0]!.y).toBe(desktop[2]!.y);
+  expect(desktop[2]!.y).toBe(desktop[3]!.y);
+  expect(desktop[0]!.x).toBe(desktop[1]!.x);
+  expect(desktop[0]!.x).toBeLessThan(desktop[2]!.x);
+  expect(desktop[2]!.x).toBeLessThan(desktop[3]!.x);
+  expect(desktop[2]!.width).toBeGreaterThan(desktop[3]!.width);
+
+  await selector.selectOption('next-account');
+  await expect(page.getByRole('group', { name: 'Счёт песочницы' }).getByRole('alert')).toContainText('Нельзя сменить счёт');
+  await expect(selector).toHaveValue('virtual-account');
+  await expect(balance).toHaveText('1 000,00 ₽');
+  await expect(journal.getByText('Покупка · IMOEXF')).toBeVisible();
+
+  allowAccountSwitch();
+  await selector.selectOption('next-account');
+  await expect(selector).toHaveValue('next-account');
+  await expect(balance).toHaveText('2 000,00 ₽');
+  await expect(journal.getByText('Покупка · IMOEXF')).toHaveCount(0);
+  await expect(journal.getByText('Заявок пока нет.')).toBeVisible();
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  const mobile = await Promise.all([robot, strategy, chart, journal].map(panel => panel.boundingBox()));
+  for (let i = 1; i < mobile.length; i++) {
+    expect(mobile[i]!.x).toBe(mobile[0]!.x);
+    expect(mobile[i]!.y).toBeGreaterThan(mobile[i - 1]!.y + mobile[i - 1]!.height);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
 });
 
 test('charts REST history, replaces live candles, and restores the chart after a socket drops', async ({ page }) => {
@@ -86,14 +149,14 @@ test('charts REST history, replaces live candles, and restores the chart after a
   const plot = chart.getByRole('group', { name: 'График часовых свечей' });
   await expect(plot).toBeVisible();
   await expect(chart.getByText(/1 св\./)).toBeVisible();
-  await expect(latest).toContainText('Подтверждённая EMA');
+  await expect(latest).toContainText('Подтверждённая EMA102,0');
   await expect.poll(() => sockets.length).toBe(1);
   const publish = (socket: WebSocketRoute, last: ChartCandle) =>
     socket.send(JSON.stringify({ stream: 'live', history: { ...selection, candles: [candle, last] } }));
 
-  publish(sockets[0], { ...nextCandle, close: 108, previewEma: 105 });
+  publish(sockets[0], { ...nextCandle, close: 108, previewEma: 105.268 });
   await expect(latest).toContainText('Предварительная EMA');
-  await expect(latest).toContainText('105');
+  await expect(latest).toContainText('105,3');
   await expect(chart.getByText('Поток подключён')).toBeVisible();
   await expect(page.getByText('Робот остановлен')).toBeVisible();
   const canvas = chartCanvas(page);

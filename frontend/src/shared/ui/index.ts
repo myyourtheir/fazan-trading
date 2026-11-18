@@ -10,3 +10,4 @@ export * from './native-select';
 export { RecoveryCard } from './RecoveryCard';
 export * from './separator';
 export * from './spinner';
+export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './dropdown-menu';

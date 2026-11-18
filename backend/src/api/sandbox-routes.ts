@@ -7,6 +7,14 @@ export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestH
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));
+  router.get('/balance', async (req, res) => {
+    const { accountId } = req.query;
+    if (!isPrintableAscii(accountId, brokerIdLimit)) {
+      res.status(400).json({ code: 'INVALID_REQUEST' });
+      return;
+    }
+    res.json(await sandbox.balance(accountId));
+  });
   router.put('/connection', mutation('token', 2048, async token => {
     await changeSettings(() => sandbox.connect(token));
     onTokenChange?.();

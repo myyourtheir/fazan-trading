@@ -74,6 +74,55 @@ test('SDK position check does not mistake a blocked or unidentified balance for 
   assert.deepEqual(await broker.accountState(config), { position: -2, activeOrders: false });
 });
 
+test('SDK reads RUB cash without adding blocked balances or treating missing data as zero', async t => {
+  const dollars = { currency: 'usd', units: 5, nano: 0 };
+  let money = [dollars, { currency: 'RUB', units: 123, nano: 250_000_000 }];
+  let limitsLoadingInProgress = false;
+  t.mock.method(NodeApiClient, 'create', async () => ({
+    sandbox: {
+      async getSandboxPositions({ accountId }: { accountId: string }) {
+        assert.equal(accountId, intent.accountId);
+        return { limitsLoadingInProgress, money, blocked: [{ currency: 'rub', units: 100, nano: 0 }] };
+      },
+    },
+  }) as unknown as NodeApiClient);
+  const broker = new InvestSandbox();
+  const balance = () => broker.balanceRubles('fake', intent.accountId);
+  assert.equal(await balance(), 123.25);
+  money = [dollars, { currency: 'rub', units: 0, nano: 0 }];
+  assert.equal(await balance(), 0);
+  limitsLoadingInProgress = true;
+  assert.equal(await balance(), null);
+  limitsLoadingInProgress = false;
+  money = [dollars];
+  assert.equal(await balance(), null);
+});
+
+test('SDK checks the entire current account for positions and active orders before switching', async t => {
+  let orders: object[] = [];
+  let futures: { balance: number; blocked: number }[] = [];
+  let limitsLoadingInProgress = false;
+  t.mock.method(NodeApiClient, 'create', async () => ({
+    sandbox: {
+      async getSandboxOrders() { return { orders }; },
+      async getSandboxPositions() { return { limitsLoadingInProgress, futures, securities: [], options: [] }; },
+    },
+  }) as unknown as NodeApiClient);
+  const broker = new InvestSandbox();
+  const flat = () => broker.accountIsFlat('fake', intent.accountId);
+  assert.equal(await flat(), true);
+  orders = [{}];
+  assert.equal(await flat(), false);
+  orders = [];
+  limitsLoadingInProgress = true;
+  assert.equal(await flat(), null);
+  limitsLoadingInProgress = false;
+  futures = [{ balance: 0, blocked: 1 }];
+  assert.equal(await flat(), false);
+  futures = [{ balance: -1, blocked: 0 }, { balance: 1, blocked: 0 }];
+  assert.equal(await flat(), false, 'positions do not cancel across instruments');
+});
+
 const { SERFING_TEST_DATABASE_URL: database, SERFING_TEST_SANDBOX_TOKEN: token,
   SERFING_TEST_FUTURE_UID: instrumentUid, SERFING_TEST_SANDBOX_ACCOUNT_ID: accountId,
   SERFING_TEST_PLACE_SANDBOX_ORDER: placeOrder } = process.env;

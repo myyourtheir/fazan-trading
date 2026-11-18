@@ -1,17 +1,19 @@
+import { skipToken } from '@reduxjs/toolkit/query/react';
 import { Alert, AlertTitle, Card, CardContent, CardHeader, CardTitle } from '@/shared/ui';
 import { journalApi } from '../api/journal-api';
 import { JournalOrder } from './JournalOrder';
 
-export function ExecutionJournal() {
-  const journal = journalApi.useJournalQuery(undefined, { refetchOnFocus: true, refetchOnReconnect: true });
+export function ExecutionJournal({ accountId }: { accountId: string | null }) {
+  const journal = journalApi.useJournalQuery(accountId ?? skipToken, { refetchOnFocus: true, refetchOnReconnect: true });
   return (
-    <Card>
-      <CardHeader><CardTitle>Журнал заявок и исполнений</CardTitle></CardHeader>
+    <Card role="region" aria-labelledby="journal-title" className="min-w-0">
+      <CardHeader><CardTitle><h2 id="journal-title">Журнал заявок и исполнений</h2></CardTitle></CardHeader>
       <CardContent className="grid gap-3">
-        {journal.isLoading && <p role="status">Загружаем журнал…</p>}
+        {!accountId && <p className="text-sm text-muted-foreground">Выберите счёт, чтобы увидеть журнал.</p>}
+        {accountId && journal.isFetching && !journal.currentData && <p role="status">Загружаем журнал…</p>}
         {journal.isError && <Alert variant="destructive"><AlertTitle>Не удалось загрузить журнал.</AlertTitle></Alert>}
-        {journal.data?.length === 0 && <p className="text-sm text-muted-foreground">Заявок пока нет.</p>}
-        {journal.data?.map(order => <JournalOrder key={order.id} order={order} />)}
+        {journal.currentData?.length === 0 && <p className="text-sm text-muted-foreground">Заявок пока нет.</p>}
+        {journal.currentData?.map(order => <JournalOrder key={order.id} order={order} />)}
       </CardContent>
     </Card>
   );

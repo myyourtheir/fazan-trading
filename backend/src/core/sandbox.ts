@@ -16,6 +16,8 @@ export interface SandboxBroker {
   accounts(token: string): Promise<Account[]>;
   openAccount(token: string): Promise<string>;
   fundAccount(token: string, accountId: string): Promise<void>;
+  balanceRubles(token: string, accountId: string): Promise<number | null>;
+  accountIsFlat(token: string, accountId: string): Promise<boolean | null>;
   futures(token: string): Promise<(FutureContract & { apiTradeAvailableFlag: boolean })[]>;
 }
 
@@ -39,6 +41,8 @@ const errorStatus = {
   SANDBOX_NOT_CONFIGURED: 409,
   SANDBOX_TOKEN_UNREADABLE: 409,
   SANDBOX_BUSY: 409,
+  SANDBOX_ACCOUNT_NOT_FLAT: 409,
+  SANDBOX_ACCOUNT_FLAT_UNVERIFIED: 409,
   FUTURE_UNAVAILABLE: 422,
 } as const;
 
@@ -74,10 +78,12 @@ export class SandboxConnection {
   connect(token: string) {
     return this.change(async () => {
       const accounts = await this.listAccounts(token);
-      const previousAccount = (await this.store.load())?.accountId ?? null;
+      const saved = await this.store.load();
+      const accountId = accounts.find(account => account.id === saved?.accountId)?.id ?? null;
+      if (saved && saved.accountId !== accountId) await this.requireFlatAccount(saved);
       await this.store.save({
         encryptedToken: this.cipher.encrypt(token),
-        accountId: accounts.some(account => account.id === previousAccount) ? previousAccount : null,
+        accountId,
       });
     });
   }
@@ -86,6 +92,8 @@ export class SandboxConnection {
     return this.change(async () => {
       const { saved, token } = await this.credentials();
       await this.requireAccount(token, accountId);
+      if (saved.accountId === accountId) return;
+      await this.requireFlatAccount(saved);
       await this.store.save({ ...saved, accountId });
     });
   }
@@ -93,6 +101,7 @@ export class SandboxConnection {
   createAccount() {
     return this.change(async () => {
       const { saved, token } = await this.credentials();
+      await this.requireFlatAccount(saved);
       let accountId: string;
       try {
         accountId = await this.broker.openAccount(token);
@@ -114,6 +123,16 @@ export class SandboxConnection {
         throw failure.code === 'SANDBOX_UNREACHABLE' ? new SandboxError('SANDBOX_FUNDING_UNCERTAIN') : failure;
       }
     });
+  }
+
+  async balance(accountId: string) {
+    const { saved, token } = await this.credentials();
+    if (saved.accountId !== accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    try {
+      return { accountId, rubles: await this.broker.balanceRubles(token, accountId) };
+    } catch (error) {
+      throw brokerError(error);
+    }
   }
 
   async tradableFutures(): Promise<FutureContract[]> {
@@ -193,5 +212,12 @@ export class SandboxConnection {
     if (!(await this.listAccounts(token)).some(account => account.id === accountId)) {
       throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     }
+  }
+
+  private async requireFlatAccount(saved: SavedSandboxConnection) {
+    if (!saved.accountId) return;
+    const flat = await this.broker.accountIsFlat(this.decrypt(saved), saved.accountId).catch(() => null);
+    if (flat === null) throw new SandboxError('SANDBOX_ACCOUNT_FLAT_UNVERIFIED');
+    if (!flat) throw new SandboxError('SANDBOX_ACCOUNT_NOT_FLAT');
   }
 }

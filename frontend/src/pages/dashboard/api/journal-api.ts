@@ -12,8 +12,9 @@ export type JournalEntry = {
 
 export const journalApi = rootApi.injectEndpoints({
   endpoints: builder => ({
-    journal: builder.query<JournalEntry[], void>({
-      query: () => 'robot/history', providesTags: ['Journal'], keepUnusedDataFor: 0,
+    journal: builder.query<JournalEntry[], string>({
+      query: accountId => ({ url: 'robot/history', params: { accountId } }),
+      providesTags: ['Journal'], keepUnusedDataFor: 0,
     }),
   }),
 });

@@ -95,8 +95,9 @@ test('PostgreSQL preserves separate orders and executions and rejects duplicate 
   }
   const second = connectToPostgres(testDatabase);
   try {
-    const journal = await new PostgresTradingStore(second.db).history();
-    assert.deepEqual(journal.find(entry => entry.id === order.id), { ...order, ...result });
+    const store = new PostgresTradingStore(second.db);
+    assert.deepEqual(await store.history(order.accountId), [{ ...order, ...result }]);
+    assert.deepEqual(await store.history(`test-${randomUUID()}`), []);
   } finally {
     await second.close();
   }

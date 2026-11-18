@@ -12,7 +12,7 @@ export function StrategySettings(props: StrategyAccountProps) {
   }, [config.error, props.refreshSession]);
 
   return (
-    <Card role="region" aria-labelledby="strategy-title" className="min-w-0 [--card-spacing:--spacing(5)] md:col-span-2">
+    <Card role="region" aria-labelledby="strategy-title" className="min-w-0 [--card-spacing:--spacing(5)]">
       <CardHeader>
         <CardTitle><h2 id="strategy-title" className="flex items-center gap-2 font-semibold">
           <SlidersHorizontal aria-hidden="true" className="size-4 text-primary" /> Настройки стратегии

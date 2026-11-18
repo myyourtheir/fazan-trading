@@ -58,7 +58,8 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
   await expect(page.getByText('Робот остановлен')).toBeVisible();
   await page.reload();
   await expect(dashboard).toBeVisible();
-  await page.getByRole('button', { name: 'Выйти' }).click();
+  await page.getByRole('button', { name: 'Профиль' }).press('Enter');
+  await page.getByRole('menuitem', { name: 'Выйти' }).click();
   await expect(login).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
   expect(await page.evaluate(() => window.history.length)).toBe(historyLength);
@@ -93,19 +94,21 @@ test('the protected panel closes when a session expires in a focused tab', async
   await expect(dashboard).toHaveCount(0);
 });
 
-test('opening the dashboard without a session redirects before requesting dashboard data', async ({ page }) => {
-  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Checks requests with a mocked session.');
-  const paths: string[] = [];
-  await page.route('/api/**', route => {
-    paths.push(new URL(route.request().url()).pathname);
-    return route.fulfill({ status: 401 });
-  });
+for (const route of ['/dashboard', '/settings']) {
+  test(`opening ${route} without a session redirects before requesting protected data`, async ({ page }) => {
+    test.skip(Boolean(process.env.SERFING_E2E_URL), 'Checks requests with a mocked session.');
+    const paths: string[] = [];
+    await page.route('/api/**', request => {
+      paths.push(new URL(request.request().url()).pathname);
+      return request.fulfill({ status: 401 });
+    });
 
-  await page.goto('/dashboard');
-  await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
-  await expect(page).toHaveURL(/\/login$/);
-  expect(paths).toEqual(['/api/auth/session']);
-});
+    await page.goto(route);
+    await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
+    await expect(page).toHaveURL(/\/login$/);
+    expect(paths).toEqual(['/api/auth/session']);
+  });
+}
 
 test('opening the login route with a session redirects to the dashboard', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses an authenticated mocked session.');

@@ -85,6 +85,26 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
     }, requestOptions()));
   }
 
+  balanceRubles(token: string, accountId: string) {
+    return this.call(token, async ({ sandbox }) => {
+      const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
+      if (positions.limitsLoadingInProgress) return null;
+      const rubles = positions.money.filter(amount => amount.currency.toLowerCase() === 'rub');
+      return rubles.length ? rubles.reduce((total, amount) => total + price(amount), 0) : null;
+    });
+  }
+
+  accountIsFlat(token: string, accountId: string) {
+    return this.call(token, async ({ sandbox }) => {
+      const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
+      if (orders.length > 0) return false;
+      const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
+      if (positions.limitsLoadingInProgress) return null;
+      return ![...positions.futures, ...positions.securities, ...positions.options]
+        .some(position => position.balance !== 0 || position.blocked !== 0);
+    });
+  }
+
   futures(token: string) {
     return this.call(token, async ({ instruments }) => {
       // The full catalogue includes inactive contracts, which the strategy cannot use.

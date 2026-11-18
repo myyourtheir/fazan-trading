@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Outlet } from '@tanstack/react-router';
 import { hasStatus, sessionApi } from '@/shared/api';
 import { RecoveryCard, Spinner } from '@/shared/ui';
 import { SessionAccessContext } from '../model/session-access';
 
-export function SessionGate() {
+export function SessionGate({ layout }: { layout: (authenticated: boolean, content: ReactNode) => ReactNode }) {
   const session = sessionApi.useSessionQuery(undefined, { refetchOnFocus: true, refetchOnReconnect: true });
   const [expiredCheck, setExpiredCheck] = useState<number>();
   const { data, fulfilledTimeStamp, refetch } = session;
@@ -19,16 +19,17 @@ export function SessionGate() {
   }, [data, fulfilledTimeStamp, refetch]);
 
   const checkingExpiry = expiredCheck !== undefined && expiredCheck === fulfilledTimeStamp;
-  if (!session.error && (!data || checkingExpiry)) {
-    return <p role="status" className="flex items-center gap-2"><Spinner aria-hidden="true" /> Проверяем сессию…</p>;
-  }
   const unauthenticated = hasStatus(session.error, 401);
-  if (session.error && !unauthenticated) {
-    return <RecoveryCard message="Сервер недоступен." action="Повторить" onRetry={refreshSession} />;
-  }
+  const checking = !session.error && (!data || checkingExpiry);
+  const authenticated = !checking && !session.error && data?.authenticated === true;
+  const content = checking
+    ? <p role="status" className="flex items-center gap-2"><Spinner aria-hidden="true" /> Проверяем сессию…</p>
+    : session.error && !unauthenticated
+      ? <RecoveryCard message="Сервер недоступен." action="Повторить" onRetry={refreshSession} />
+      : <Outlet />;
   return (
-    <SessionAccessContext.Provider value={{ authenticated: !unauthenticated && data?.authenticated === true, refreshSession }}>
-      <Outlet />
+    <SessionAccessContext.Provider value={{ authenticated, refreshSession }}>
+      {layout(authenticated, content)}
     </SessionAccessContext.Provider>
   );
 }

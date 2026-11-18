@@ -1,19 +1,14 @@
-import { Badge, Button, Spinner } from '@/shared/ui';
+import { Badge } from '@/shared/ui';
+import { SandboxAccountSelector } from './SandboxAccountSelector';
 
-export function DashboardHeader({ logout, isLoggingOut }: { logout: () => void; isLoggingOut: boolean }) {
+export function DashboardHeader({ refreshSession }: { refreshSession: () => void }) {
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4">
-      <div className="grid gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="secondary">Песочница</Badge>
-        </div>
+    <header className="flex min-w-0 flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Панель робота</h1>
-        <p className="text-sm text-muted-foreground">Настройте подключение и выберите виртуальный счёт.</p>
+        <Badge variant="secondary">Песочница</Badge>
       </div>
-      <Button variant="outline" onClick={logout} disabled={isLoggingOut}>
-        {isLoggingOut && <Spinner aria-hidden="true" data-icon="inline-start" />}
-        Выйти
-      </Button>
-    </div>
+      <SandboxAccountSelector refreshSession={refreshSession} />
+    </header>
   );
 }

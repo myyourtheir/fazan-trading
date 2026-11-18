@@ -34,7 +34,7 @@ export interface TradingStore {
   reserve(order: OrderIntent): Promise<boolean>;
   record(id: string, result: OrderResult): Promise<void>;
   hasUnresolved(): Promise<boolean>;
-  history(): Promise<JournalEntry[]>;
+  history(accountId?: string): Promise<JournalEntry[]>;
 }
 
 export class RobotError extends Error {
@@ -74,7 +74,7 @@ export class Robot {
     return { mode: this.mode, reason: this.reason, position: this.position };
   }
 
-  history() { return this.store.history(); }
+  history(accountId?: string) { return this.store.history(accountId); }
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);

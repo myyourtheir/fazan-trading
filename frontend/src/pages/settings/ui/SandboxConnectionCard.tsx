@@ -3,8 +3,7 @@ import {
   Alert, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle,
   Field, FieldGroup, FieldLabel, Input,
 } from '@/shared/ui';
-import type { SandboxStatus } from '../api/sandbox-api';
-import { sandboxMessageFor } from '../lib/sandbox-errors';
+import { sandboxMessageFor, type SandboxStatus } from '@/entities/sandbox';
 import { SandboxFeedback, type SandboxNotice } from './SandboxFeedback';
 
 type Props = {

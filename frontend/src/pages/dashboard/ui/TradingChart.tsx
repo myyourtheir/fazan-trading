@@ -5,7 +5,13 @@ import { createPriceChart } from "../lib/create-price-chart";
 import type { ChartCandle } from "../model/market-data";
 import { CandleDetails } from "./CandleDetails";
 
-export default function TradingChart({ candles, dark }: { candles: ChartCandle[]; dark: boolean }) {
+export default function TradingChart({
+  candles,
+  dark,
+}: {
+  candles: ChartCandle[];
+  dark: boolean;
+}) {
   const container = useRef<HTMLDivElement>(null);
   const plot = useRef<ReturnType<typeof createPriceChart>>(null);
   const pointerInside = useRef(false);

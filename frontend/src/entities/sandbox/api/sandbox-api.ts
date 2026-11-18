@@ -10,6 +10,10 @@ export type SandboxStatus = {
 
 const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox'] as const;
 
+export function selectedSandboxAccount(connection: SandboxStatus | undefined) {
+  return connection?.status === 'connected' ? connection.accounts.find(account => account.id === connection.accountId) : undefined;
+}
+
 // RTK Query mutation arguments appear in Redux actions. Keep this credential out of Redux.
 export async function saveSandboxToken(token: string): Promise<{ status: number; data: unknown } | null> {
   const response = await fetch('/api/sandbox/connection', {
@@ -23,6 +27,11 @@ export async function saveSandboxToken(token: string): Promise<{ status: number;
 export const sandboxApi = rootApi.injectEndpoints({
   endpoints: builder => ({
     sandbox: builder.query<SandboxStatus, void>({ query: () => 'sandbox', providesTags: ['Sandbox'] }),
+    sandboxBalance: builder.query<{ accountId: string; rubles: number | null }, string>({
+      query: accountId => ({ url: 'sandbox/balance', params: { accountId } }),
+      providesTags: (_data, _error, id) => [{ type: 'SandboxBalance', id }],
+      keepUnusedDataFor: 0,
+    }),
     selectSandboxAccount: builder.mutation<null, string>({
       query: accountId => ({ url: 'sandbox/account', method: 'PUT', headers: mutationHeaders, body: { accountId } }),
       invalidatesTags: changedSandboxTags,
@@ -33,6 +42,7 @@ export const sandboxApi = rootApi.injectEndpoints({
     }),
     fundSandboxAccount: builder.mutation<null, string>({
       query: accountId => ({ url: 'sandbox/funding', method: 'POST', headers: mutationHeaders, body: { accountId } }),
+      invalidatesTags: (_data, error, id) => error ? [] : [{ type: 'SandboxBalance', id }],
     }),
   }),
 });

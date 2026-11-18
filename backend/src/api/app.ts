@@ -6,6 +6,7 @@ import { RobotError, type Robot } from '../core/robot.js';
 import { SandboxError, type SandboxConnection } from '../core/sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
+import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { StrategySettings } from '../core/strategy-settings.js';
 
 export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket, robot }: {
@@ -80,7 +81,14 @@ export function createApp({ auth, secureCookies, sandbox, strategy, market, mark
   if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, marketSocket?.reload, changeSettings));
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   if (robot) {
-    api.get('/robot/history', requireOwner, async (_req, res) => res.json(await robot.history()));
+    api.get('/robot/history', requireOwner, async (req, res) => {
+      const { accountId } = req.query;
+      if (accountId !== undefined && !isPrintableAscii(accountId, brokerIdLimit)) {
+        res.status(400).json({ code: 'INVALID_REQUEST' });
+        return;
+      }
+      res.json(await robot.history(accountId));
+    });
     api.post('/robot/start', requireOwner, async (_req, res) => {
       await robot.start();
       res.status(204).end();

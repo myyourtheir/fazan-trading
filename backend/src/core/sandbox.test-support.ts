@@ -30,6 +30,12 @@ export function fakeBroker() {
       funded.push(accountId);
       if (fundingUncertain) throw new SandboxError('SANDBOX_UNREACHABLE');
     },
+    async balanceRubles(candidate) {
+      assert.equal(candidate, token);
+      if (offline) throw new SandboxError('SANDBOX_UNREACHABLE');
+      return 100_000.25;
+    },
+    async accountIsFlat() { return offline ? null : true; },
     async futures(candidate) {
       if (offline) throw new SandboxError('SANDBOX_UNREACHABLE');
       assert.equal(candidate, token);

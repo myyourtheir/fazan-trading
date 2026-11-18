@@ -101,8 +101,9 @@ export class PostgresTradingStore implements TradingStore {
     return rows.length > 0;
   }
 
-  async history() {
+  async history(accountId?: string) {
     const rows = await this.db.select().from(tradeOrders).leftJoin(tradeExecutions, eq(tradeOrders.id, tradeExecutions.orderId))
+      .where(accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId))
       .orderBy(desc(tradeOrders.signalTime), tradeOrders.id, tradeExecutions.sequence);
     const journal = new Map<string, Awaited<ReturnType<TradingStore['history']>>[number]>();
     for (const { trade_orders: order, trade_executions: execution } of rows) {

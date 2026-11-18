@@ -1,4 +1,4 @@
-import { price, utc } from "../lib/chart-format";
+import { emaPrice, price, utc } from "../lib/chart-format";
 import type { ChartCandle } from "../model/market-data";
 
 export function CandleDetails({ candle, hovered }: { candle: ChartCandle; hovered: boolean }) {
@@ -13,9 +13,9 @@ export function CandleDetails({ candle, hovered }: { candle: ChartCandle; hovere
     [
       candle.previewEma !== null ? "Предварительная EMA" : "Подтверждённая EMA",
       candle.confirmedEma !== null
-        ? price.format(candle.confirmedEma)
+        ? emaPrice.format(candle.confirmedEma)
         : candle.previewEma !== null
-          ? price.format(candle.previewEma)
+          ? emaPrice.format(candle.previewEma)
           : "Нет подтверждения",
     ],
   ];

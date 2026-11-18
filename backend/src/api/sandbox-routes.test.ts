@@ -46,6 +46,7 @@ test('the owner can connect, select, create, and fund sandbox accounts without e
   const { request } = await serve(t, new SandboxConnection(store, cipher, broker));
 
   assert.equal((await request('sandbox')).status, 401);
+  assert.equal((await request('sandbox/balance?accountId=existing')).status, 401);
   assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 401);
   assert.equal((await request('auth/login', 'POST', { password })).status, 200);
   assert.deepEqual((await request('sandbox')).body, { status: 'unconfigured', accountId: null, accounts: [] });
@@ -58,11 +59,16 @@ test('the owner can connect, select, create, and fund sandbox accounts without e
   assert.equal((await request('sandbox/account', 'PUT', { accountId: 'foreign' })).status, 422);
   assert.equal((await request('sandbox/account', 'PUT', { accountId: 'existing' })).status, 204);
   assert.equal((await request('sandbox')).body.accountId, 'existing');
+  assert.deepEqual(await request('sandbox/balance?accountId=existing'),
+    { status: 200, body: { accountId: 'existing', rubles: 100_000.25 } });
+  assert.equal((await request('sandbox/balance')).status, 400);
+  assert.equal((await request('sandbox/balance?accountId=foreign')).status, 422);
   assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 204);
   assert.equal((await request('sandbox')).body.accountId, 'existing');
   assert.notEqual((await store.load())?.encryptedToken, stored.encryptedToken);
 
   assert.equal((await request('sandbox/accounts', 'POST')).status, 204);
+  assert.equal((await request('sandbox/balance?accountId=existing')).status, 422);
   assert.deepEqual((await request('sandbox')).body, {
     status: 'connected', accountId: 'new', virtualFundingRubles: 100_000, accounts: [
       { id: 'existing', name: 'Existing sandbox account' }, { id: 'new', name: 'Сёрфинг' },
@@ -77,10 +83,50 @@ test('the owner can connect, select, create, and fund sandbox accounts without e
   assert.deepEqual(funded, ['new', 'new'], 'an ambiguous funding call is not retried automatically');
 
   goOffline();
+  assert.equal((await request('sandbox/balance?accountId=new')).status, 502);
   assert.deepEqual(await request('sandbox/connection', 'PUT', { token }),
     { status: 502, body: { code: 'SANDBOX_UNREACHABLE' } });
   assert.deepEqual((await request('sandbox')).body,
     { status: 'unavailable', accountId: 'new', accounts: [], code: 'SANDBOX_UNREACHABLE' });
+});
+
+test('changing the selected account requires a flat broker account, even when creating an account or replacing a token', async t => {
+  let saved: Awaited<ReturnType<SandboxStore['load']>> = { encryptedToken: cipher.encrypt(token), accountId: 'current' };
+  const store: SandboxStore = { async load() { return saved; }, async save(record) { saved = record; } };
+  const { broker } = fakeBroker();
+  const other = { id: 'other', name: 'Other' };
+  const replacementToken = 'replacement-token';
+  const accounts = [other, { id: 'current', name: 'Current' }];
+  broker.accounts = async candidate => candidate === replacementToken ? [other] : accounts;
+  let flat: boolean | null = false;
+  const flatCheck = t.mock.method(broker, 'accountIsFlat', async (candidate: string, accountId: string) => {
+    assert.equal(candidate, token, 'flatness must be checked using the existing credentials');
+    assert.equal(accountId, 'current');
+    return flat;
+  });
+  const openAccount = t.mock.method(broker, 'openAccount');
+  const { request } = await serve(t, new SandboxConnection(store, cipher, broker));
+  await request('auth/login', 'POST', { password });
+
+  const select = () => request('sandbox/account', 'PUT', { accountId: 'other' });
+  const create = () => request('sandbox/accounts', 'POST');
+  const replace = () => request('sandbox/connection', 'PUT', { token: replacementToken });
+  const original = saved;
+  for (const operation of [select, create, replace]) {
+    assert.deepEqual(await operation(), { status: 409, body: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' } });
+  }
+  assert.equal(flatCheck.mock.callCount(), 3);
+  assert.equal(openAccount.mock.callCount(), 0);
+  assert.deepEqual(saved, original);
+
+  flat = null;
+  assert.deepEqual(await select(), { status: 409, body: { code: 'SANDBOX_ACCOUNT_FLAT_UNVERIFIED' } });
+  assert.deepEqual(saved, original);
+  flat = true;
+  assert.equal((await select()).status, 204);
+  assert.equal((await store.load())?.accountId, 'other');
+  assert.equal((await replace()).status, 204, 'a replacement keeping the same selection does not recheck the account');
+  assert.equal(cipher.decrypt((await store.load())!.encryptedToken), replacementToken);
 });
 
 test('unexpected broker details are not returned to the owner or logged', async t => {
