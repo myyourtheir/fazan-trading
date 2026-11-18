@@ -16,14 +16,16 @@ test('PostgreSQL restores one active strategy, including the exact contract, wit
   { skip: !testDatabase && 'Requires a disposable PostgreSQL database' }, async () => {
     const first = connectToPostgres(testDatabase);
     const { broker, goOffline } = fakeBroker();
+    const encryptedToken = cipher.encrypt(token);
     const sandbox = new SandboxConnection({
-      async load() { return { encryptedToken: cipher.encrypt(token), accountId: 'existing' }; },
+      async load() { return { encryptedToken, accountId: 'existing' }; },
       async save() { assert.fail('Unexpected account change'); },
     }, cipher, broker);
     let expected;
     try {
       await migrateDatabase(first.db);
       const service = new StrategySettings(new PostgresStrategySettings(first.db), sandbox);
+      await service.search('IMOEXF');
       await service.save({ accountId: 'existing', instrumentUid: 'contract-a', emaPeriod: 55, lots: 1 });
       await service.save({ accountId: 'existing', instrumentUid: 'contract-b', emaPeriod: 34, lots: 7 });
       expected = await service.get();

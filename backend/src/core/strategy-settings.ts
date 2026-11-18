@@ -1,4 +1,4 @@
-import { SandboxError, type FutureContract, type SandboxConnection } from './sandbox.js';
+import type { FutureContract, SandboxConnection } from './sandbox.js';
 
 const defaults = { ticker: 'IMOEXF', emaPeriod: 55 } as const;
 
@@ -16,19 +16,14 @@ export class StrategySettings {
     return { defaults, settings: await this.store.load() };
   }
 
-  async search(query: string) {
-    const term = query.toLowerCase();
-    return (await this.sandbox.tradableFutures())
-      .filter(({ ticker, name }) => ticker.toLowerCase().includes(term) || name.toLowerCase().includes(term));
+  search(query: string) {
+    return this.sandbox.searchFutures(query);
   }
 
   save({ accountId, instrumentUid, emaPeriod, lots }: {
     accountId: string; instrumentUid: string; emaPeriod: number; lots: number;
   }) {
-    return this.sandbox.changeStrategyForAccount(accountId, async contracts => {
-      const instrument = contracts.find(contract => contract.uid === instrumentUid);
-      if (!instrument) throw new SandboxError('FUTURE_UNAVAILABLE');
-      await this.store.save({ instrument, emaPeriod, lots });
-    });
+    return this.sandbox.changeStrategyForAccount(accountId, instrumentUid,
+      instrument => this.store.save({ instrument, emaPeriod, lots }));
   }
 }

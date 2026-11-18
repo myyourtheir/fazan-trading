@@ -141,12 +141,18 @@ test('unexpected broker details are not returned to the owner or logged', async 
   assert.equal(logged.mock.callCount(), 0);
 });
 
-test('strategy search keeps ambiguous tickers separate and saving validates the account, UID and integers', async t => {
+test('strategy saving uses offered contracts without fetching the broker catalogue again', async t => {
   let connection: Awaited<ReturnType<SandboxStore['load']>> = null;
   const store: SandboxStore = { async load() { return connection; }, async save(record) { connection = record; } };
   let settings: Awaited<ReturnType<StrategyStore['load']>> = null;
   const strategyStore: StrategyStore = { async load() { return settings; }, async save(record) { settings = record; } };
   const { broker } = fakeBroker();
+  const listFutures = broker.futures;
+  let catalogueAvailable = true;
+  const catalogue = t.mock.method(broker, 'futures', async (candidate: string) => {
+    if (!catalogueAvailable) throw new Error('The catalogue is unavailable');
+    return listFutures(candidate);
+  });
   const sandbox = new SandboxConnection(store, cipher, broker);
   const strategy = new StrategySettings(strategyStore, sandbox);
   const { request } = await serve(t, sandbox, strategy);
@@ -162,10 +168,15 @@ test('strategy search keeps ambiguous tickers separate and saving validates the 
   await request('sandbox/connection', 'PUT', { token });
   assert.equal((await put(config)).status, 422);
   await request('sandbox/account', 'PUT', { accountId: 'existing' });
+  assert.deepEqual(await put(config), { status: 409, body: { code: 'FUTURE_SELECTION_EXPIRED' } });
+  const narrowSearch = `strategy/futures?q=${encodeURIComponent('мосбиржи')}`;
+  assert.equal((await request(narrowSearch)).body.length, 1);
+  assert.deepEqual(await put(config), { status: 422, body: { code: 'FUTURE_UNAVAILABLE' } });
+  assert.equal(catalogue.mock.callCount(), 1);
   const matches = (await request('strategy/futures?q=imoexf')).body;
   assert.deepEqual(matches.map(({ uid }: { uid: string }) => uid), ['contract-a', 'contract-b']);
   assert.equal(matches[1].expirationDate, futures[1].expirationDate);
-  assert.deepEqual((await request(`strategy/futures?q=${encodeURIComponent('мосбиржи')}`)).body, [matches[0]]);
+  assert.deepEqual((await request(narrowSearch)).body, [matches[0]]);
   for (const invalid of [0, -1, 1.5, '3', 2 ** 31]) {
     assert.equal((await put({ ...config, emaPeriod: invalid })).status, 400);
     assert.equal((await put({ ...config, lots: invalid })).status, 400);
@@ -175,8 +186,12 @@ test('strategy search keeps ambiguous tickers separate and saving validates the 
   }
   assert.equal((await put({ ...config, accountId: 'other' })).status, 422);
   assert.equal(settings, null);
+  catalogueAvailable = false;
   assert.equal((await put(config)).status, 204);
+  assert.equal(catalogue.mock.callCount(), 3);
   assert.equal((await put({ ...config, lots: 0 })).status, 400);
+  assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 204);
+  assert.deepEqual(await put(config), { status: 409, body: { code: 'FUTURE_SELECTION_EXPIRED' } });
   await request('sandbox/accounts', 'POST');
   assert.equal((await put({ ...config, lots: 9 })).status, 422, 'A stale account cannot save over the settings');
   assert.deepEqual((await request('strategy')).body.settings, { instrument: matches[1], emaPeriod: 55, lots: 3 });
