@@ -6,6 +6,7 @@ const orderStatuses: Record<JournalEntry['status'], string> = {
   reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена',
   unconfirmed: 'Требуется сверка', 'stopped-before-send': 'Робот остановлен до отправки',
   'feed-lost-before-send': 'Поток потерян до отправки',
+  'account-check-failed-before-send': 'Счёт не прошёл проверку до отправки',
 };
 const brokerStatuses: Record<JournalEntry['brokerStatus'], string> = {
   filled: 'Исполнена', rejected: 'Отклонена', cancelled: 'Отменена',

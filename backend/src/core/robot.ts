@@ -18,7 +18,7 @@ export type BrokerOrder = {
   executions: Execution[];
 };
 export type OrderResult = BrokerOrder & {
-  status: 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send';
+  status: 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send' | 'account-check-failed-before-send';
   position: number | null;
 };
 export type JournalEntry = OrderIntent & Omit<OrderResult, 'status'> & { status: OrderResult['status'] | 'reserved' };
@@ -210,22 +210,32 @@ export class Robot {
   private async trade(run: Run, signal: Signal) {
     const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry);
     if (this.run !== run) return;
-    if (fromPosition === signal.targetPosition) {
+    const delta = positionDelta(fromPosition, signal.targetPosition);
+    if (!delta) {
       this.publish();
       return;
     }
     const { accountId, instrumentUid, ticker } = run.config;
     const intent: OrderIntent = {
-      ...signal, id: randomUUID(), accountId, instrumentUid, ticker, fromPosition,
-      ...positionDelta(fromPosition, signal.targetPosition),
+      ...signal, id: randomUUID(), accountId, instrumentUid, ticker, fromPosition, ...delta,
     };
     if (!await this.store.reserve(intent)) {
       if (await this.store.hasUnresolved()) this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
       return;
     }
     this.publish();
-    if (this.run !== run) {
-      await this.store.record(intent.id, { ...unknownOrder, status: run.cancelledBy ?? 'stopped-before-send', position: this.position });
+    let accountCheckError: string | undefined;
+    if (this.run === run) {
+      try {
+        if (await this.readPosition(run.config, false) !== fromPosition) accountCheckError = 'ROBOT_POSITION_CHANGED';
+      } catch (error) {
+        accountCheckError = error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED';
+      }
+    }
+    if (this.run !== run || accountCheckError) {
+      const status = run.cancelledBy ?? 'account-check-failed-before-send';
+      await this.store.record(intent.id, { ...unknownOrder, status, position: this.position });
+      if (accountCheckError) this.pause(run, accountCheckError);
       this.publish();
       return;
     }

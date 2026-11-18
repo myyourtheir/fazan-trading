@@ -168,6 +168,30 @@ test('active broker orders prevent a reversal', async () => {
   assert.equal(submitted.length, 1);
 });
 
+for (const change of ['position', 'active order'] as const) {
+  test(`change in ${change} state during reversal reservation prevents submission`, async () => {
+    const fixture = setup();
+    const { robot, history, setAccount, store, submitted } = fixture;
+    await openLong(fixture);
+    const gate = deferred();
+    const reserve = store.reserve;
+    store.reserve = async order => { const saved = await reserve(order); await gate.promise; return saved; };
+
+    await history(candle(0, 101), candle(1, 99));
+    assert.equal((await robot.history())[1].status, 'reserved');
+    if (change === 'position') setAccount(-3);
+    else setAccount(3, true);
+    gate.resolve();
+    await setImmediate();
+
+    assert.equal(submitted.length, 1);
+    assert.equal((await robot.history())[1].status, 'account-check-failed-before-send');
+    assert.equal(await store.hasUnresolved(), false);
+    assert.equal(robot.status().mode, 'paused');
+    assert.equal(robot.status().reason, change === 'position' ? 'ROBOT_POSITION_CHANGED' : 'ROBOT_ACTIVE_ORDERS');
+  });
+}
+
 for (const brokerStatus of ['filled', 'partial'] as const) {
   test(`a ${brokerStatus} reversal without target position pauses trading`, async () => {
     const fixture = setup();

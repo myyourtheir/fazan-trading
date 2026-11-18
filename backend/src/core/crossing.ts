@@ -7,5 +7,6 @@ export function crossing(previous: Side | null, close: number, ema: number) {
 
 export function positionDelta(position: number, target: number) {
   const delta = target - position;
+  if (delta === 0) return null;
   return { direction: delta > 0 ? 'buy' as const : 'sell' as const, lots: Math.abs(delta) };
 }

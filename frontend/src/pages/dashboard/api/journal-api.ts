@@ -5,7 +5,7 @@ export type JournalEntry = {
   signalTime: number; signalPrice: number; ema: number;
   direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;
   brokerOrderId: string | null; brokerStatus: 'filled' | 'rejected' | 'cancelled' | 'new' | 'partial' | 'unknown';
-  status: 'reserved' | 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send';
+  status: 'reserved' | 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send' | 'account-check-failed-before-send';
   executedLots: number | null; position: number | null;
   executions: { tradeId: string; lots: number; price: number | null; time: number | null }[];
 };
