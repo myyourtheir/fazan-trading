@@ -1,8 +1,7 @@
 import { once } from 'node:events';
-import { Pool } from 'pg';
 import { createApp } from './app.js';
 import { OwnerAuth } from './auth.js';
-import { migrate, PostgresSessions } from './postgres.js';
+import { connectToPostgres, migrateDatabase, PostgresSessions } from './postgres.js';
 
 async function main() {
   const { DATABASE_URL, PGHOST, OWNER_PASSWORD, COOKIE_SECURE = 'true', HOST = '127.0.0.1', PORT = '3000' } = process.env;
@@ -14,19 +13,18 @@ async function main() {
   const port = Number(PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number.');
 
-  const pool = new Pool({ connectionString: DATABASE_URL, connectionTimeoutMillis: 5_000 });
-  pool.on('error', () => console.error('An idle PostgreSQL connection failed.'));
+  const { db, close } = connectToPostgres(DATABASE_URL);
   try {
-    await migrate(pool);
-    const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(pool));
+    await migrateDatabase(db);
+    const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
     const server = createApp({ auth, secureCookies: COOKIE_SECURE === 'true' }).listen(port, HOST);
     await once(server, 'listening');
     console.log(`Serfing API is listening on ${HOST}:${port}.`);
-    const shutdown = () => server.close(() => { void pool.end(); });
+    const shutdown = () => server.close(() => { void close(); });
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
   } catch {
-    await pool.end();
+    await close();
     throw new Error('Backend startup failed. Check the database connection, migrations, and listening address.');
   }
 }

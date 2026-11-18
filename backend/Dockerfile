@@ -1,7 +1,18 @@
-FROM node:24-alpine AS build
+FROM node:24-alpine AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
+
+FROM dependencies AS dev
+ENV HOST=0.0.0.0
+RUN chown node:node /app
+COPY --chown=node:node tsconfig.json ./
+COPY --chown=node:node src ./src
+COPY --chown=node:node migrations ./migrations
+USER node
+CMD ["npm", "run", "dev"]
+
+FROM dependencies AS build
 COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN npm run build

@@ -38,10 +38,12 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
   await field.fill(password === 'wrong-owner-password' ? 'different-owner-password' : 'wrong-owner-password');
   await page.getByRole('button', { name: 'Войти' }).click();
   await expect(page.getByRole('alert')).toHaveText('Неверный пароль.');
+  await expect(field).toHaveAttribute('aria-invalid', 'true');
+  await expect(field).toHaveAccessibleDescription('Неверный пароль.');
   await expect(dashboard).toHaveCount(0);
 
   await field.fill(password);
-  await page.getByRole('button', { name: 'Войти' }).click();
+  await field.press('Enter');
   await expect(dashboard).toBeVisible();
   await expect(page.getByText('Робот остановлен')).toBeVisible();
   await page.reload();
@@ -68,4 +70,14 @@ test('the protected panel closes when a session expires in a focused tab', async
   await page.clock.fastForward(6_000);
   await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
   await expect(dashboard).toHaveCount(0);
+});
+
+test('switching themes changes the rendered Tailwind colors', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Checks the front-end theme without signing into a deployment.');
+  await page.route('**/api/auth/session', route => route.fulfill({ status: 401 }));
+  await page.goto('/');
+  const submit = page.getByRole('button', { name: 'Войти' });
+  await expect(submit).toHaveCSS('background-color', 'rgb(120, 224, 206)');
+  await page.getByRole('button', { name: 'Светлая тема' }).click();
+  await expect(submit).toHaveCSS('background-color', 'rgb(8, 99, 91)');
 });
