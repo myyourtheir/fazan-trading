@@ -1,10 +1,10 @@
 import { once } from 'node:events';
 import { createServer } from 'node:http';
-import { createApp } from './app.js';
+import { createApp } from './api/app.js';
 import { OwnerAuth } from './core/auth.js';
 import { InvestSandbox } from './infra/invest-sandbox.js';
 import { MarketData } from './core/market-data.js';
-import { attachMarketSocket } from './market-socket.js';
+import { attachMarketSocket } from './api/market-socket.js';
 import {
   connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings, PostgresTradingStore,
 } from './infra/postgres.js';

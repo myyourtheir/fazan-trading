@@ -4,7 +4,7 @@ import { test, type TestContext } from 'node:test';
 import { NodeApiClient } from '@ttech-pub/grpc-node-client';
 import { InstrumentStatus } from '@ttech-pub/grpc-node-client/compiled/common.js';
 import { Status } from 'nice-grpc';
-import { createApp } from '../src/app.js';
+import { createApp } from '../src/api/app.js';
 import { OwnerAuth, type SessionStore } from '../src/core/auth.js';
 import { InvestSandbox } from '../src/infra/invest-sandbox.js';
 import { connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresStrategySettings } from '../src/infra/postgres.js';

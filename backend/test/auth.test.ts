@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
-import { createApp } from '../src/app.js';
+import { createApp } from '../src/api/app.js';
 import { OwnerAuth, type SessionStore } from '../src/core/auth.js';
 
 const password = 'test-owner-password';

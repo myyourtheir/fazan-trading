@@ -1,11 +1,12 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
-import { ownerCookie, ownerSessionToken, type OwnerAuth } from './core/auth.js';
-import type { MarketData } from './core/market-data.js';
-import { RobotError, type Robot } from './core/robot.js';
-import { SandboxError, type SandboxConnection } from './core/sandbox.js';
+import type { OwnerAuth } from '../core/auth.js';
+import { ownerCookie, ownerSessionToken } from './cookies.js';
+import type { MarketData } from '../core/market-data.js';
+import { RobotError, type Robot } from '../core/robot.js';
+import { SandboxError, type SandboxConnection } from '../core/sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
-import type { StrategySettings } from './core/strategy-settings.js';
+import type { StrategySettings } from '../core/strategy-settings.js';
 
 export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket, robot }: {
   auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection; strategy?: StrategySettings;

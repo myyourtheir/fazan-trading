@@ -1,6 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
-import type { StrategySettings } from './core/strategy-settings.js';
+import type { StrategySettings } from '../core/strategy-settings.js';
 
 function positiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
