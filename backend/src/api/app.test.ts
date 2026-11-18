@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
-import { createApp } from '../src/api/app.js';
-import { OwnerAuth, type SessionStore } from '../src/core/auth.js';
+import { OwnerAuth, type SessionStore } from '../core/auth.js';
+import { createApp } from './app.js';
 
 const password = 'test-owner-password';
 

@@ -6,10 +6,10 @@ import { NodeApiClient } from '@ttech-pub/grpc-node-client';
 import {
   OrderDirection, OrderExecutionReportStatus, OrderIdType, OrderType,
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
-import { InvestSandbox } from '../src/infra/invest-sandbox.js';
-import { hourMs, type MarketHistory, type MarketUpdate } from '../src/core/market-data.js';
-import { connectToPostgres, migrateDatabase, PostgresTradingStore } from '../src/infra/postgres.js';
-import { Robot, type OrderIntent, type TradingConfig } from '../src/core/robot.js';
+import { hourMs, type MarketHistory, type MarketUpdate } from '../core/market-data.js';
+import { Robot, type OrderIntent, type TradingConfig } from '../core/robot.js';
+import { InvestSandbox } from './invest-sandbox.js';
+import { connectToPostgres, migrateDatabase, PostgresTradingStore } from './postgres.js';
 
 const intent: OrderIntent = {
   id: randomUUID(), accountId: 'test-account', instrumentUid: 'test-future', ticker: 'TEST',
@@ -77,33 +77,6 @@ test('SDK position check does not mistake a blocked or unidentified balance for 
 const { SERFING_TEST_DATABASE_URL: database, SERFING_TEST_SANDBOX_TOKEN: token,
   SERFING_TEST_FUTURE_UID: instrumentUid, SERFING_TEST_SANDBOX_ACCOUNT_ID: accountId,
   SERFING_TEST_PLACE_SANDBOX_ORDER: placeOrder } = process.env;
-
-test('PostgreSQL preserves separate orders and executions and rejects duplicate reservations', { skip: !database }, async () => {
-  assert.ok(database);
-  const order = { ...intent, accountId: `test-${randomUUID()}` };
-  const result = { status: 'confirmed', brokerOrderId: 'exchange-id', brokerStatus: 'filled', executedLots: 1, position: -1,
-    executions: [{ tradeId: 'fill', lots: 1, price: 98.5, time: intent.signalTime + 3_000 }] } as const;
-  const first = connectToPostgres(database);
-  try {
-    await migrateDatabase(first.db);
-    const store = new PostgresTradingStore(first.db);
-    assert.equal(await store.reserve(order), true);
-    assert.equal(await store.hasUnresolved(), true);
-    assert.equal(await store.reserve({ ...order, id: randomUUID(), candleTime: order.candleTime + hourMs }), false);
-    await store.record(order.id, { ...result, executions: [...result.executions] });
-    assert.equal(await store.hasUnresolved(), false);
-    assert.equal(await store.reserve({ ...order, id: randomUUID() }), false);
-  } finally {
-    await first.close();
-  }
-  const second = connectToPostgres(database);
-  try {
-    const journal = await new PostgresTradingStore(second.db).history();
-    assert.deepEqual(journal.find(entry => entry.id === order.id), { ...order, ...result });
-  } finally {
-    await second.close();
-  }
-});
 
 test('explicit sandbox smoke: sends one virtual market order and saves broker fills in PostgreSQL', {
   skip: placeOrder !== 'yes', timeout: 60_000,

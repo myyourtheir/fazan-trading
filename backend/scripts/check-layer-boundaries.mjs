@@ -2,7 +2,8 @@
 // core imports only core; infra may import core and infra; api may import
 // core and api. main.ts composes everything and is unrestricted, and only
 // main.ts may live directly in src/. Only relative imports are checked;
-// package and node: imports never cross layers.
+// package and node: imports never cross layers. Colocated tests and fixtures
+// are exempt, but production modules must not import them.
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -23,12 +24,13 @@ const layerOf = (file) => {
 };
 
 const violations = [];
+const isTestFile = (file) => /\.test(?:-support)?\.[jt]s$/.test(file);
 
 function walk(dir) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) walk(full);
-    else if (entry.name.endsWith('.ts')) check(full);
+    else if (entry.name.endsWith('.ts') && !isTestFile(entry.name)) check(full);
   }
 }
 
@@ -44,6 +46,10 @@ function check(file) {
     const target = resolve(dirname(file), spec);
     if (!target.startsWith(`${srcRoot}/`)) {
       violations.push(`${relative(srcRoot, file)}: relative import escapes src/ (${spec})`);
+      continue;
+    }
+    if (isTestFile(target)) {
+      violations.push(`${relative(srcRoot, file)}: production must not import test code (${spec})`);
       continue;
     }
     const to = layerOf(target);

@@ -4,10 +4,10 @@ import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
-import { createApp } from '../src/api/app.js';
-import { OwnerAuth } from '../src/core/auth.js';
-import { MarketData } from '../src/core/market-data.js';
-import { attachMarketSocket } from '../src/api/market-socket.js';
+import { OwnerAuth } from '../core/auth.js';
+import { MarketData } from '../core/market-data.js';
+import { createApp } from './app.js';
+import { attachMarketSocket } from './market-socket.js';
 
 test('market REST and WebSocket require an owner session; logout closes the live socket', { timeout: 5_000 }, async t => {
   const sessions = new Map<string, Date>();

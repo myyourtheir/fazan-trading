@@ -18,6 +18,6 @@ Status: done
 
 ## Comments
 
-Smoke-тест реализован в `backend/test/invest-trading.test.ts`. Для его запуска нужны токен и выделенный пополненный счёт песочницы; инструкция в `README.md`.
+Smoke-тест реализован в `backend/src/infra/invest-sandbox.trading.test.ts`. Для его запуска нужны токен и выделенный пополненный счёт песочницы; инструкция в `README.md`.
 
 Проверено 2026-11-18: `typecheck` и все тесты `backend/` зелёные; функционал реализован в `c47aa5b` и `bb40162`.

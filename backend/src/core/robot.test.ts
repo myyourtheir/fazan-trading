@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
-import { hourMs, type MarketHistory, type MarketUpdate } from '../src/core/market-data.js';
-import { Robot, type Broker, type JournalEntry, type TradingConfig, type TradingStore } from '../src/core/robot.js';
+import { hourMs, type MarketHistory, type MarketUpdate } from './market-data.js';
+import { Robot, type Broker, type JournalEntry, type TradingConfig, type TradingStore } from './robot.js';
 
 type Candle = MarketHistory['candles'][number];
 const config: TradingConfig = {

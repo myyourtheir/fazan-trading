@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { NodeApiClient } from '@ttech-pub/grpc-node-client';
-import { InvestSandbox } from '../src/infra/invest-sandbox.js';
+import { InvestSandbox } from './invest-sandbox.js';
 
 const { SERFING_TEST_SANDBOX_TOKEN: token, SERFING_TEST_FUTURE_UID: uid } = process.env;
 

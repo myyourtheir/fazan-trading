@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
-import { MarketData, type HourlyCandle, type MarketBroker, type MarketUpdate } from '../src/core/market-data.js';
+import { MarketData, type HourlyCandle, type MarketBroker, type MarketUpdate } from './market-data.js';
 
 const hour = 60 * 60_000;
 const openTime = Date.UTC(2026, 10, 18, 12);
