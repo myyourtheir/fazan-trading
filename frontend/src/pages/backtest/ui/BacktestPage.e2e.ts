@@ -70,6 +70,9 @@ test('the owner can run a backtest without saving settings or selecting an accou
   await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
   await expect(page.getByText(/Комиссия и проскальзывание не учитываются/)).toBeVisible();
   await expect(page.getByText('Макс. просадка')).toBeVisible();
+  const periodReturn = page.locator('dl > div').filter({ hasText: 'Доходность к стоимости первого входа' });
+  // 60 RUB profit on the first entry worth 103 points × 3 lots × 10 RUB per point per lot.
+  await expect(periodReturn.locator('dd')).toHaveText(/^1,94\s*%$/);
   await expect(page.getByText('Покупка')).toBeVisible();
   await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
   await run.click();

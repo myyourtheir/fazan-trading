@@ -10,6 +10,7 @@ const moscowTime = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow',
 const moneyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const priceFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
 const percentFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+const returnFormat = new Intl.NumberFormat('ru-RU', { style: 'percent', maximumFractionDigits: 2 });
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
@@ -27,6 +28,9 @@ export function BacktestReportCard({ report, stale, dark }: {
   const currencyCode = currency.toUpperCase();
   const money = (value: number) => `${moneyFormat.format(value)} ${currencyCode}`;
   const noCosts = parameters.commission === 0 && parameters.slippage === 0;
+  const firstExecution = executions[0];
+  const entryValue = firstExecution ? Math.abs(firstExecution.price) * firstExecution.lots * pointValue : 0;
+  const periodReturn = Number.isFinite(entryValue) && entryValue > 0 ? result.total / entryValue : NaN;
   return (
     <Card>
       <CardHeader>
@@ -41,14 +45,20 @@ export function BacktestReportCard({ report, stale, dark }: {
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
           <Stat label="Результат" value={money(result.total)} />
+          <Stat label="Доходность к стоимости первого входа" value={Number.isFinite(periodReturn) ? returnFormat.format(periodReturn) : '—'} />
           <Stat label="Закрытые сделки" value={money(result.closed)} />
           <Stat label="Открытая позиция" value={money(result.open)} />
           <Stat label="Остаток позиции" value={`${result.position} лот.`} />
           <Stat label="Макс. просадка" value={money(result.maxDrawdown)} />
           <Stat label="Исполнений" value={String(executions.length)} />
         </dl>
+        {Number.isFinite(periodReturn) && (
+          <p className="text-sm text-muted-foreground">
+            Доходность — общий результат в процентах от стоимости лотов при первом входе ({money(entryValue)}).
+          </p>
+        )}
         <p className="text-sm text-muted-foreground">
           EMA — брокерская (по закрытиям свечей). Сигнал определяется по завершённой свече, исполнение
           {' '}моделируется по цене открытия следующей свечи внутри периода.
