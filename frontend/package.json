@@ -1,0 +1,28 @@
+{
+  "name": "serfing-frontend",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "build": "npm run typecheck && vite build",
+    "start": "vite preview",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@reduxjs/toolkit": "^2.9.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-redux": "^9.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^6.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^8.0.0"
+  }
+}
