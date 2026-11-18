@@ -16,8 +16,15 @@ export const marketApi = rootApi.injectEndpoints({
       },
       merge(cache, incoming) {
         if (incoming.historyAvailable) {
-          // REST may finish after a newer tick. Keep the live values for the same timestamp.
-          cache.candles = addCandles(incoming.candles, cache.candles);
+          const catchUp = cache.catchUp;
+          if (catchUp) {
+            const retained = cache.candles.filter(candle => !catchUp.liveTimes[candle.time]);
+            const newer = cache.candles.filter(candle => catchUp.liveTimes[candle.time]);
+            cache.candles = addCandles(addCandles(retained, incoming.candles), newer);
+            cache.catchUp = undefined;
+          } else {
+            cache.candles = addCandles(incoming.candles, cache.candles);
+          }
           cache.historyAvailable = true;
         }
       },

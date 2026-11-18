@@ -3,7 +3,9 @@ import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { SandboxConnection } from '../core/sandbox.js';
 
 export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler,
-  changeSettings: (action: () => Promise<void>) => Promise<void>, onTokenChange?: () => void) {
+  changeSettings: (action: () => Promise<void>) => Promise<void>,
+  replaceCredentials: (action: (accountId?: string) => Promise<void>) => Promise<void>,
+  onTokenChange?: () => void) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));
@@ -16,7 +18,7 @@ export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestH
     res.json(await sandbox.balance(accountId));
   });
   router.put('/connection', mutation('token', 2048, async token => {
-    await changeSettings(() => sandbox.connect(token));
+    await replaceCredentials(accountId => sandbox.connect(token, accountId));
     onTokenChange?.();
   }));
   router.put('/account', mutation('accountId', brokerIdLimit,

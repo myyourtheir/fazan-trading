@@ -2,7 +2,7 @@ export async function watchSocket<Message>(
   path: string,
   removed: Promise<void>,
   handlers: {
-    onConnect?: () => void;
+    onConnecting?: () => void;
     onReconnect?: () => void;
     onMessage: (message: Message) => void;
     onClose?: (code: number) => void;
@@ -14,7 +14,7 @@ export async function watchSocket<Message>(
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
 
   function connect() {
-    handlers.onConnect?.();
+    handlers.onConnecting?.();
     const reconnecting = socket !== undefined;
     const ws = socket = new WebSocket(url);
     if (reconnecting) ws.onopen = () => handlers.onReconnect?.();

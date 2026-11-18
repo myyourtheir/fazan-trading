@@ -5,7 +5,16 @@ export type ChartCandle = {
 };
 export type StreamState = 'unconfigured' | 'connecting' | 'live' | 'disconnected';
 export type MarketHistory = MarketSelection & { candles: ChartCandle[] };
-export type MarketChartData = MarketHistory & { stream: StreamState; historyAvailable: boolean };
+export type MarketChartData = MarketHistory & {
+  stream: StreamState;
+  historyAvailable: boolean;
+  catchUp?: { receivedSnapshot: boolean; liveTimes: Record<number, true> };
+};
+
+export function sameCandle(a: ChartCandle | undefined, b: ChartCandle) {
+  return !!a && a.complete === b.complete && a.close === b.close && a.open === b.open
+    && a.high === b.high && a.low === b.low && a.confirmedEma === b.confirmedEma && a.previewEma === b.previewEma;
+}
 
 export function addCandles(candles: ChartCandle[], updates: ChartCandle[]) {
   const byTime = new Map(candles.map(candle => [candle.time, candle]));

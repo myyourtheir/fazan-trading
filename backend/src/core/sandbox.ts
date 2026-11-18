@@ -77,11 +77,14 @@ export class SandboxConnection {
     }
   }
 
-  connect(token: string) {
+  connect(token: string, pinnedAccountId?: string) {
     return this.change(async () => {
       const accounts = await this.listAccounts(token);
       const saved = await this.store.load();
       const accountId = accounts.find(account => account.id === saved?.accountId)?.id ?? null;
+      if (pinnedAccountId !== undefined && accountId !== pinnedAccountId) {
+        throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+      }
       if (saved && saved.accountId !== accountId) await this.requireFlatAccount(saved);
       await this.store.save({
         encryptedToken: this.cipher.encrypt(token),

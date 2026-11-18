@@ -16,15 +16,30 @@ export type MarketUpdate = {
   stream: StreamState;
   history?: MarketHistory;
   tick?: MarketSelection & { candle: ChartCandle };
+  recoveredAt?: number; // Trading cutoff of the authoritative snapshot that ended a broker reconnect.
 };
 type MarketListener = (update: MarketUpdate) => void;
 type BrokerEvent = { kind: 'subscribed' } | { kind: 'candle'; candle: HourlyCandle };
+type BrokerSnapshot = { candles: HourlyCandle[]; ema: { time: number; value: number }[] | null };
 
 export interface MarketBroker {
   candles(token: string, uid: string, from: Date, to: Date, signal?: AbortSignal): Promise<HourlyCandle[]>;
   ema(token: string, uid: string, period: number, from: Date, to: Date, signal?: AbortSignal):
     Promise<{ time: number; value: number }[]>;
   stream(token: string, uid: string, signal: AbortSignal): AsyncIterable<BrokerEvent>;
+}
+
+function hasRecoveryBaseline({ candles, ema }: BrokerSnapshot, cutoff: number) {
+  const closed = new Map(candles.filter(candle => candle.complete).map(candle => [candle.time, candle.close]));
+  const indicators = new Map(ema?.map(({ time, value }) => [time, value]));
+  // Without a trading calendar an absent hour could be a missing close, not a market break.
+  // A strict side at or after any uncertain hour supersedes that uncertainty.
+  for (let time = Math.floor(cutoff / hourMs) * hourMs - hourMs; ; time -= hourMs) {
+    const close = closed.get(time);
+    const value = indicators.get(time);
+    if (close === undefined || value === undefined) return false;
+    if (close !== value) return true;
+  }
 }
 
 class MarketSeries {
@@ -154,30 +169,31 @@ export class MarketData {
       ? await this.broker.ema(token, instrumentUid, emaPeriod, from, to, signal).catch(() => null)
       : [];
     if (!signal?.aborted) series.merge(candles, ema ?? []);
-    return ema !== null;
+    return { candles, ema };
   }
 
   private async run(feed: MarketFeed) {
     const { config, controller } = feed;
     const series = new MarketSeries(config);
     let recovering = false;
-    const publishHistory = (stream = feed.state) => {
-      const history = series.history(this.now());
-      if (stream !== feed.state || JSON.stringify(history) !== JSON.stringify(feed.history)) feed.publish({ stream, history });
+    const publishHistory = (stream = feed.state, recoveredAt?: number) => {
+      const history = series.history(recoveredAt ?? this.now());
+      if (stream !== feed.state || JSON.stringify(history) !== JSON.stringify(feed.history)) {
+        feed.publish({ stream, history, ...(recoveredAt !== undefined && { recoveredAt }) });
+      }
     };
     const poll = async (signal: AbortSignal) => {
       while (!signal.aborted) {
-        let refreshed = false;
-        let emaAvailable = false;
+        let snapshot: BrokerSnapshot | undefined;
         try {
-          emaAvailable = await this.refresh(series, config, signal) === true;
-          refreshed = true;
+          snapshot = await this.refresh(series, config, signal);
         } catch { /* Keep the last successful snapshot and retry. */ }
-        if (!signal.aborted && (refreshed || feed.history)) {
-          if (recovering && emaAvailable) {
+        if (!signal.aborted && (snapshot || feed.history)) {
+          const cutoff = this.now();
+          if (recovering && snapshot && hasRecoveryBaseline(snapshot, cutoff)) {
             recovering = false;
             // A socket acknowledgement alone is not a trading baseline after a gap.
-            publishHistory('live');
+            publishHistory('live', cutoff);
           } else publishHistory();
         }
         await delay(this.refreshMs, undefined, { signal }).catch(() => {});

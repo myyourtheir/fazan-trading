@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { crossing, positionDelta, type Side } from './crossing.js';
-import { hourMs, type MarketData, type MarketUpdate } from './market-data.js';
+import { findLiveCrossing, positionDelta } from './crossing.js';
+import type { MarketData, MarketHistory, MarketUpdate } from './market-data.js';
 
 export type TradingConfig = {
   token: string; accountId: string; instrumentUid: string; ticker: string; emaPeriod: number; lots: number;
@@ -46,7 +46,7 @@ export class RobotError extends Error {
   constructor(readonly code: string) { super(code); }
 }
 
-type LiveSession = { since: number };
+type LiveSession = { since: number; queued?: MarketHistory };
 type Run = {
   config: TradingConfig; session?: LiveSession; lastAttemptedCandleOpenMs: number; hasConfirmedEntry: boolean;
   stopped?: boolean;
@@ -105,13 +105,30 @@ export class Robot {
   }
 
   async changeSettings(action: () => Promise<void>) {
-    this.requireStopped();
-    this.changing = true;
-    try {
+    await this.withSettingsLock(async () => {
       await this.requireNoUnresolved();
       await action();
       this.position = null;
       this.reason = null;
+    });
+  }
+
+  async replaceCredentials(action: (accountId?: string) => Promise<void>) {
+    await this.withSettingsLock(async () => {
+      const order = this.recovery?.order ?? await this.store.unresolved();
+      await action(order?.accountId);
+      if (!order) {
+        this.position = null;
+        this.reason = null;
+      }
+    });
+  }
+
+  private async withSettingsLock(action: () => Promise<void>) {
+    this.requireStopped();
+    this.changing = true;
+    try {
+      await action();
       this.publish();
     } finally {
       this.changing = false;
@@ -120,11 +137,7 @@ export class Robot {
 
   async restore() {
     this.requireStopped();
-    this.pending = this.restoreStopped().finally(() => {
-      this.pending = undefined;
-      this.publish();
-    });
-    await this.pending;
+    await this.runMaintenance(this.restoreStopped());
   }
 
   private async restoreStopped() {
@@ -266,11 +279,7 @@ export class Robot {
 
   async reconcile() {
     const recovery = this.requireRecovery();
-    this.pending = this.reconcileOrder(recovery).finally(() => {
-      this.pending = undefined;
-      this.publish();
-    });
-    await this.pending;
+    await this.runMaintenance(this.reconcileOrder(recovery));
   }
 
   private async reconcileOrder(recovery: Recovery, restoredConfig?: TradingConfig) {
@@ -298,10 +307,14 @@ export class Robot {
 
   async closePosition(selection: Selection) {
     this.requireStopped();
-    this.pending = this.close(selection).catch(error => {
+    await this.runMaintenance(this.close(selection).catch(error => {
       if (!this.recovery) this.reason = error instanceof RobotError ? error.code : 'ROBOT_CLOSE_FAILED';
       throw error;
-    }).finally(() => {
+    }));
+  }
+
+  private async runMaintenance(operation: Promise<void>) {
+    this.pending = operation.finally(() => {
       this.pending = undefined;
       this.publish();
     });
@@ -351,7 +364,7 @@ export class Robot {
     return position;
   }
 
-  private onMarket(run: Run, { stream, history }: MarketUpdate) {
+  private onMarket(run: Run, { stream, history, recoveredAt }: MarketUpdate) {
     if (this.run !== run) return;
     if (stream === 'unconfigured') return this.pause(run, 'ROBOT_FEED_LOST');
     if (stream === 'disconnected' || (stream === 'connecting' && run.session)) {
@@ -363,46 +376,35 @@ export class Robot {
     }
     if (stream !== 'live') return;
     if (history && (history.instrumentUid !== run.config.instrumentUid || history.emaPeriod !== run.config.emaPeriod)) return;
-    if (this.mode === 'reconnecting' && !history) return;
-    const session = run.session ??= { since: this.now() };
+    const reconnecting = this.mode === 'reconnecting';
+    const since = reconnecting ? recoveredAt : run.session?.since ?? this.now();
+    if (since === undefined || (reconnecting && !history)) return;
+    const session = run.session ??= { since };
     if (!history) return;
     if (this.mode === 'starting' || this.mode === 'reconnecting') {
       this.mode = 'running';
       this.reason = null;
       this.publish();
     }
-    if (this.recovery || this.pending) return;
-
-    const { since } = session;
-    const now = this.now();
-    let side: Side | null = null;
-    let historicalEmaPending = false;
-    // Feed snapshots are ordered by opening time. Rebuild the history baseline on each snapshot:
-    // a late EMA can change the strict side before a later equality.
-    for (const candle of history.candles) {
-      const signalTime = candle.time + hourMs;
-      if (!candle.complete || signalTime > now) continue;
-      if (candle.confirmedEma === null) {
-        if (signalTime > since) break; // Wait for this live close before considering later ones.
-        historicalEmaPending = true;
-        continue;
-      }
-      if (signalTime > since && historicalEmaPending) break;
-      const next = crossing(side, candle.close, candle.confirmedEma);
-      side = next.side;
-      if (candle.close !== candle.confirmedEma) historicalEmaPending = false;
-      if (!next.direction || signalTime <= since || candle.time <= run.lastAttemptedCandleOpenMs) continue;
-      run.lastAttemptedCandleOpenMs = candle.time;
-      const signal: Signal = {
-        candleTime: candle.time,
-        signalTime, signalPrice: candle.close, ema: candle.confirmedEma,
-        targetPosition: next.direction * run.config.lots,
-      };
-      this.pending = this.trade(run, session, signal).catch(error => {
-        this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_TRADE_FAILED');
-      }).finally(() => { this.pending = undefined; });
-      break;
+    if (this.recovery) return;
+    if (this.pending) {
+      session.queued = history;
+      return;
     }
+    session.queued = undefined;
+    const crossing = findLiveCrossing(history.candles, {
+      since: session.since, now: this.now(), lastAttempted: run.lastAttemptedCandleOpenMs,
+    });
+    if (!crossing) return;
+    const { direction, ...signal } = crossing;
+    run.lastAttemptedCandleOpenMs = signal.candleTime;
+    this.pending = this.trade(run, session, { ...signal, targetPosition: direction * run.config.lots }).catch(error => {
+      this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_TRADE_FAILED');
+    }).finally(() => {
+      this.pending = undefined;
+      const queued = run.session?.queued;
+      if (queued && this.run === run) this.onMarket(run, { stream: 'live', history: queued });
+    });
   }
 
   private async trade(run: Run, session: LiveSession, signal: Signal) {

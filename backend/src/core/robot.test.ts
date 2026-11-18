@@ -25,6 +25,7 @@ function setup({ autoConnect = true } = {}) {
   const submitted: JournalEntry[] = [];
   const lookups: [string, string | null][] = [];
   let listener: ((update: MarketUpdate) => void) | undefined;
+  let reconnecting = false;
   let now = opening + hourMs / 2;
   let position = 0;
   let activeOrders = false;
@@ -71,12 +72,18 @@ function setup({ autoConnect = true } = {}) {
     isSubscribed: () => listener !== undefined,
     setNow: (offset: number) => { now = opening + offset * hourMs; },
     setAccount: (lots: number, active = false) => { position = lots; activeOrders = active; },
-    disconnect: () => { listener?.({ stream: 'disconnected' }); },
+    disconnect: () => {
+      reconnecting = true;
+      listener?.({ stream: 'disconnected' });
+    },
     backfill: (...candles: Candle[]) => listener?.({
       stream: 'connecting', history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles },
     }),
     async history(...candles: Candle[]) {
-      listener?.({ stream: 'live', history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles } });
+      const recoveredAt = reconnecting ? now : undefined;
+      reconnecting = false;
+      listener?.({ stream: 'live', recoveredAt,
+        history: { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, candles } });
       await setImmediate();
     },
   };
@@ -670,13 +677,14 @@ test('a fast reconnect cannot send a reservation made on the previous stream', a
   assert.equal((await robot.history())[0].status, 'reserved');
   disconnect();
   await history(candle(-1, 99), candle(0, 101));
+  setNow(2);
+  await history(candle(0, 101), candle(1, 99));
+  assert.equal(submitted.length, 0);
   gate.resolve();
   await setImmediate();
   assert.equal((await robot.history())[0].status, 'feed-lost-before-send');
-  assert.equal(submitted.length, 0);
-  setNow(2);
-  await history(candle(0, 101), candle(1, 99));
-  assert.equal(submitted.length, 1);
+  assert.equal(submitted.length, 1, 'The first fresh signal is processed even without another feed update');
+  assert.equal(submitted[0].candleTime, opening + hourMs);
 });
 
 test('stopping while the broker reconnects does not restart trading', async () => {

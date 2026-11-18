@@ -380,6 +380,24 @@ test('browser sockets reconnect and catch up over REST without losing newer live
   await expect(page.getByText('Покупка · IMOEXF')).toBeVisible();
 });
 
+test('REST on reconnect replaces a stale candle at the same timestamp', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
+  const market = await mockMarket(page);
+  await page.goto('/');
+  await expect.poll(() => market.sockets.length).toBe(1);
+  const chart = page.getByRole('region', { name: 'Часовые свечи и EMA' });
+  const last = chart.getByLabel('Последняя свеча');
+  market.sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: market.nextCandle } }));
+  await expect(chart.getByText(/2 св\./)).toBeVisible();
+  await expect(last).toContainText('Закрытие (текущее)104');
+  await page.route('**/api/market', route => route.fulfill({ json: {
+    ...market.selection, candles: [market.candle, { ...market.nextCandle, close: 109 }],
+  } }));
+  await market.sockets[0].close({ code: 1011 });
+  await expect(last).toContainText('Закрытие (текущее)109');
+  await expect(chart.getByText(/2 св\./)).toBeVisible();
+});
+
 test('zooming and scrolling history keeps the selected time across live updates and backfill', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, history, sockets } = await mockMarket(page, { historySize: 80 });

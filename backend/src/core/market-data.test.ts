@@ -91,15 +91,21 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   let now = openTime + 1;
   let reachedSecondAttempt = false;
   let reconnectEmaAvailable = false;
+  let reconnectCandleComplete = false;
+  let matchingEmaAvailable = false;
+  let reconnectEmaReads = 0;
   let disconnect!: () => void;
   const broker: MarketBroker = {
     async candles() {
-      return [candle(previous, 100, true), candle(openTime, 110, reachedSecondAttempt),
+      return [candle(previous, 100, true), candle(openTime, 110, reconnectCandleComplete),
         ...(reachedSecondAttempt ? [candle(openTime + hour, 112, false)] : [])];
     },
     async ema() {
-      if (reachedSecondAttempt && !reconnectEmaAvailable) throw new Error('EMA temporarily unavailable');
-      return [{ time: previous, value: 102 }, { time: openTime, value: 106 }];
+      if (reachedSecondAttempt) {
+        reconnectEmaReads++;
+        if (!reconnectEmaAvailable) throw new Error('EMA temporarily unavailable');
+      }
+      return [{ time: previous, value: 102 }, ...(matchingEmaAvailable ? [{ time: openTime, value: 106 }] : [])];
     },
     async *stream(_token, _uid, signal) {
       reachedSecondAttempt = ++streams === 2;
@@ -124,7 +130,15 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   const afterDisconnect = second.slice(second.findIndex(update => update.stream === 'disconnected') + 1);
   assert.ok(afterDisconnect.every(update => update.stream !== 'live'), 'Reconnection stays blocked until EMA backfill succeeds');
   reconnectEmaAvailable = true;
+  const reads = reconnectEmaReads;
+  await until(() => reconnectEmaReads > reads);
+  assert.equal(second.at(-1)?.stream, 'connecting', 'A successful but incomplete backfill is still not tradeable');
+  reconnectCandleComplete = true;
+  await until(() => second.at(-1)?.history?.candles.some(candle => candle.time === openTime && candle.complete) === true);
+  assert.equal(second.at(-1)?.stream, 'connecting', 'A completed candle without its matching EMA cannot restore the baseline');
+  matchingEmaAvailable = true;
   await until(() => second.at(-1)?.stream === 'live');
+  assert.equal(second.at(-1)?.recoveredAt, now);
   const duringBreak = first.find(update => update.stream === 'disconnected')?.history?.candles.at(-1);
   assert.equal(duringBreak?.time, openTime);
   assert.equal(duringBreak?.previewEma, null);

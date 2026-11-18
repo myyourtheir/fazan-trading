@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
-import { Robot } from '../core/robot.js';
+import { Robot, type JournalEntry } from '../core/robot.js';
 import { SandboxConnection, type SandboxStore } from '../core/sandbox.js';
 import { fakeBroker, futures, token } from '../core/sandbox.test-support.js';
 import { StrategySettings, type StrategyStore } from '../core/strategy-settings.js';
@@ -155,6 +155,58 @@ test('the server rejects trading settings changes until stopped and broker-confi
   assert.equal((await close({ ...selection, confirmed: true })).status, 204);
   assert.equal((await save()).status, 204);
   assert.equal((await create()).status, 204);
+});
+
+test('replacing unusable credentials for a restarted order is allowed only for its original account', async t => {
+  let saved = { encryptedToken: 'unreadable', accountId: 'existing' };
+  const { broker } = fakeBroker();
+  broker.accounts = async candidate => candidate === token
+    ? [{ id: 'existing', name: 'Existing' }] : [{ id: 'other', name: 'Other' }];
+  const sandbox = new SandboxConnection({ async load() { return saved; }, async save(connection) {
+    assert.ok(connection.accountId);
+    saved = { ...connection, accountId: connection.accountId };
+  } }, cipher, broker);
+  const order: JournalEntry = {
+    id: 'original', accountId: 'existing', instrumentUid: 'contract-a', ticker: 'IMOEXF',
+    action: 'manual-close', manualCloseTime: 1, candleTime: null, signalTime: null, signalPrice: null, ema: null,
+    direction: 'sell', lots: 1, fromPosition: 1, targetPosition: 0, status: 'reserved',
+    brokerOrderId: null, brokerStatus: 'unknown', executedLots: null, executions: [], position: null,
+  };
+  let lookups = 0;
+  const robot = new Robot({
+    async verifySelection() {},
+    async accountState() { return { position: 0, activeOrders: false }; },
+    async submit() { assert.fail('No submission expected'); },
+    async orderState(candidate, intent, brokerId) {
+      assert.equal(candidate, token);
+      assert.equal(intent.id, order.id);
+      assert.equal(brokerId, null);
+      lookups++;
+      return { brokerOrderId: 'broker-id', brokerStatus: 'filled', executedLots: 1,
+        executions: [{ tradeId: 'fill', lots: 1, price: 100, time: 2 }] };
+    },
+  }, {
+    async hasUnresolved() { return order.status === 'reserved'; },
+    async unresolved() { return order; },
+    async history() { return [order]; },
+    async reserve() { assert.fail('No reservation expected'); },
+    async record(_id, result) { Object.assign(order, result); },
+  }, { async subscribe() { assert.fail('Must stay stopped'); } }, async () => ({
+    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1,
+  }));
+  await robot.restore();
+  assert.equal(lookups, 0);
+  const { request } = await serve(t, sandbox, undefined, robot);
+  await request('auth/login', 'POST', { password });
+  assert.equal((await request('sandbox/connection', 'PUT', { token: 'wrong-account' })).status, 422);
+  assert.equal(saved.encryptedToken, 'unreadable');
+  assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 204);
+  assert.equal(saved.accountId, 'existing');
+  assert.equal((await request('robot/start', 'POST')).body.code, 'ROBOT_ORDER_UNRESOLVED');
+  assert.equal((await request('sandbox/account', 'PUT', { accountId: 'other' })).status, 409);
+  assert.equal((await request('robot/reconcile', 'POST')).status, 204);
+  assert.deepEqual(robot.status().recovery, { orderId: order.id, ready: true });
+  assert.equal(lookups, 1);
 });
 
 test('changing the selected account requires a flat broker account, even when creating an account or replacing a token', async t => {

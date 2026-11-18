@@ -79,7 +79,10 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
   api.get('/dashboard', requireOwner, (_req, res) => res.json(robot?.status() ?? { mode: 'stopped' }));
   if (settings) {
     const { sandbox, strategy, change } = settings;
-    api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, marketSocket?.reload));
+    const replaceCredentials = robot
+      ? robot.replaceCredentials.bind(robot)
+      : (action: (accountId?: string) => Promise<void>) => change(() => action());
+    api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload));
     if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
   }
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
