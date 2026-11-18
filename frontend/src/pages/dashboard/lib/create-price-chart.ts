@@ -11,7 +11,13 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { ChartCandle } from "../model/market-data";
-import { chartTime, price, utc } from "./chart-format";
+import { chartTime, utc } from "./chart-format";
+
+const axisPriceFormatter = (precision: number) =>
+  new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  }).format;
 
 const candlePoint = ({ time, open, high, low, close }: ChartCandle) => ({
   time: chartTime(time),
@@ -78,7 +84,8 @@ export function createPriceChart(
     },
     localization: {
       locale: "ru-RU",
-      priceFormatter: (value: number) => price.format(value),
+      // Both price ticks and the crosshair label use this formatter.
+      priceFormatter: axisPriceFormatter(0),
       timeFormatter: (time: Time) =>
         typeof time === "number" ? `${utc.format(time * 1000)} UTC` : "",
     },
@@ -98,7 +105,7 @@ export function createPriceChart(
   let emaColor = "";
   let previous: ChartCandle[] = [];
   let previousPreview: LineData<Time>[] = [];
-  let pricePrecision = 2;
+  let pricePrecision = 0;
   const scale = chart.timeScale();
 
   function hover({ time, seriesData }: MouseEventParams<Time>) {
@@ -137,7 +144,7 @@ export function createPriceChart(
   return {
     setCandles(candles: ChartCandle[]) {
       const precision = Math.max(
-        pricePrecision,
+        0,
         ...candles.flatMap(({ open, high, low, close }) =>
           [open, high, low, close].map(
             (value) =>
@@ -145,10 +152,20 @@ export function createPriceChart(
           ),
         ),
       );
-      if (precision > pricePrecision) {
+      if (precision !== pricePrecision) {
+        const seriesPrecision = Math.max(2, precision);
+        if (seriesPrecision !== Math.max(2, pricePrecision)) {
+          bars.applyOptions({
+            priceFormat: {
+              type: "price",
+              precision: seriesPrecision,
+              minMove: 10 ** -seriesPrecision,
+            },
+          });
+        }
         pricePrecision = precision;
-        bars.applyOptions({
-          priceFormat: { type: "price", precision, minMove: 10 ** -precision },
+        chart.applyOptions({
+          localization: { priceFormatter: axisPriceFormatter(precision) },
         });
       }
       const tail = previous.length - 1;

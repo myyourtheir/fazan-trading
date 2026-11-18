@@ -324,6 +324,53 @@ test('charts REST history, replaces live candles, and restores the chart after a
   await expect(chart.getByText(/2 св\./)).toBeVisible();
 });
 
+test('the mobile price axis and crosshair follow the same candle precision', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
+  await page.setViewportSize({ width: 360, height: 800 });
+  const { selection, nextCandle, sockets } = await mockMarket(page);
+  await page.goto('/');
+  const plot = page.getByRole('group', { name: 'График свечей' });
+  const axis = plot.getByRole('row').first().getByRole('cell').nth(2).locator('canvas');
+  const axisWidth = () => axis.last().evaluate(canvas => canvas.getBoundingClientRect().width);
+  await expect(page.getByLabel('Последняя свеча')).toContainText('Закрытие104');
+  await expect(axis.last()).toBeVisible();
+  await expect.poll(() => sockets.length).toBe(1);
+
+  // Canvas labels aren't exposed as DOM text; capture what's passed to the renderer.
+  for (const layer of [axis.first(), axis.last()]) {
+    await layer.evaluate((canvas: HTMLCanvasElement) => {
+      const context = canvas.getContext('2d')!;
+      const fillText = context.fillText.bind(context);
+      context.fillText = (text, x, y, maxWidth) => {
+        canvas.dataset.lastLabel = text;
+        fillText(text, x, y, maxWidth);
+      };
+    });
+  }
+  const publish = (close: number) =>
+    sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...selection, candle: { ...nextCandle, close } } }));
+  const hoverPlot = (y: number) => chartCanvas(page).hover({ position: { x: 20, y } });
+
+  const narrow = await axisWidth();
+  await hoverPlot(100);
+  await expect(axis.last()).toHaveAttribute('data-last-label', /^\d+$/);
+
+  publish(104.123456789);
+  await expect.poll(axisWidth).toBeGreaterThan(narrow);
+  await hoverPlot(120);
+  for (const layer of [axis.first(), axis.last()]) {
+    await expect(layer).toHaveAttribute('data-last-label', /^\d+,\d{9}$/);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+
+  publish(104);
+  await expect.poll(axisWidth).toBe(narrow);
+  await hoverPlot(140);
+  for (const layer of [axis.first(), axis.last()]) {
+    await expect(layer).toHaveAttribute('data-last-label', /^\d+$/);
+  }
+});
+
 test('live ticks remain visible when initial REST history fails', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, sockets } = await mockMarket(page, { failInitialHistory: true });
