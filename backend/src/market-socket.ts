@@ -2,6 +2,7 @@ import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { ownerSessionToken, type OwnerAuth } from './auth.js';
 import type { MarketData } from './market-data.js';
+import type { Robot } from './robot.js';
 
 function hasMatchingOriginHost({ headers }: IncomingMessage) {
   if (!headers.origin) return false;
@@ -13,7 +14,7 @@ function hasMatchingOriginHost({ headers }: IncomingMessage) {
   }
 }
 
-export function attachMarketSocket(server: Server, auth: OwnerAuth, market: MarketData) {
+export function attachMarketSocket(server: Server, auth: OwnerAuth, market: MarketData, robot?: Robot) {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   const sessions = new Map<WebSocket, string>();
   let stopping = false;
@@ -34,6 +35,7 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
         socket.off('error', onError);
         sessions.set(ws, token);
         let unsubscribe: (() => void) | undefined;
+        let unsubscribeRobot: (() => void) | undefined;
         let expiry: ReturnType<typeof setTimeout> | undefined;
         let alive = true;
         ws.on('error', () => ws.terminate());
@@ -49,6 +51,7 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
           clearInterval(heartbeat);
           clearTimeout(expiry);
           unsubscribe?.();
+          unsubscribeRobot?.();
         });
         void start().catch(() => ws.close(1011));
 
@@ -58,11 +61,17 @@ export function attachMarketSocket(server: Server, auth: OwnerAuth, market: Mark
           if (ws.readyState !== WebSocket.OPEN) return;
           if (!remainingMs) return ws.close(1008);
           expiry = setTimeout(() => ws.close(1008), remainingMs);
-          const stop = await market.subscribe(update => {
+          const send = (update: unknown) => {
             if (ws.readyState !== WebSocket.OPEN) return;
             if (ws.bufferedAmount > 256 * 1024) return ws.terminate();
             ws.send(JSON.stringify(update));
-          });
+          };
+          if (robot) {
+            const notify = () => send({ tradingChanged: true });
+            unsubscribeRobot = robot.subscribe(notify);
+            notify();
+          }
+          const stop = await market.subscribe(send);
           if (ws.readyState === WebSocket.OPEN) unsubscribe = stop;
           else stop();
         }

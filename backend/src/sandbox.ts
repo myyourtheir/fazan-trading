@@ -123,6 +123,12 @@ export class SandboxConnection {
     return token;
   }
 
+  async tradingCredentials() {
+    const { saved, token } = await this.credentials();
+    if (!saved.accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    return { token, accountId: saved.accountId };
+  }
+
   changeStrategyForAccount(accountId: string, action: (contracts: FutureContract[]) => Promise<void>) {
     return this.change(async () => {
       const token = await this.selectedAccountToken(accountId);

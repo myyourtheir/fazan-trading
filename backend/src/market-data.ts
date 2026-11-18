@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
-const hourMs = 60 * 60_000;
+export const hourMs = 60 * 60_000;
 const historyMs = 7 * 24 * hourMs;
 
 export type HourlyCandle = {
@@ -100,7 +100,7 @@ export class MarketData {
   private readonly now: () => number;
   private readonly refreshMs: number;
   private readonly retryMs: number;
-  private feed?: MarketFeed;
+  private readonly feeds = new Set<MarketFeed>();
 
   constructor(
     private readonly broker: MarketBroker,
@@ -120,16 +120,16 @@ export class MarketData {
     return series.history(this.now());
   }
 
-  async subscribe(listener: MarketListener) {
-    const config = await this.loadConfig();
+  async subscribe(listener: MarketListener, pinnedConfig?: MarketConfig) {
+    const config = pinnedConfig ?? await this.loadConfig();
     if (!config) {
       listener({ stream: 'unconfigured' });
       return () => {};
     }
-    let feed = this.feed;
-    if (!feed?.matches(config)) {
-      feed?.controller.abort();
-      feed = this.feed = new MarketFeed(config);
+    let feed = [...this.feeds].find(existing => existing.matches(config));
+    if (!feed) {
+      feed = new MarketFeed(config);
+      this.feeds.add(feed);
       void this.run(feed);
     }
     feed.listeners.add(listener);
@@ -138,7 +138,7 @@ export class MarketData {
       feed.listeners.delete(listener);
       if (feed.listeners.size === 0) {
         feed.controller.abort();
-        if (this.feed === feed) this.feed = undefined;
+        this.feeds.delete(feed);
       }
     };
   }
@@ -198,12 +198,14 @@ export class MarketData {
       } catch { /* The broker stream ended; reconnect below. */ }
       finally {
         attempt.abort();
+        if (!controller.signal.aborted) {
+          const history = feed.history && { ...feed.history, candles: feed.history.candles.map(candle =>
+            candle.previewEma === null ? candle : { ...candle, previewEma: null }) };
+          feed.publish({ stream: 'disconnected', history });
+        }
         await polling;
       }
       if (controller.signal.aborted) break;
-      const history = feed.history && { ...feed.history, candles: feed.history.candles.map(candle =>
-        candle.previewEma === null ? candle : { ...candle, previewEma: null }) };
-      feed.publish({ stream: 'disconnected', history });
       await delay(this.retryMs, undefined, { signal: controller.signal }).catch(() => {});
       if (!controller.signal.aborted) feed.publish({ stream: 'connecting' });
     }

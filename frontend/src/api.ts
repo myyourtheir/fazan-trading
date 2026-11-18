@@ -3,7 +3,15 @@ import { addCandles, watchMarket, type MarketChartData, type MarketHistory, type
 
 type Authenticated = { authenticated: true };
 type Session = Authenticated & { remainingMs: number };
-type Dashboard = { mode: 'stopped' };
+export type Dashboard = { mode: 'stopped' | 'starting' | 'running' | 'paused'; reason: string | null; position: number | null };
+export type JournalEntry = {
+  id: string; accountId: string; instrumentUid: string; ticker: string; candleTime: number;
+  signalTime: number; signalPrice: number; ema: number;
+  direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;
+  brokerOrderId: string | null; brokerStatus: 'filled' | 'rejected' | 'cancelled' | 'new' | 'partial' | 'unknown';
+  status: 'reserved' | 'confirmed' | 'unconfirmed' | 'not-sent'; executedLots: number | null; position: number | null;
+  executions: { tradeId: string; lots: number; price: number | null; time: number | null }[];
+};
 type SandboxAccount = { id: string; name: string };
 export type SandboxStatus = {
   accountId: string | null;
@@ -26,7 +34,7 @@ export function hasStatus(error: unknown, status: number) {
 }
 
 const mutationHeaders = { 'X-Serfing-Request': '1' };
-const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard', 'Sandbox', 'Strategy'] as const;
+const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard', 'Sandbox', 'Strategy', 'Journal'] as const;
 const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox'] as const;
 
 // RTK Query mutation arguments appear in Redux actions. Keep this credential out of Redux.
@@ -42,10 +50,17 @@ export async function saveSandboxToken(token: string): Promise<{ status: number;
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({ baseUrl: '/api', credentials: 'same-origin' }),
-  tagTypes: ['Session', 'Dashboard', 'Sandbox', 'Strategy'],
+  tagTypes: ['Session', 'Dashboard', 'Sandbox', 'Strategy', 'Journal'],
   endpoints: builder => ({
     session: builder.query<Session, void>({ query: () => 'auth/session', providesTags: ['Session'] }),
     dashboard: builder.query<Dashboard, void>({ query: () => 'dashboard', providesTags: ['Dashboard'] }),
+    journal: builder.query<JournalEntry[], void>({
+      query: () => 'robot/history', providesTags: ['Journal'], keepUnusedDataFor: 0,
+    }),
+    robotCommand: builder.mutation<null, 'start' | 'stop'>({
+      query: command => ({ url: `robot/${command}`, method: 'POST', headers: mutationHeaders }),
+      invalidatesTags: ['Dashboard', 'Journal'],
+    }),
     sandbox: builder.query<SandboxStatus, void>({ query: () => 'sandbox', providesTags: ['Sandbox'] }),
     strategy: builder.query<StrategyConfig, void>({ query: () => 'strategy', providesTags: ['Strategy'] }),
     market: builder.query<MarketChartData, MarketSelection>({
@@ -71,7 +86,7 @@ export const api = createApi({
         }
         await watchMarket(selection, cacheEntryRemoved, updateCachedData, () => {
           dispatch(api.util.invalidateTags(['Strategy']));
-        });
+        }, () => { dispatch(api.util.invalidateTags(['Dashboard', 'Journal'])); });
       },
     }),
     searchFutures: builder.query<FutureContract[], string>({

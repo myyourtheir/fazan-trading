@@ -1,14 +1,16 @@
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import { ownerCookie, ownerSessionToken, type OwnerAuth } from './auth.js';
 import type { MarketData } from './market-data.js';
+import { RobotError, type Robot } from './robot.js';
 import { SandboxError, type SandboxConnection } from './sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
 import type { StrategySettings } from './strategy-settings.js';
 
-export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket }: {
+export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket, robot }: {
   auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection; strategy?: StrategySettings;
   market?: MarketData;
+  robot?: Robot;
   marketSocket?: { revoke(token: string | undefined): void; reload(): void };
 }) {
   const app = express();
@@ -71,15 +73,27 @@ export function createApp({ auth, secureCookies, sandbox, strategy, market, mark
   api.get('/auth/session', requireOwner, (_req, res) => res.json({
     authenticated: true, remainingMs: res.locals.sessionRemainingMs,
   }));
-  api.get('/dashboard', requireOwner, (_req, res) => res.json({ mode: 'stopped' }));
-  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, marketSocket?.reload));
-  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, marketSocket?.reload));
+  api.get('/dashboard', requireOwner, (_req, res) => res.json(robot?.status() ?? { mode: 'stopped' }));
+  const changeSettings = robot?.changeSettings.bind(robot);
+  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, marketSocket?.reload, changeSettings));
+  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, marketSocket?.reload, changeSettings));
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
+  if (robot) {
+    api.get('/robot/history', requireOwner, async (_req, res) => res.json(await robot.history()));
+    api.post('/robot/start', requireOwner, async (_req, res) => {
+      await robot.start();
+      res.status(204).end();
+    });
+    api.post('/robot/stop', requireOwner, (_req, res) => {
+      robot.stop();
+      res.status(204).end();
+    });
+  }
   api.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND' }));
 
   const onError: ErrorRequestHandler = (error: unknown, _req, res, next) => {
     if (res.headersSent) return next(error);
-    if (error instanceof SandboxError) {
+    if (error instanceof SandboxError || error instanceof RobotError) {
       res.status(error.status).json({ code: error.code });
       return;
     }

@@ -2,17 +2,19 @@ import { Router, type Request, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { SandboxConnection } from './sandbox.js';
 
-export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler, onTokenChange?: () => void) {
+export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler, onTokenChange?: () => void,
+  changeSettings = (action: () => Promise<void>) => action()) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));
   router.put('/connection', mutation('token', 2048, async token => {
-    await sandbox.connect(token);
+    await changeSettings(() => sandbox.connect(token));
     onTokenChange?.();
   }));
-  router.put('/account', mutation('accountId', brokerIdLimit, accountId => sandbox.selectAccount(accountId)));
+  router.put('/account', mutation('accountId', brokerIdLimit,
+    accountId => changeSettings(() => sandbox.selectAccount(accountId))));
   router.post('/accounts', async (_req, res) => {
-    await sandbox.createAccount();
+    await changeSettings(() => sandbox.createAccount());
     res.status(204).end();
   });
   router.post('/funding', mutation('accountId', brokerIdLimit, accountId => sandbox.fundAccount(accountId)));

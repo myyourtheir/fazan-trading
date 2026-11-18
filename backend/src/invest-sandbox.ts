@@ -1,14 +1,18 @@
 import { NodeApiClient } from '@ttech-pub/grpc-node-client';
-import { InstrumentStatus, type Quotation } from '@ttech-pub/grpc-node-client/compiled/common.js';
+import { InstrumentStatus, PriceType, type Quotation } from '@ttech-pub/grpc-node-client/compiled/common.js';
 import {
   CandleInterval, GetTechAnalysisRequest_IndicatorInterval, GetTechAnalysisRequest_IndicatorType,
   GetTechAnalysisRequest_TypeOfPrice, SubscriptionAction, SubscriptionInterval, SubscriptionStatus,
   type Candle, type HistoricCandle,
 } from '@ttech-pub/grpc-node-client/compiled/marketdata.js';
+import {
+  OrderDirection, OrderExecutionReportStatus as ReportStatus, OrderIdType, OrderType, TimeInForceType,
+} from '@ttech-pub/grpc-node-client/compiled/orders.js';
 import { AccountStatus } from '@ttech-pub/grpc-node-client/compiled/users.js';
 import { Status } from 'nice-grpc';
 import { SandboxError, virtualFundingRubles, type SandboxBroker } from './sandbox.js';
 import type { HourlyCandle, MarketBroker } from './market-data.js';
+import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from './robot.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
 const requestOptions = (signal?: AbortSignal) => {
@@ -28,7 +32,15 @@ function hourlyCandle({ time, open, high, low, close }: HistoricCandle | Candle,
   return { time: time.getTime(), open: price(open), high: price(high), low: price(low), close: price(close), complete };
 }
 
-export class InvestSandbox implements SandboxBroker, MarketBroker {
+const brokerStatuses: Partial<Record<ReportStatus, BrokerOrder['brokerStatus']>> = {
+  [ReportStatus.EXECUTION_REPORT_STATUS_FILL]: 'filled',
+  [ReportStatus.EXECUTION_REPORT_STATUS_REJECTED]: 'rejected',
+  [ReportStatus.EXECUTION_REPORT_STATUS_CANCELLED]: 'cancelled',
+  [ReportStatus.EXECUTION_REPORT_STATUS_NEW]: 'new',
+  [ReportStatus.EXECUTION_REPORT_STATUS_PARTIALLYFILL]: 'partial',
+};
+
+export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
   private current?: { token: string; client: NodeApiClient };
 
   private async call<T>(token: string, operation: (client: NodeApiClient) => Promise<T>) {
@@ -78,6 +90,62 @@ export class InvestSandbox implements SandboxBroker, MarketBroker {
       return contracts.map(({ uid, ticker, name, classCode, exchange, expirationDate, apiTradeAvailableFlag }) => ({
         uid, ticker, name, classCode, exchange, expirationDate: expirationDate?.toISOString() ?? null, apiTradeAvailableFlag,
       }));
+    });
+  }
+
+  async verifySelection({ token, accountId, instrumentUid }: TradingConfig) {
+    const [accounts, contracts] = await Promise.all([this.accounts(token), this.futures(token)]);
+    if (!accounts.some(account => account.id === accountId)) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    if (!contracts.some(contract => contract.uid === instrumentUid && contract.apiTradeAvailableFlag)) {
+      throw new SandboxError('FUTURE_UNAVAILABLE');
+    }
+  }
+
+  accountState({ token, accountId, instrumentUid }: TradingConfig) {
+    return this.call(token, async ({ sandbox }) => {
+      const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
+      const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
+      if (positions.limitsLoadingInProgress) throw new Error('Positions are not available yet.');
+      const position = positions.futures.filter(future => future.instrumentUid === instrumentUid)
+        .reduce((total, future) => total + future.balance, 0);
+      return { position, activeOrders: orders.length > 0 };
+    });
+  }
+
+  submit(token: string, order: OrderIntent) {
+    return this.call(token, async ({ sandbox }) => {
+      const reply = await sandbox.postSandboxOrder({
+        accountId: order.accountId, instrumentId: order.instrumentUid, orderId: order.id, quantity: order.lots,
+        orderType: OrderType.ORDER_TYPE_MARKET, timeInForce: TimeInForceType.TIME_IN_FORCE_UNSPECIFIED,
+        direction: order.direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL,
+        confirmMarginTrade: order.direction === 'sell', priceType: PriceType.PRICE_TYPE_UNSPECIFIED,
+      }, requestOptions());
+      return {
+        brokerOrderId: reply.orderId || null, brokerStatus: brokerStatuses[reply.executionReportStatus] ?? 'unknown',
+        executedLots: reply.lotsExecuted,
+      };
+    });
+  }
+
+  orderState(token: string, order: OrderIntent, brokerOrderId: string | null): Promise<BrokerOrder> {
+    return this.call(token, async ({ sandbox }) => {
+      const state = await sandbox.getSandboxOrderState({
+        accountId: order.accountId, orderId: brokerOrderId ?? order.id,
+        orderIdType: brokerOrderId ? OrderIdType.ORDER_ID_TYPE_EXCHANGE : OrderIdType.ORDER_ID_TYPE_REQUEST,
+        priceType: PriceType.PRICE_TYPE_POINT,
+      }, requestOptions());
+      if (!state.orderId || (state.orderRequestId && state.orderRequestId !== order.id)
+        || state.instrumentUid !== order.instrumentUid || state.lotsRequested !== order.lots
+        || state.direction !== (order.direction === 'buy' ? OrderDirection.ORDER_DIRECTION_BUY : OrderDirection.ORDER_DIRECTION_SELL)) {
+        throw new Error('Unexpected sandbox order state.');
+      }
+      return {
+        brokerOrderId: state.orderId, brokerStatus: brokerStatuses[state.executionReportStatus] ?? 'unknown',
+        executedLots: state.lotsExecuted, executions: state.stages.map(stage => ({
+          tradeId: stage.tradeId, lots: stage.quantity, price: stage.price ? price(stage.price) : null,
+          time: stage.executionTime?.getTime() ?? null,
+        })),
+      };
     });
   }
 

@@ -34,6 +34,7 @@ export async function watchMarket(
   removed: Promise<void>,
   update: (recipe: (data: MarketChartData) => void) => void,
   onReload: () => void,
+  onTradingChanged: () => void,
 ) {
   let socket: WebSocket | undefined;
   let retry: number | undefined;
@@ -45,7 +46,11 @@ export async function watchMarket(
     const ws = socket = new WebSocket(url);
     ws.onmessage = ({ data }) => {
       try {
-        const message = JSON.parse(data) as MarketUpdate;
+        const message = JSON.parse(data) as MarketUpdate | { tradingChanged: true };
+        if ('tradingChanged' in message) {
+          onTradingChanged();
+          return;
+        }
         const payload = message.history ?? message.tick;
         if (payload && (payload.instrumentUid !== selection.instrumentUid || payload.emaPeriod !== selection.emaPeriod)) return;
         update(cache => {

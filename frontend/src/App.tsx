@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { api, hasStatus } from './api';
 import { MarketChart } from './MarketChart';
+import { ExecutionJournal, RobotControls } from './RobotPanel';
 import { SandboxSettings } from './SandboxSettings';
 import { toggleTheme, useAppDispatch, useAppSelector } from './store';
 
@@ -65,7 +66,7 @@ function RecoveryCard({ message, action, onRetry }: { message: string; action: s
 }
 
 function Dashboard({ refreshSession }: { refreshSession: () => void }) {
-  const dashboard = api.useDashboardQuery();
+  const dashboard = api.useDashboardQuery(undefined, { refetchOnFocus: true, refetchOnReconnect: true });
   const [logout, { isLoading, error }] = api.useLogoutMutation();
   if (hasStatus(dashboard.error, 401)) {
     return <RecoveryCard message="Сессия истекла." action="Ко входу" onRetry={refreshSession} />;
@@ -76,7 +77,6 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
         <div className="grid gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary">Песочница</Badge>
-            {dashboard.data?.mode === 'stopped' && <Badge variant="outline">Робот остановлен</Badge>}
           </div>
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Панель робота</h1>
           <p className="text-sm text-muted-foreground">Настройте подключение и выберите виртуальный счёт.</p>
@@ -94,8 +94,10 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
         <Button variant="outline" onClick={dashboard.refetch}>Повторить</Button>
       </div>}
       {error && <Alert variant="destructive"><AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle></Alert>}
+      {dashboard.data && <RobotControls dashboard={dashboard.data} />}
       {dashboard.data && <SandboxSettings refreshSession={refreshSession} />}
       {dashboard.data && <MarketChart refreshSession={refreshSession} />}
+      {dashboard.data && <ExecutionJournal />}
     </div>
   );
 }

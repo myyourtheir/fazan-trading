@@ -6,8 +6,9 @@ import { InvestSandbox } from './invest-sandbox.js';
 import { MarketData } from './market-data.js';
 import { attachMarketSocket } from './market-socket.js';
 import {
-  connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings,
+  connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings, PostgresTradingStore,
 } from './postgres.js';
+import { Robot, RobotError } from './robot.js';
 import { SandboxConnection } from './sandbox.js';
 import { StrategySettings } from './strategy-settings.js';
 import { TokenCipher } from './token-cipher.js';
@@ -35,15 +36,24 @@ async function main() {
       return settings && { instrumentUid: settings.instrument.uid, emaPeriod: settings.emaPeriod,
         token: await sandbox.marketDataToken() };
     });
+    const robot = new Robot(broker, new PostgresTradingStore(db), market, async () => {
+      const { settings } = await strategy.get();
+      if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
+      return {
+        ...await sandbox.tradingCredentials(), instrumentUid: settings.instrument.uid,
+        ticker: settings.instrument.ticker, emaPeriod: settings.emaPeriod, lots: settings.lots,
+      };
+    });
     const server = createServer();
-    const marketSocket = attachMarketSocket(server, auth, market);
-    server.on('request', createApp({ auth, sandbox, strategy, market, marketSocket, secureCookies: COOKIE_SECURE === 'true' }));
+    const marketSocket = attachMarketSocket(server, auth, market, robot);
+    server.on('request', createApp({ auth, sandbox, strategy, market, marketSocket, robot, secureCookies: COOKIE_SECURE === 'true' }));
     server.listen(port, HOST);
     await once(server, 'listening');
     console.log(`Serfing API is listening on ${HOST}:${port}.`);
     const shutdown = () => {
       marketSocket.shutdown();
-      server.close(() => { void close(); });
+      const drained = robot.shutdown();
+      server.close(() => { void drained.then(close); });
     };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);

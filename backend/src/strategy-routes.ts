@@ -6,7 +6,8 @@ function positiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
 }
 
-export function strategyRoutes(strategy: StrategySettings, requireOwner: RequestHandler, onStrategyChange?: () => void) {
+export function strategyRoutes(strategy: StrategySettings, requireOwner: RequestHandler, onStrategyChange?: () => void,
+  changeSettings = (action: () => Promise<void>) => action()) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await strategy.get()));
@@ -25,7 +26,7 @@ export function strategyRoutes(strategy: StrategySettings, requireOwner: Request
       res.status(400).json({ code: 'INVALID_REQUEST' });
       return;
     }
-    await strategy.save({ accountId, instrumentUid, emaPeriod, lots });
+    await changeSettings(() => strategy.save({ accountId, instrumentUid, emaPeriod, lots }));
     onStrategyChange?.();
     res.status(204).end();
   });
