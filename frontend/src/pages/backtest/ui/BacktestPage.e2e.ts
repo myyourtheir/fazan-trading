@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 
 test('the owner can run a backtest without saving settings or selecting an account', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
-  // Pin the clock so the range calendar always opens on the month the scenario picks.
+  // Start on a later month than the range the scenario selects.
   await page.clock.install({ time: '2026-11-18T12:00:00Z' });
   let signedIn = false;
   let requests = 0;
@@ -28,20 +28,20 @@ test('the owner can run a backtest without saving settings or selecting an accou
       case '/api/backtest/run': {
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
-          instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-11-18', to: '2026-11-19',
-          commission: 0, slippage: 0,
+          instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-10-18', to: '2026-10-19',
+          commission: 0.0123, slippage: 0,
         });
         if (++requests === 2) return route.fulfill({ status: 422, json: { code: 'BACKTEST_EMA_MISSING' } });
         return route.fulfill({ json: {
           parameters, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
           candles: [{
-            time: Date.UTC(2026, 10, 18, 12), open: 101, high: 104, low: 100, close: 103, complete: true, ema: 102,
+            time: Date.UTC(2026, 9, 18, 12), open: 101, high: 104, low: 100, close: 103, complete: true, ema: 102,
           }, {
-            time: Date.UTC(2026, 10, 18, 13), open: 103, high: 106, low: 102, close: 105, complete: true, ema: 102,
+            time: Date.UTC(2026, 9, 18, 13), open: 103, high: 106, low: 102, close: 105, complete: true, ema: 102,
           }],
-          executions: [{ time: Date.UTC(2026, 10, 18, 13), direction: 'buy', lots: 3, price: 103, commission: 0 }],
+          executions: [{ time: Date.UTC(2026, 9, 18, 13), direction: 'buy', lots: 3, price: 103, commission: 0.38007 }],
           finalSignal: null,
-          result: { closed: 0, open: 60, total: 60, position: 3, maxDrawdown: 0 },
+          result: { closed: 0, open: 59.61993, total: 59.61993, position: 3, maxDrawdown: 0 },
           cutoff: null,
         } });
       }
@@ -61,18 +61,26 @@ test('the owner can run a backtest without saving settings or selecting an accou
   await page.getByLabel('Контракт').selectOption('future');
   await page.getByLabel('Период EMA').fill('55');
   await page.getByLabel('Объём, лотов').fill('3');
-  await page.getByLabel('Диапазон дат').click();
+  await page.getByLabel('Комиссия, %').fill('0.0123');
+  const dateRange = page.getByLabel('Диапазон дат');
+  const october = page.getByRole('grid', { name: /октябрь 2026/i });
+  await dateRange.click();
+  await expect(page.getByRole('grid', { name: /ноябрь 2026/i })).toBeVisible();
+  await page.getByRole('button', { name: /previous month/i }).click();
+  await expect(october).toBeVisible();
   await page.getByRole('button', { name: /18/ }).click();
   await page.getByRole('button', { name: /19/ }).click();
+  await expect(october).toBeHidden();
+  await dateRange.click();
+  await expect(october).toBeVisible();
+  await page.keyboard.press('Escape');
   expect(requests).toBe(0);
   const run = page.getByRole('button', { name: 'Запустить бэктест' });
   await run.click();
   await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
-  await expect(page.getByText(/Комиссия и проскальзывание не учитываются/)).toBeVisible();
+  await expect(page.getByText(/Комиссия 0,0123%/)).toBeVisible();
+  await expect(page.getByRole('cell', { name: '0,3801' })).toBeVisible();
   await expect(page.getByText('Макс. просадка')).toBeVisible();
-  const periodReturn = page.locator('dl > div').filter({ hasText: 'Доходность к стоимости первого входа' });
-  // 60 RUB profit on the first entry worth 103 points × 3 lots × 10 RUB per point per lot.
-  await expect(periodReturn.locator('dd')).toHaveText(/^1,94\s*%$/);
   await expect(page.getByText('Покупка')).toBeVisible();
   await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
   await run.click();

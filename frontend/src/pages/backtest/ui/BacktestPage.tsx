@@ -170,7 +170,7 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-commission">Комиссия, %</FieldLabel>
-                  <Input id="backtest-commission" type="number" min={0} step="0.01" value={commission}
+                  <Input id="backtest-commission" type="number" min={0} step="0.0001" value={commission}
                     onChange={event => setCommission(event.target.value)} />
                 </Field>
                 <Field>

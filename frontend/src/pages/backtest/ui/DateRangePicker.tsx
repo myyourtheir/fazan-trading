@@ -1,6 +1,5 @@
 import { ru } from 'date-fns/locale';
 import { useState } from 'react';
-import type { DateRange } from 'react-day-picker';
 import { Button, Calendar, Popover, PopoverContent, PopoverTrigger } from '@/shared/ui';
 
 // Wire days are pure Moscow calendar dates ("YYYY-MM-DD"); the picker holds local-midnight dates,
@@ -16,13 +15,20 @@ export function DateRangePicker({ id, from, to, describedBy, onChange }: {
   onChange: (from: string, to: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(() => new Date());
   // react-day-picker completes a single-day range on the first click, so a period is shown once
   // both wire days are set.
   const caption = !from ? 'Выберите период'
     : from === to ? dayLabel.format(parseDay(from))
       : `${dayLabel.format(parseDay(from))} — ${dayLabel.format(parseDay(to))}`;
   return (
-    <Popover open={open} onOpenChange={setOpen}>
+    <Popover open={open} onOpenChange={nextOpen => {
+      if (nextOpen) {
+        const selectedDay = to || from;
+        setMonth(selectedDay ? parseDay(selectedDay) : new Date());
+      }
+      setOpen(nextOpen);
+    }}>
       <PopoverTrigger render={
         <Button id={id} variant="outline" aria-describedby={describedBy}
           className="w-full justify-between font-normal" />
@@ -33,6 +39,8 @@ export function DateRangePicker({ id, from, to, describedBy, onChange }: {
         <Calendar
           locale={ru}
           mode="range"
+          month={month}
+          onMonthChange={setMonth}
           selected={{ from: from ? parseDay(from) : undefined, to: to ? parseDay(to) : undefined }}
           onSelect={range => {
             // A click before the current start restarts the range; the wire pair is always ordered.
