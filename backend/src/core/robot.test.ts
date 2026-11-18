@@ -97,10 +97,102 @@ for (const direction of [1, -1] as const) {
     assert.equal(row.executions[0].price, 103.25);
     assert.equal(row.executions[0].time, opening + hourMs + 50);
     assert.equal(robot.status().position, direction * 3);
-    await history(baseline, candle(0, 100 + 2 * direction));
     setNow(2);
-    await history(baseline, signal, candle(1, 100 - direction));
-    assert.equal(submitted.length, 1, 'A correction or subsequent crossing cannot send another first entry');
+    await history(baseline, candle(0, 100 + 2 * direction), candle(1, 100 + direction));
+    assert.equal(submitted.length, 1, 'A correction or another close on the same side cannot send an order');
+  });
+
+  test(`reverses ${direction > 0 ? 'long to short' : 'short to long'} with one order and journals its fill`, async () => {
+    const { robot, submitted, history, setNow } = setup();
+    const baseline = candle(-1, 100 - direction);
+    const entry = candle(0, 100 + direction);
+    const reversal = candle(1, 100 - direction);
+    await robot.start();
+    setNow(1);
+    await history(baseline, entry);
+    setNow(2);
+    await history(baseline, entry, { ...reversal, confirmedEma: null });
+    assert.equal(submitted.length, 1);
+    await history(baseline, entry, reversal);
+    await history(baseline, entry, reversal);
+    setNow(3);
+    await history(baseline, entry, reversal, candle(2, 100 - 2 * direction));
+
+    assert.equal(submitted.length, 2);
+    const [, row] = await robot.history();
+    assert.equal(row.id, submitted[1].id);
+    assert.equal(row.direction, direction > 0 ? 'sell' : 'buy');
+    assert.equal(row.lots, 6);
+    assert.equal(row.fromPosition, direction * 3);
+    assert.equal(row.targetPosition, -direction * 3);
+    assert.equal(row.position, row.targetPosition);
+    assert.equal(row.status, 'confirmed');
+    assert.deepEqual(row.executions.map(fill => fill.lots), [6]);
+    assert.equal(robot.status().position, row.targetPosition);
+  });
+}
+
+async function openLong({ robot, history, setNow }: ReturnType<typeof setup>) {
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  setNow(2);
+}
+
+test('a reversal uses the current broker position and skips a target already reached', async () => {
+  const fixture = setup();
+  const { robot, history, setNow, setAccount, submitted } = fixture;
+  await openLong(fixture);
+  setAccount(-3);
+  await history(candle(0, 101), candle(1, 99));
+  assert.equal(submitted.length, 1);
+  assert.equal((await robot.history()).length, 1);
+  assert.deepEqual(robot.status(), { mode: 'running', reason: null, position: -3 });
+
+  setNow(3);
+  setAccount(-2);
+  await history(candle(0, 101), candle(1, 99), candle(2, 101));
+  assert.equal(submitted.length, 2);
+  assert.equal(submitted[1].fromPosition, -2);
+  assert.equal(submitted[1].lots, 5);
+  assert.equal(submitted[1].targetPosition, 3);
+});
+
+test('active broker orders prevent a reversal', async () => {
+  const fixture = setup();
+  const { robot, history, setAccount, submitted } = fixture;
+  await openLong(fixture);
+  setAccount(3, true);
+  await history(candle(0, 101), candle(1, 99));
+  assert.deepEqual(robot.status(), { mode: 'paused', reason: 'ROBOT_ACTIVE_ORDERS', position: 3 });
+  assert.equal(submitted.length, 1);
+});
+
+for (const brokerStatus of ['filled', 'partial'] as const) {
+  test(`a ${brokerStatus} reversal without target position pauses trading`, async () => {
+    const fixture = setup();
+    const { robot, broker, history, setNow, setAccount, submitted } = fixture;
+    await openLong(fixture);
+    const orderState = broker.orderState;
+    const actualPosition = brokerStatus === 'filled' ? 3 : -1;
+    broker.orderState = async (...args) => {
+      const state = await orderState(...args);
+      setAccount(actualPosition);
+      return brokerStatus === 'filled' ? state : {
+        ...state, brokerStatus, executedLots: 4, executions: [{ ...state.executions[0], lots: 4 }],
+      };
+    };
+
+    await history(candle(0, 101), candle(1, 99));
+    assert.equal(submitted.length, 2);
+    const [, row] = await robot.history();
+    assert.equal(row.brokerStatus, brokerStatus);
+    assert.equal(row.status, 'unconfirmed');
+    assert.equal(row.position, actualPosition);
+    assert.deepEqual(robot.status(), { mode: 'paused', reason: 'ROBOT_ORDER_UNRESOLVED', position: actualPosition });
+    setNow(3);
+    await history(candle(0, 101), candle(1, 99), candle(2, 101));
+    assert.equal(submitted.length, 2);
   });
 }
 

@@ -57,9 +57,9 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   await page.routeWebSocket('**/api/market/live', socket => { sockets.push(socket); });
   const tradingSockets: WebSocketRoute[] = [];
   await page.routeWebSocket('**/api/robot/live', socket => { tradingSockets.push(socket); });
-  return { selection, candle, nextCandle, history, sockets, tradingSockets, confirmOrder: (order: JournalEntry) => {
-    dashboard = { ...dashboard, position: order.position };
-    journal = [order];
+  return { selection, candle, nextCandle, history, sockets, tradingSockets, setOrders: (...orders: JournalEntry[]) => {
+    dashboard = { ...dashboard, position: orders[0]?.position ?? null };
+    journal = orders;
   }, allowAccountSwitch: () => { blockAccountSwitch = false; } };
 }
 
@@ -76,14 +76,14 @@ const chartCanvas = (page: Page) => page.getByRole('group', { name: 'Графи�
 
 test('starts the robot and refreshes its separate signal and fill after a live notification', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
-  const { candle, sockets, tradingSockets, confirmOrder } = await mockMarket(page);
+  const { candle, sockets, tradingSockets, setOrders } = await mockMarket(page);
   await page.goto('/');
   await expect(page.getByText('Заявок пока нет.')).toBeVisible();
   await page.getByRole('button', { name: 'Запустить робота' }).click();
   await expect(page.getByText('Робот запущен')).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
   await expect.poll(() => tradingSockets.length).toBe(1);
-  confirmOrder(filledOrder(candle));
+  setOrders(filledOrder(candle));
   tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
   await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
   const row = page.getByRole('article');
@@ -94,10 +94,38 @@ test('starts the robot and refreshes its separate signal and fill after a live n
   await expect(row.getByText('Лотов: 1; цена сделки: 105,25')).toBeVisible();
 });
 
+test('shows one reversal order with its fill and distinguishes an unconfirmed target', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
+  const { candle, nextCandle, tradingSockets, setOrders } = await mockMarket(page);
+  const entry = filledOrder(candle);
+  const reversal: JournalEntry = {
+    ...filledOrder(nextCandle), id: 'reversal', direction: 'sell', lots: 2, executedLots: 2,
+    fromPosition: 1, targetPosition: -1, position: 1, status: 'unconfirmed',
+    executions: [{ ...entry.executions[0], tradeId: 'reversal-fill', lots: 2 }],
+  };
+  setOrders(reversal, entry);
+  await page.goto('/');
+  const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
+  const row = journal.getByRole('article').filter({ hasText: 'Продажа · IMOEXF' });
+  await expect(row).toHaveCount(1);
+  await expect(row.getByText('Требуется сверка')).toBeVisible();
+  await expect(row.getByText('Позиция подтверждена')).toHaveCount(0);
+  await row.getByText('Продажа · IMOEXF').click();
+  await expect(row.getByText('Позиция: 1 → -1; факт: 1')).toBeVisible();
+  await expect(row.getByText('Статус брокера: Исполнена')).toBeVisible();
+  await expect(row.getByText('Лотов: 2; цена сделки: 105,25')).toBeVisible();
+
+  await expect.poll(() => tradingSockets.length).toBe(1);
+  setOrders({ ...reversal, status: 'confirmed', position: -1 }, entry);
+  tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
+  await expect(row.getByText('Позиция подтверждена')).toBeVisible();
+  await expect(row.getByText('Позиция: 1 → -1; факт: -1')).toBeVisible();
+});
+
 test('keeps balance and journal on the confirmed account and reflows on mobile', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
-  const { candle, confirmOrder, allowAccountSwitch } = await mockMarket(page, { blockAccountSwitch: true });
-  confirmOrder(filledOrder(candle));
+  const { candle, setOrders, allowAccountSwitch } = await mockMarket(page, { blockAccountSwitch: true });
+  setOrders(filledOrder(candle));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   const selector = page.getByRole('combobox', { name: 'Виртуальный счёт' });

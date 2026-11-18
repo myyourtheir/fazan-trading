@@ -43,10 +43,11 @@ export class RobotError extends Error {
 }
 
 type Run = {
-  config: TradingConfig; liveSince: number | null; lastAttemptedCandleOpenMs: number; entered: boolean;
+  config: TradingConfig; liveSince: number | null; lastAttemptedCandleOpenMs: number; hasConfirmedEntry: boolean;
   cancelledBy?: 'stopped-before-send' | 'feed-lost-before-send';
   unsubscribe?: () => void;
 };
+type Signal = Pick<OrderIntent, 'candleTime' | 'signalTime' | 'signalPrice' | 'ema' | 'targetPosition'>;
 
 const unknownOrder: BrokerOrder = {
   brokerOrderId: null, brokerStatus: 'unknown', executedLots: null, executions: [],
@@ -109,9 +110,9 @@ export class Robot {
       if (await this.store.hasUnresolved()) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
       const config = await this.loadConfig();
       await this.broker.verifySelection(config);
-      await this.requireFlat(config);
+      await this.readPosition(config, true);
       if (this.mode !== 'starting') return;
-      const run: Run = { config, liveSince: null, lastAttemptedCandleOpenMs: -Infinity, entered: false };
+      const run: Run = { config, liveSince: null, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry: false };
       this.run = run;
       const unsubscribe = await this.market.subscribe(update => this.onMarket(run, update), config);
       if (this.run === run) run.unsubscribe = unsubscribe;
@@ -150,13 +151,14 @@ export class Robot {
     this.publish();
   }
 
-  private async requireFlat(config: TradingConfig) {
+  private async readPosition(config: TradingConfig, requireFlat: boolean) {
     this.position = null;
     const { position, activeOrders } = await this.broker.accountState(config);
     this.position = position;
     if (activeOrders) throw new RobotError('ROBOT_ACTIVE_ORDERS');
     if (position === null) throw new RobotError('ROBOT_POSITION_UNVERIFIED');
-    if (position !== 0) throw new RobotError('ROBOT_POSITION_NOT_FLAT');
+    if (requireFlat && position !== 0) throw new RobotError('ROBOT_POSITION_NOT_FLAT');
+    return position;
   }
 
   private onMarket(run: Run, { stream, history }: MarketUpdate) {
@@ -167,7 +169,7 @@ export class Robot {
     }
     if (stream !== 'live') return;
     const since = run.liveSince ??= this.now();
-    if (!history || run.entered || this.pending) return;
+    if (!history || this.pending) return;
     if (history.instrumentUid !== run.config.instrumentUid || history.emaPeriod !== run.config.emaPeriod) return;
     if (this.mode === 'starting') {
       this.mode = 'running';
@@ -193,23 +195,30 @@ export class Robot {
       if (candle.close !== candle.confirmedEma) historicalEmaPending = false;
       if (!next.direction || signalTime <= since || candle.time <= run.lastAttemptedCandleOpenMs) continue;
       run.lastAttemptedCandleOpenMs = candle.time;
-      const { accountId, instrumentUid, ticker, lots } = run.config;
-      const targetPosition = next.direction * lots;
-      const intent: OrderIntent = {
-        id: randomUUID(), accountId, instrumentUid, ticker, candleTime: candle.time,
+      const signal: Signal = {
+        candleTime: candle.time,
         signalTime, signalPrice: candle.close, ema: candle.confirmedEma,
-        ...positionDelta(0, targetPosition), fromPosition: 0, targetPosition,
+        targetPosition: next.direction * run.config.lots,
       };
-      this.pending = this.enter(run, intent).catch(error => {
-        this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_ENTRY_FAILED');
+      this.pending = this.trade(run, signal).catch(error => {
+        this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_TRADE_FAILED');
       }).finally(() => { this.pending = undefined; });
       break;
     }
   }
 
-  private async enter(run: Run, intent: OrderIntent) {
-    await this.requireFlat(run.config);
+  private async trade(run: Run, signal: Signal) {
+    const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry);
     if (this.run !== run) return;
+    if (fromPosition === signal.targetPosition) {
+      this.publish();
+      return;
+    }
+    const { accountId, instrumentUid, ticker } = run.config;
+    const intent: OrderIntent = {
+      ...signal, id: randomUUID(), accountId, instrumentUid, ticker, fromPosition,
+      ...positionDelta(fromPosition, signal.targetPosition),
+    };
     if (!await this.store.reserve(intent)) {
       if (await this.store.hasUnresolved()) this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
       return;
@@ -223,7 +232,7 @@ export class Robot {
     const result = await settleOrder(this.broker, run.config, intent);
     this.position = result.position;
     await this.store.record(intent.id, result);
-    if (result.status === 'confirmed') run.entered = true;
+    if (result.status === 'confirmed') run.hasConfirmedEntry = true;
     else this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
     this.publish();
   }
