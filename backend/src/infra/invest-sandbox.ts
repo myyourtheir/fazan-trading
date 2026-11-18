@@ -74,7 +74,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
 
   openAccount(token: string) {
     return this.call(token, async ({ sandbox }) => {
-      const { accountId } = await sandbox.openSandboxAccount({ name: 'Сёрфинг' }, requestOptions());
+      const { accountId } = await sandbox.openSandboxAccount({ name: 'fazan-trading' }, requestOptions());
       if (!accountId) throw new Error('Sandbox account ID is missing.');
       return accountId;
     });

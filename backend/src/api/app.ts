@@ -134,7 +134,7 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
       res.status(status).json({ code: 'INVALID_REQUEST' });
       return;
     }
-    console.error('Serfing API request failed.');
+    console.error('fazan-trading API request failed.');
     res.status(500).json({ code: 'INTERNAL_ERROR' });
   };
   app.use('/api', api);

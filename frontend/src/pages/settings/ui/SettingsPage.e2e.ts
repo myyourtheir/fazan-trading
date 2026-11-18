@@ -41,7 +41,7 @@ test('the owner can check a token and select, create, and fund a sandbox account
       }
       case '/api/sandbox/accounts':
         accountId = 'created';
-        accounts.push({ id: accountId, name: 'Сёрфинг' });
+        accounts.push({ id: accountId, name: 'fazan-trading' });
         return route.fulfill({ status: 204 });
       case '/api/sandbox/funding':
         expect(request.postDataJSON().accountId).toBe('created');
@@ -60,7 +60,7 @@ test('the owner can check a token and select, create, and fund a sandbox account
     await page.getByRole('menuitem', { name: 'Настройки' }).click();
     await expect(page).toHaveURL(/\/settings$/);
   }
-  const openDashboard = () => page.getByRole('banner').getByRole('link', { name: 'Сёрфинг' }).click();
+  const openDashboard = () => page.getByRole('banner').getByRole('link', { name: 'fazan-trading' }).click();
   await openSettings();
   await expect(page.getByText('Песочница не подключена.')).toBeVisible();
   const connectionCard = page.getByRole('region', { name: 'Подключение' });

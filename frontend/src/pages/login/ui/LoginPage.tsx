@@ -18,7 +18,7 @@ export function LoginPage() {
     <Card className="w-full max-w-md">
       <CardHeader>
         <Badge variant="secondary" className="justify-self-start">Панель владельца</Badge>
-        <CardTitle><h1>Вход в «Сёрфинг»</h1></CardTitle>
+        <CardTitle><h1>Вход в fazan-trading</h1></CardTitle>
         <CardDescription>Введите пароль, чтобы открыть панель управления.</CardDescription>
       </CardHeader>
       <CardContent>

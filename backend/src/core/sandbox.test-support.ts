@@ -23,7 +23,7 @@ export function fakeBroker() {
       return [...accounts];
     },
     async openAccount() {
-      accounts.push({ id: 'new', name: 'Сёрфинг' });
+      accounts.push({ id: 'new', name: 'fazan-trading' });
       return 'new';
     },
     async fundAccount(_token, accountId) {

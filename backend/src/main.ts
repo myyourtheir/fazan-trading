@@ -53,7 +53,7 @@ async function main() {
     }));
     server.listen(port, HOST);
     await once(server, 'listening');
-    console.log(`Serfing API is listening on ${HOST}:${port}.`);
+    console.log(`fazan-trading API is listening on ${HOST}:${port}.`);
     const shutdown = () => {
       marketSocket.shutdown();
       const drained = robot.shutdown();

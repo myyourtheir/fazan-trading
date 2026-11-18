@@ -18,8 +18,8 @@ export function AppShell() {
         <header className="border-b border-border bg-card px-4">
           <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-x-5 gap-y-3 py-3">
             {authenticated
-              ? <Link to="/dashboard" className="text-lg font-extrabold hover:text-primary">Сёрфинг</Link>
-              : <span className="text-lg font-extrabold">Сёрфинг</span>}
+              ? <Link to="/dashboard" className="text-lg font-extrabold hover:text-primary">fazan-trading</Link>
+              : <span className="text-lg font-extrabold">fazan-trading</span>}
             <div className="flex items-center gap-2">
               <Button variant="outline" onClick={() => dispatch(toggleTheme())}>
                 {dark ? 'Светлая тема' : 'Тёмная тема'}

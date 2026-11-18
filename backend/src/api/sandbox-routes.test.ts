@@ -75,7 +75,7 @@ test('the owner can connect, select, create, and fund sandbox accounts without e
   assert.equal((await request('sandbox/balance?accountId=existing')).status, 422);
   assert.deepEqual((await request('sandbox')).body, {
     status: 'connected', accountId: 'new', virtualFundingRubles: 100_000, accounts: [
-      { id: 'existing', name: 'Existing sandbox account' }, { id: 'new', name: 'Сёрфинг' },
+      { id: 'existing', name: 'Existing sandbox account' }, { id: 'new', name: 'fazan-trading' },
     ],
   });
   assert.equal((await request('sandbox/funding', 'POST', { accountId: 'existing' })).status, 422);

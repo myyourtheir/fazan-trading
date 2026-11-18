@@ -35,7 +35,7 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
   }
 
   await page.goto('/');
-  const login = page.getByRole('heading', { name: 'Вход в «Сёрфинг»' });
+  const login = page.getByRole('heading', { name: 'Вход в fazan-trading' });
   const dashboard = page.getByRole('heading', { name: 'Панель робота' });
   await expect(login).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
@@ -89,7 +89,7 @@ test('the protected panel closes when a session expires in a focused tab', async
   await expect(page).toHaveURL(/\/dashboard$/);
   expired = true;
   await page.clock.fastForward(6_000);
-  await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Вход в fazan-trading' })).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
   await expect(dashboard).toHaveCount(0);
 });
@@ -104,7 +104,7 @@ for (const route of ['/dashboard', '/settings']) {
     });
 
     await page.goto(route);
-    await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Вход в fazan-trading' })).toBeVisible();
     await expect(page).toHaveURL(/\/login$/);
     expect(paths).toEqual(['/api/auth/session']);
   });
@@ -128,7 +128,7 @@ test('opening the login route with a session redirects to the dashboard', async 
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Панель робота' })).toBeVisible();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Вход в fazan-trading' })).toHaveCount(0);
 });
 
 test('a session check failure stays on the requested route until retry resolves it', async ({ page }) => {
@@ -149,7 +149,7 @@ test('a session check failure stays on the requested route until retry resolves 
 
   available = true;
   await page.getByRole('button', { name: 'Повторить' }).click();
-  await expect(page.getByRole('heading', { name: 'Вход в «Сёрфинг»' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Вход в fazan-trading' })).toBeVisible();
   await expect(page).toHaveURL(/\/login$/);
 });
 

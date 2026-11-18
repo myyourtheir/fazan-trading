@@ -1,4 +1,4 @@
-name: serfing-dev
+name: fazan-trading-dev
 
 services:
   postgres:

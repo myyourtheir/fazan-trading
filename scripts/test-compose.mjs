@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
-const project = `serfing-test-${randomBytes(6).toString('hex')}`;
+const project = `fazan-trading-test-${randomBytes(6).toString('hex')}`;
 const password = randomBytes(24).toString('hex');
 const env = { ...process.env, OWNER_PASSWORD: password, POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
   SANDBOX_TOKEN_KEY: randomBytes(32).toString('hex'), COOKIE_SECURE: 'false', FRONTEND_PORT: '0' };

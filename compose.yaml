@@ -1,3 +1,5 @@
+name: fazan-trading
+
 services:
   postgres:
     image: postgres:18.1

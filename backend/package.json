@@ -1,5 +1,5 @@
 {
-  "name": "serfing-backend",
+  "name": "fazan-trading-backend",
   "private": true,
   "type": "module",
   "engines": { "node": ">=24" },
