@@ -168,6 +168,7 @@ export class SandboxConnection {
   changeStrategyForAccount(accountId: string, instrumentUid: string, action: (contract: FutureContract) => Promise<void>) {
     return this.change(async () => {
       const { saved } = await this.selectedAccountCredentials(accountId);
+      await this.requireFlatAccount(saved);
       const offered = this.offeredFutures;
       if (offered?.encryptedToken !== saved.encryptedToken) throw new SandboxError('FUTURE_SELECTION_EXPIRED');
       const contract = offered.contracts.get(instrumentUid);

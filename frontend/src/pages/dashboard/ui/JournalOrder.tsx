@@ -19,13 +19,14 @@ const formatPrice = (price: number | null) => price === null ? '—' : number.fo
 
 export function JournalOrder({ order }: { order: JournalEntry }) {
   const direction = order.direction === 'buy' ? 'Покупка' : 'Продажа';
+  const manual = order.action === 'manual-close';
   return (
     <article className="min-w-0 rounded-lg border text-sm">
       <details className="group">
         <summary className="flex cursor-pointer list-none items-start gap-2 rounded-lg p-3 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
           <div className="grid min-w-0 flex-1 gap-1">
-            <span className="text-xs text-muted-foreground">{formatTime(order.signalTime)}</span>
-            <span className="font-semibold wrap-anywhere">{direction} · {order.ticker}</span>
+            <span className="text-xs text-muted-foreground">{formatTime(manual ? order.manualCloseTime : order.signalTime)}</span>
+            <span className="font-semibold wrap-anywhere">{manual ? 'Ручное закрытие' : direction} · {order.ticker}</span>
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <Badge variant="outline" className="h-auto text-wrap">{orderStatuses[order.status]}</Badge>
               <span className="text-xs text-muted-foreground">Исполнено лотов: {order.executedLots ?? '—'}</span>
@@ -34,12 +35,12 @@ export function JournalOrder({ order }: { order: JournalEntry }) {
           <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground group-open:rotate-180" />
         </summary>
         <div className="grid gap-3 border-t p-3">
-          <section className="grid content-start gap-1">
+          {!manual && <section className="grid content-start gap-1">
             <h3 className="font-medium">Сигнал</h3>
             <span>Закрытие: {formatTime(order.signalTime)}</span>
             <span>Цена сигнала: {formatPrice(order.signalPrice)}</span>
             <span>EMA: {formatPrice(order.ema)}</span>
-          </section>
+          </section>}
           <section className="grid min-w-0 content-start gap-1">
             <h3 className="font-medium">Заявка</h3>
             <span>{direction} по рынку, лотов: {order.lots}</span>

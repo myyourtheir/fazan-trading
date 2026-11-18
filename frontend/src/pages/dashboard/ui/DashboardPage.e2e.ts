@@ -18,6 +18,7 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   let dashboard: Dashboard = { mode: 'stopped', reason: null, position: null };
   let journal: JournalEntry[] = [];
   let accountId = 'virtual-account';
+  let closeRequests = 0;
   let blockAccountSwitch = options.blockAccountSwitch;
   const accounts = [{ id: accountId, name: 'Первый' }, { id: 'next-account', name: 'Второй' }];
   await page.route('/api/**', route => {
@@ -32,11 +33,25 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
       case '/api/robot/start':
         dashboard = { mode: 'running', reason: null, position: 0 };
         return route.fulfill({ status: 204 });
+      case '/api/robot/stop':
+        dashboard = { ...dashboard, mode: 'stopped' };
+        return route.fulfill({ status: 204 });
+      case '/api/robot/close':
+        closeRequests++;
+        expect(route.request().postDataJSON()).toEqual({ accountId, instrumentUid: instrument.uid, confirmed: true });
+        journal.unshift({
+          ...filledOrder(candle), id: 'manual-close', action: 'manual-close', manualCloseTime: time + 3_610_000,
+          candleTime: null, signalTime: null, signalPrice: null, ema: null,
+          direction: 'sell', fromPosition: 1, targetPosition: 0, position: 0,
+        });
+        dashboard = { ...dashboard, position: 0 };
+        return route.fulfill({ status: 204 });
       case '/api/sandbox':
         return route.fulfill({ json: { status: 'connected', accountId, accounts, virtualFundingRubles: 100_000 } });
       case '/api/sandbox/account':
         if (blockAccountSwitch) return route.fulfill({ status: 409, json: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' } });
         accountId = route.request().postDataJSON().accountId;
+        dashboard = { ...dashboard, position: null };
         return route.fulfill({ status: 204 });
       case '/api/sandbox/balance':
         expect(url.searchParams.get('accountId')).toBe(accountId);
@@ -57,7 +72,8 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   await page.routeWebSocket('**/api/market/live', socket => { sockets.push(socket); });
   const tradingSockets: WebSocketRoute[] = [];
   await page.routeWebSocket('**/api/robot/live', socket => { tradingSockets.push(socket); });
-  return { selection, candle, nextCandle, history, sockets, tradingSockets, setOrders: (...orders: JournalEntry[]) => {
+  return { selection, candle, nextCandle, history, sockets, tradingSockets, closeRequests: () => closeRequests,
+    setOrders: (...orders: JournalEntry[]) => {
     dashboard = { ...dashboard, position: orders[0]?.position ?? null };
     journal = orders;
   }, allowAccountSwitch: () => { blockAccountSwitch = false; } };
@@ -65,6 +81,7 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
 
 const filledOrder = (candle: ChartCandle): JournalEntry => ({
   id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account',
+  action: 'ema-crossing', manualCloseTime: null,
   candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
   lots: 1, fromPosition: 0, targetPosition: 1, brokerStatus: 'filled', status: 'confirmed',
   position: 1, executedLots: 1, brokerOrderId: 'exchange-order',
@@ -166,6 +183,43 @@ test('keeps balance and journal on the confirmed account and reflows on mobile',
     expect(mobile[i]!.y).toBeGreaterThan(mobile[i - 1]!.y + mobile[i - 1]!.height);
   }
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(360);
+});
+
+test('stop leaves the position intact and closing requires confirmation', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
+  const market = await mockMarket(page);
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Запустить робота' }).click();
+  const selector = page.getByRole('combobox', { name: 'Виртуальный счёт' });
+  const ema = page.getByRole('spinbutton', { name: 'Период EMA' });
+  const close = page.getByRole('button', { name: 'Закрыть позицию', exact: true });
+  await expect(selector).toBeDisabled();
+  await expect(ema).toBeDisabled();
+  await expect(close).toHaveCount(0);
+  await expect.poll(() => market.tradingSockets.length).toBe(1);
+  market.setOrders(filledOrder(market.candle));
+  market.tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
+  await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
+  await page.getByRole('button', { name: 'Остановить робота' }).click();
+  await expect(page.getByText('Робот остановлен')).toBeVisible();
+  await expect(page.getByText('Подтверждённая позиция: 1')).toBeVisible();
+  await expect(selector).toHaveAccessibleDescription(/Последняя сверка показала открытую позицию/);
+
+  await close.click();
+  const dialog = page.getByRole('alertdialog', { name: 'Закрыть позицию по IMOEXF?' });
+  await dialog.getByRole('button', { name: 'Отмена' }).click();
+  await expect(dialog).toBeHidden();
+  expect(market.closeRequests()).toBe(0);
+  await close.click();
+  await dialog.getByRole('button', { name: 'Подтвердить закрытие' }).click();
+  await expect(page.getByText('Подтверждённая позиция: 0')).toBeVisible();
+  expect(market.closeRequests()).toBe(1);
+  await expect(selector).toBeEnabled();
+  await expect(ema).toBeEnabled();
+  const manual = page.getByRole('article').filter({ hasText: 'Ручное закрытие · IMOEXF' });
+  await manual.getByText('Ручное закрытие · IMOEXF').click();
+  await expect(manual.getByText('Позиция: 1 → 0; факт: 0')).toBeVisible();
+  await expect(manual.getByRole('heading', { name: 'Сигнал' })).toHaveCount(0);
 });
 
 test('charts REST history, replaces live candles, and restores the chart after a socket drops', async ({ page }) => {

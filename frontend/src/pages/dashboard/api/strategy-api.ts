@@ -18,7 +18,7 @@ export const strategyApi = rootApi.injectEndpoints({
     }),
     saveStrategy: builder.mutation<null, StrategyUpdate>({
       query: body => ({ url: 'strategy', method: 'PUT', headers: mutationHeaders, body }),
-      invalidatesTags: (_data, error) => error ? [] : ['Strategy'],
+      invalidatesTags: (_data, error) => error ? [] : ['Strategy', 'Dashboard'],
     }),
   }),
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
+import { Robot } from '../core/robot.js';
 import { SandboxConnection, type SandboxStore } from '../core/sandbox.js';
 import { fakeBroker, futures, token } from '../core/sandbox.test-support.js';
 import { StrategySettings, type StrategyStore } from '../core/strategy-settings.js';
@@ -11,7 +12,7 @@ import { createApp } from './app.js';
 const password = 'sandbox-test-owner-password';
 const cipher = new TokenCipher('ab'.repeat(32));
 
-async function serve(t: TestContext, sandbox: SandboxConnection, strategy?: StrategySettings) {
+async function serve(t: TestContext, sandbox: SandboxConnection, strategy?: StrategySettings, robot?: Robot) {
   const sessions = new Map<string, Date>();
   const sessionStore: SessionStore = {
     async create(digest, expiresAt) { sessions.set(digest, expiresAt); },
@@ -19,7 +20,10 @@ async function serve(t: TestContext, sandbox: SandboxConnection, strategy?: Stra
     async revoke(digest) { sessions.delete(digest); },
   };
   const auth = await OwnerAuth.create(password, sessionStore);
-  const server = createApp({ auth, secureCookies: false, sandbox, strategy }).listen(0, '127.0.0.1');
+  const server = createApp({
+    auth, secureCookies: false, robot,
+    settings: { sandbox, strategy, change: action => robot ? robot.changeSettings(action) : action() },
+  }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address();
@@ -90,6 +94,60 @@ test('the owner can connect, select, create, and fund sandbox accounts without e
     { status: 'unavailable', accountId: 'new', accounts: [], code: 'SANDBOX_UNREACHABLE' });
 });
 
+test('the server rejects trading settings changes until stopped and broker-confirmed flat', async t => {
+  let connection: Awaited<ReturnType<SandboxStore['load']>> = { accountId: 'existing', encryptedToken: cipher.encrypt(token) };
+  let settings: Awaited<ReturnType<StrategyStore['load']>> = null;
+  const { broker } = fakeBroker();
+  let position: number | null = 0;
+  broker.accountIsFlat = async () => position === null ? null : position === 0;
+  const sandbox = new SandboxConnection({
+    async load() { return connection; },
+    async save(value) { connection = value; },
+  }, cipher, broker);
+  const strategy = new StrategySettings({
+    async load() { return settings; },
+    async save(value) { settings = value; },
+  }, sandbox);
+  const robot = new Robot({
+    async verifySelection() {},
+    async accountState() { return { position, activeOrders: false }; },
+    async submit() { assert.fail('No order expected'); },
+    async orderState() { assert.fail('No order expected'); },
+  }, {
+    async hasUnresolved() { return false; },
+    async history() { return []; },
+    async reserve() { assert.fail('No reservation expected'); },
+    async record() { assert.fail('No order expected'); },
+  }, { async subscribe() { return () => {}; } }, async () => ({
+    ...await sandbox.tradingCredentials(), instrumentUid: 'contract-a', ticker: 'IMOEXF', emaPeriod: 55, lots: 1,
+  }));
+  const { request } = await serve(t, sandbox, strategy, robot);
+  const selection = { accountId: 'existing', instrumentUid: 'contract-a' };
+  const close = (body: object, withSession = true) => request('robot/close', 'POST', body, withSession);
+  assert.equal((await close({ ...selection, confirmed: true }, false)).status, 401);
+  await request('auth/login', 'POST', { password });
+  assert.equal((await close(selection)).status, 400);
+  assert.equal((await close({ ...selection, confirmed: 'true' })).status, 400);
+  await request('strategy/futures?q=IMOEXF');
+  const save = () => request('strategy', 'PUT', { ...selection, instrumentUid: 'contract-b', emaPeriod: 34, lots: 2 });
+  const create = () => request('sandbox/accounts', 'POST');
+  assert.equal((await request('robot/start', 'POST')).status, 204);
+  for (const attempt of [save, create, () => close({ ...selection, confirmed: true })]) {
+    assert.deepEqual(await attempt(), { status: 409, body: { code: 'ROBOT_BUSY' } });
+  }
+  await request('robot/stop', 'POST');
+  for (const [actual, code] of [[2, 'SANDBOX_ACCOUNT_NOT_FLAT'], [null, 'SANDBOX_ACCOUNT_FLAT_UNVERIFIED']] as const) {
+    position = actual;
+    for (const attempt of [save, create]) assert.deepEqual(await attempt(), { status: 409, body: { code } });
+  }
+  assert.equal(settings, null);
+  assert.equal((await request('sandbox')).body.accountId, 'existing');
+  position = 0;
+  assert.equal((await close({ ...selection, confirmed: true })).status, 204);
+  assert.equal((await save()).status, 204);
+  assert.equal((await create()).status, 204);
+});
+
 test('changing the selected account requires a flat broker account, even when creating an account or replacing a token', async t => {
   let saved: Awaited<ReturnType<SandboxStore['load']>> = { encryptedToken: cipher.encrypt(token), accountId: 'current' };
   const store: SandboxStore = { async load() { return saved; }, async save(record) { saved = record; } };
@@ -101,7 +159,7 @@ test('changing the selected account requires a flat broker account, even when cr
   let flat: boolean | null = false;
   const flatCheck = t.mock.method(broker, 'accountIsFlat', async (candidate: string, accountId: string) => {
     assert.equal(candidate, token, 'flatness must be checked using the existing credentials');
-    assert.equal(accountId, 'current');
+    assert.equal(accountId, saved?.accountId);
     return flat;
   });
   const openAccount = t.mock.method(broker, 'openAccount');
@@ -125,7 +183,8 @@ test('changing the selected account requires a flat broker account, even when cr
   flat = true;
   assert.equal((await select()).status, 204);
   assert.equal((await store.load())?.accountId, 'other');
-  assert.equal((await replace()).status, 204, 'a replacement keeping the same selection does not recheck the account');
+  flat = null;
+  assert.equal((await replace()).status, 204, 'same-account credentials can be restored without the old token');
   assert.equal(cipher.decrypt((await store.load())!.encryptedToken), replacementToken);
 });
 

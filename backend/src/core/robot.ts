@@ -7,7 +7,9 @@ export type TradingConfig = {
 };
 export type OrderIntent = {
   id: string; accountId: string; instrumentUid: string; ticker: string;
-  candleTime: number; signalTime: number; signalPrice: number; ema: number;
+  action: 'ema-crossing' | 'manual-close';
+  candleTime: number | null; signalTime: number | null; signalPrice: number | null; ema: number | null;
+  manualCloseTime: number | null;
   direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;
 };
 export type Execution = { tradeId: string; lots: number; price: number | null; time: number | null };
@@ -47,7 +49,8 @@ type Run = {
   cancelledBy?: 'stopped-before-send' | 'feed-lost-before-send';
   unsubscribe?: () => void;
 };
-type Signal = Pick<OrderIntent, 'candleTime' | 'signalTime' | 'signalPrice' | 'ema' | 'targetPosition'>;
+type Signal = { candleTime: number; signalTime: number; signalPrice: number; ema: number; targetPosition: number };
+type Selection = Pick<TradingConfig, 'accountId' | 'instrumentUid'>;
 
 const unknownOrder: BrokerOrder = {
   brokerOrderId: null, brokerStatus: 'unknown', executedLots: null, executions: [],
@@ -88,12 +91,18 @@ export class Robot {
     if (this.mode !== 'stopped' || this.starting || this.pending || this.changing) throw new RobotError('ROBOT_BUSY');
   }
 
+  private async requireNoUnresolved() {
+    if (await this.store.hasUnresolved()) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
+  }
+
   async changeSettings(action: () => Promise<void>) {
     this.requireStopped();
     this.changing = true;
     try {
+      await this.requireNoUnresolved();
       await action();
       this.position = null;
+      this.reason = null;
       this.publish();
     } finally {
       this.changing = false;
@@ -107,7 +116,7 @@ export class Robot {
     this.position = null;
     this.publish();
     try {
-      if (await this.store.hasUnresolved()) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
+      await this.requireNoUnresolved();
       const config = await this.loadConfig();
       await this.broker.verifySelection(config);
       await this.readPosition(config, true);
@@ -126,6 +135,7 @@ export class Robot {
   }
 
   stop() {
+    if (this.mode === 'stopped') return;
     if (this.run) this.run.cancelledBy = 'stopped-before-send';
     this.clearRun();
     this.mode = 'stopped';
@@ -141,6 +151,43 @@ export class Robot {
   async shutdown() {
     this.stop();
     await this.pending;
+  }
+
+  async closePosition(selection: Selection) {
+    this.requireStopped();
+    this.pending = this.close(selection).catch(error => {
+      this.reason = error instanceof RobotError ? error.code : 'ROBOT_CLOSE_FAILED';
+      throw error;
+    }).finally(() => {
+      this.pending = undefined;
+      this.publish();
+    });
+    await this.pending;
+  }
+
+  private async close(selection: Selection) {
+    await this.requireNoUnresolved();
+    const config = await this.loadConfig();
+    const { accountId, instrumentUid, ticker } = config;
+    if (selection.accountId !== accountId || selection.instrumentUid !== instrumentUid) {
+      throw new RobotError('ROBOT_SELECTION_CHANGED');
+    }
+    const fromPosition = await this.readPosition(config, false);
+    this.reason = null;
+    const delta = positionDelta(fromPosition, 0);
+    if (!delta) return;
+    const intent: OrderIntent = {
+      id: randomUUID(), accountId, instrumentUid, ticker, fromPosition, targetPosition: 0, ...delta,
+      action: 'manual-close', manualCloseTime: this.now(), candleTime: null, signalTime: null, signalPrice: null, ema: null,
+    };
+    if (!await this.store.reserve(intent)) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
+    this.publish();
+    const accountCheckError = await this.recheckPosition(config, fromPosition);
+    if (accountCheckError) {
+      await this.recordNotSent(intent, 'account-check-failed-before-send');
+      throw new RobotError(accountCheckError);
+    }
+    if (!await this.submitAndRecord(config, intent)) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
   }
 
   private pause(run: Run, reason: string) {
@@ -218,33 +265,43 @@ export class Robot {
     const { accountId, instrumentUid, ticker } = run.config;
     const intent: OrderIntent = {
       ...signal, id: randomUUID(), accountId, instrumentUid, ticker, fromPosition, ...delta,
+      action: 'ema-crossing', manualCloseTime: null,
     };
     if (!await this.store.reserve(intent)) {
       if (await this.store.hasUnresolved()) this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
       return;
     }
     this.publish();
-    let accountCheckError: string | undefined;
-    if (this.run === run) {
-      try {
-        if (await this.readPosition(run.config, false) !== fromPosition) accountCheckError = 'ROBOT_POSITION_CHANGED';
-      } catch (error) {
-        accountCheckError = error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED';
-      }
-    }
+    const accountCheckError = this.run === run ? await this.recheckPosition(run.config, fromPosition) : undefined;
     if (this.run !== run || accountCheckError) {
-      const status = run.cancelledBy ?? 'account-check-failed-before-send';
-      await this.store.record(intent.id, { ...unknownOrder, status, position: this.position });
+      await this.recordNotSent(intent, run.cancelledBy ?? 'account-check-failed-before-send');
       if (accountCheckError) this.pause(run, accountCheckError);
       this.publish();
       return;
     }
-    const result = await settleOrder(this.broker, run.config, intent);
-    this.position = result.position;
-    await this.store.record(intent.id, result);
-    if (result.status === 'confirmed') run.hasConfirmedEntry = true;
+    if (await this.submitAndRecord(run.config, intent)) run.hasConfirmedEntry = true;
+    else if (this.mode === 'stopped') this.reason = 'ROBOT_ORDER_UNRESOLVED';
     else this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
     this.publish();
+  }
+
+  private async recheckPosition(config: TradingConfig, expected: number) {
+    try {
+      if (await this.readPosition(config, false) !== expected) return 'ROBOT_POSITION_CHANGED';
+    } catch (error) {
+      return error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED';
+    }
+  }
+
+  private recordNotSent(intent: OrderIntent, status: 'stopped-before-send' | 'feed-lost-before-send' | 'account-check-failed-before-send') {
+    return this.store.record(intent.id, { ...unknownOrder, status, position: this.position });
+  }
+
+  private async submitAndRecord(config: TradingConfig, intent: OrderIntent) {
+    const result = await settleOrder(this.broker, config, intent);
+    this.position = result.position;
+    await this.store.record(intent.id, result);
+    return result.status === 'confirmed';
   }
 }
 

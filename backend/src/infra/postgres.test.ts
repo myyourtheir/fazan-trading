@@ -75,11 +75,17 @@ test('PostgreSQL restores the encrypted connection and selected account after re
 
 test('PostgreSQL preserves separate orders and executions and rejects duplicate reservations', { skip: !testDatabase }, async () => {
   assert.ok(testDatabase);
-  const order: OrderIntent = {
+  const order = {
     id: randomUUID(), accountId: `test-${randomUUID()}`, instrumentUid: 'test-future', ticker: 'TEST',
     candleTime: Date.UTC(2026, 10, 18, 12), signalTime: Date.UTC(2026, 10, 18, 13),
-    signalPrice: 101, ema: 100, direction: 'sell', lots: 1, fromPosition: 0, targetPosition: -1,
-  };
+    action: 'ema-crossing', manualCloseTime: null, signalPrice: 101, ema: 100,
+    direction: 'sell', lots: 1, fromPosition: 0, targetPosition: -1,
+  } satisfies OrderIntent;
+  const close = {
+    ...order, id: randomUUID(), direction: 'buy', fromPosition: -1, targetPosition: 0,
+    action: 'manual-close', candleTime: null, signalTime: null, signalPrice: null, ema: null,
+    manualCloseTime: order.signalTime + 4_000,
+  } satisfies OrderIntent;
   const result = { status: 'confirmed', brokerOrderId: 'exchange-id', brokerStatus: 'filled', executedLots: 1, position: -1,
     executions: [{ tradeId: 'fill', lots: 1, price: 98.5, time: order.signalTime + 3_000 }] } as const;
   const first = connectToPostgres(testDatabase);
@@ -92,13 +98,21 @@ test('PostgreSQL preserves separate orders and executions and rejects duplicate 
     await store.record(order.id, { ...result, executions: [...result.executions] });
     assert.equal(await store.hasUnresolved(), false);
     assert.equal(await store.reserve({ ...order, id: randomUUID() }), false);
+    assert.equal(await store.reserve(close), true);
+    await store.record(close.id, { ...result, position: 0, executions: [] });
+    const repeat = { ...close, id: randomUUID() };
+    assert.equal(await store.reserve(repeat), true, 'manual orders do not share a candle key');
+    await store.record(repeat.id, { ...result, position: 0, executions: [] });
   } finally {
     await first.close();
   }
   const second = connectToPostgres(testDatabase);
   try {
     const store = new PostgresTradingStore(second.db);
-    assert.deepEqual(await store.history(order.accountId), [{ ...order, ...result }]);
+    const journal = await store.history(order.accountId);
+    assert.equal(journal.length, 3);
+    assert.deepEqual(journal[2], { ...order, ...result });
+    assert.deepEqual(journal.find(row => row.id === close.id), { ...close, ...result, position: 0, executions: [] });
     assert.deepEqual(await store.history(`test-${randomUUID()}`), []);
   } finally {
     await second.close();

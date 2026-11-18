@@ -8,7 +8,7 @@ export type SandboxStatus = {
   | { status: 'unconfigured' }
   | { status: 'unavailable'; code: string });
 
-const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox'] as const;
+const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox', 'Dashboard'] as const;
 
 export function selectedSandboxAccount(connection: SandboxStatus | undefined) {
   return connection?.status === 'connected' ? connection.accounts.find(account => account.id === connection.accountId) : undefined;

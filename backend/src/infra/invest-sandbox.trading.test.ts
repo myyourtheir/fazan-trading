@@ -11,11 +11,12 @@ import { Robot, type OrderIntent, type TradingConfig } from '../core/robot.js';
 import { InvestSandbox } from './invest-sandbox.js';
 import { connectToPostgres, migrateDatabase, PostgresTradingStore } from './postgres.js';
 
-const intent: OrderIntent = {
+const intent = {
   id: randomUUID(), accountId: 'test-account', instrumentUid: 'test-future', ticker: 'TEST',
   candleTime: Date.UTC(2026, 10, 18, 12), signalTime: Date.UTC(2026, 10, 18, 13),
-  signalPrice: 101, ema: 100, direction: 'sell', lots: 1, fromPosition: 0, targetPosition: -1,
-};
+  action: 'ema-crossing', manualCloseTime: null, signalPrice: 101, ema: 100,
+  direction: 'sell', lots: 1, fromPosition: 0, targetPosition: -1,
+} satisfies OrderIntent;
 
 test('SDK posts a sandbox market order with the saved client ID and maps actual fill data', async t => {
   const fillTime = new Date(intent.signalTime + 3_000);

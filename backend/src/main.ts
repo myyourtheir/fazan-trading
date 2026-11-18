@@ -46,7 +46,10 @@ async function main() {
     });
     const server = createServer();
     const marketSocket = attachMarketSocket(server, auth, market, robot);
-    server.on('request', createApp({ auth, sandbox, strategy, market, marketSocket, robot, secureCookies: COOKIE_SECURE === 'true' }));
+    server.on('request', createApp({
+      auth, market, marketSocket, robot, secureCookies: COOKIE_SECURE === 'true',
+      settings: { sandbox, strategy, change: action => robot.changeSettings(action) },
+    }));
     server.listen(port, HOST);
     await once(server, 'listening');
     console.log(`Serfing API is listening on ${HOST}:${port}.`);

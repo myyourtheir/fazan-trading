@@ -42,7 +42,7 @@ export function SettingsPage({ refreshSession }: { refreshSession: () => void })
     void apply('connection', async () => {
       const problem = await saveSandboxToken(token);
       if (problem) throw problem;
-      dispatch(rootApi.util.invalidateTags(['Sandbox', 'SandboxBalance']));
+      dispatch(rootApi.util.invalidateTags(['Sandbox', 'SandboxBalance', 'Dashboard']));
     }, 'Токен проверен и сохранён.');
   }
 

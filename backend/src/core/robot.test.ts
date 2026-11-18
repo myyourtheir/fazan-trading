@@ -30,7 +30,8 @@ function setup({ autoConnect = true } = {}) {
   let activeOrders = false;
   const store: TradingStore = {
     async reserve(order) {
-      if (entries.some(row => row.candleTime === order.candleTime)) return false;
+      if (await store.hasUnresolved()) return false;
+      if (order.candleTime !== null && entries.some(row => row.candleTime === order.candleTime)) return false;
       entries.push({ ...order, status: 'reserved', brokerStatus: 'unknown', brokerOrderId: null, position: null,
         executedLots: null, executions: [] });
       return true;
@@ -138,6 +139,90 @@ async function openLong({ robot, history, setNow }: ReturnType<typeof setup>) {
   await history(candle(-1, 99), candle(0, 101));
   setNow(2);
 }
+
+const closeSelection = { accountId: config.accountId, instrumentUid: config.instrumentUid };
+
+test('stop preserves the position, then manual close uses the current lots and journals no EMA signal', async () => {
+  const fixture = setup();
+  const { robot, submitted, history, setAccount } = fixture;
+  await openLong(fixture);
+  await assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_BUSY' });
+  robot.stop();
+  await history(candle(0, 101), candle(1, 99));
+  assert.deepEqual(robot.status(), { mode: 'stopped', reason: null, position: 3 });
+  assert.equal(submitted.length, 1);
+
+  setAccount(2);
+  await robot.closePosition(closeSelection);
+  const [, close] = await robot.history();
+  assert.equal(submitted.length, 2);
+  assert.deepEqual(
+    [close.action, close.candleTime, close.signalPrice, close.ema, close.direction, close.lots, close.fromPosition, close.targetPosition],
+    ['manual-close', null, null, null, 'sell', 2, 2, 0],
+  );
+  assert.equal(close.status, 'confirmed');
+  assert.equal(robot.status().position, 0);
+  await robot.closePosition(closeSelection);
+  assert.equal(submitted.length, 2, 'already flat, so no order');
+});
+
+test('manual closing a short buys only once and is not successful until the broker confirms zero', async () => {
+  const { robot, broker, submitted, setAccount } = setup();
+  await assert.rejects(robot.closePosition({ ...closeSelection, accountId: 'stale' }), { code: 'ROBOT_SELECTION_CHANGED' });
+  setAccount(-2);
+  const gate = deferred();
+  const lookup = broker.orderState;
+  broker.orderState = async (...args) => {
+    await gate.promise;
+    setAccount(-1);
+    return lookup(...args);
+  };
+  const closed = assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  await setImmediate();
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].direction, 'buy');
+  await assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_BUSY' });
+  await assert.rejects(robot.changeSettings(async () => assert.fail('Close pending')), { code: 'ROBOT_BUSY' });
+  gate.resolve();
+  await closed;
+  assert.deepEqual(robot.status(), { mode: 'stopped', reason: 'ROBOT_ORDER_UNRESOLVED', position: -1 });
+  assert.equal((await robot.history())[0].status, 'unconfirmed');
+  await assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  await assert.rejects(robot.changeSettings(async () => assert.fail('Unresolved close')), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  assert.equal(submitted.length, 1);
+});
+
+test('stop leaves a submitted strategy order to reconcile and blocks closing until it settles', async () => {
+  const { robot, broker, submitted, history, setNow } = setup();
+  const gate = deferred();
+  const lookup = broker.orderState;
+  broker.orderState = async (...args) => { await gate.promise; return lookup(...args); };
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  assert.equal(submitted.length, 1);
+  robot.stop();
+  await assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_BUSY' });
+  gate.resolve();
+  await setImmediate();
+  assert.equal((await robot.history())[0].status, 'confirmed');
+  assert.deepEqual(robot.status(), { mode: 'stopped', reason: null, position: 3 });
+});
+
+test('manual close does not submit a stale position delta after reservation', async () => {
+  const { robot, store, submitted, setAccount } = setup();
+  setAccount(3);
+  const reserve = store.reserve;
+  store.reserve = async order => {
+    const saved = await reserve(order);
+    setAccount(1);
+    return saved;
+  };
+  await assert.rejects(robot.closePosition(closeSelection), { code: 'ROBOT_POSITION_CHANGED' });
+  assert.equal(submitted.length, 0);
+  assert.equal((await robot.history())[0].status, 'account-check-failed-before-send');
+  assert.equal(robot.status().position, 1);
+});
 
 test('a reversal uses the current broker position and skips a target already reached', async () => {
   const fixture = setup();

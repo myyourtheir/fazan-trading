@@ -38,10 +38,12 @@ export const tradeOrders = pgTable('trade_orders', {
   accountId: text('account_id').notNull(),
   instrumentUid: text('instrument_uid').notNull(),
   ticker: text('ticker').notNull(),
-  candleTime: bigint('candle_time_ms', { mode: 'number' }).notNull(),
-  signalTime: bigint('signal_time_ms', { mode: 'number' }).notNull(),
-  signalPrice: doublePrecision('signal_price').notNull(),
-  ema: doublePrecision('ema').notNull(),
+  action: text('action').$type<OrderIntent['action']>().notNull().default('ema-crossing'),
+  candleTime: bigint('candle_time_ms', { mode: 'number' }),
+  signalTime: bigint('signal_time_ms', { mode: 'number' }),
+  signalPrice: doublePrecision('signal_price'),
+  ema: doublePrecision('ema'),
+  manualCloseTime: bigint('manual_close_time_ms', { mode: 'number' }),
   direction: text('direction').$type<OrderIntent['direction']>().notNull(),
   lots: integer('lots').notNull(),
   fromPosition: integer('from_position').notNull(),
@@ -54,6 +56,14 @@ export const tradeOrders = pgTable('trade_orders', {
 }, table => [
   uniqueIndex('trade_orders_candle').on(table.accountId, table.instrumentUid, table.candleTime),
   uniqueIndex('trade_orders_single_unresolved').on(sql`(true)`).where(sql`${table.status} in ('reserved', 'unconfirmed')`),
+  check('trade_orders_action_context', sql`(
+    ${table.action} = 'ema-crossing' and ${table.candleTime} is not null and ${table.signalTime} is not null
+      and ${table.signalPrice} is not null and ${table.ema} is not null and ${table.manualCloseTime} is null
+  ) or (
+    ${table.action} = 'manual-close' and ${table.candleTime} is null and ${table.signalTime} is null
+      and ${table.signalPrice} is null and ${table.ema} is null and ${table.manualCloseTime} is not null
+      and ${table.targetPosition} = 0
+  )`),
 ]);
 
 export const tradeExecutions = pgTable('trade_executions', {

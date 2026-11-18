@@ -2,8 +2,8 @@ import { Router, type Request, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { SandboxConnection } from '../core/sandbox.js';
 
-export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler, onTokenChange?: () => void,
-  changeSettings = (action: () => Promise<void>) => action()) {
+export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler,
+  changeSettings: (action: () => Promise<void>) => Promise<void>, onTokenChange?: () => void) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));

@@ -1,8 +1,9 @@
 import { rootApi } from '@/shared/api';
 
 export type JournalEntry = {
-  id: string; accountId: string; instrumentUid: string; ticker: string; candleTime: number;
-  signalTime: number; signalPrice: number; ema: number;
+  id: string; accountId: string; instrumentUid: string; ticker: string;
+  action: 'ema-crossing' | 'manual-close'; manualCloseTime: number | null;
+  candleTime: number | null; signalTime: number | null; signalPrice: number | null; ema: number | null;
   direction: 'buy' | 'sell'; lots: number; fromPosition: number; targetPosition: number;
   brokerOrderId: string | null; brokerStatus: 'filled' | 'rejected' | 'cancelled' | 'new' | 'partial' | 'unknown';
   status: 'reserved' | 'confirmed' | 'unconfirmed' | 'stopped-before-send' | 'feed-lost-before-send' | 'account-check-failed-before-send';

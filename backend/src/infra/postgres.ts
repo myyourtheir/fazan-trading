@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { and, desc, eq, gt, inArray, lte } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { SessionStore } from '../core/auth.js';
@@ -104,7 +104,7 @@ export class PostgresTradingStore implements TradingStore {
   async history(accountId?: string) {
     const rows = await this.db.select().from(tradeOrders).leftJoin(tradeExecutions, eq(tradeOrders.id, tradeExecutions.orderId))
       .where(accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId))
-      .orderBy(desc(tradeOrders.signalTime), tradeOrders.id, tradeExecutions.sequence);
+      .orderBy(desc(sql`coalesce(${tradeOrders.signalTime}, ${tradeOrders.manualCloseTime})`), tradeOrders.id, tradeExecutions.sequence);
     const journal = new Map<string, Awaited<ReturnType<TradingStore['history']>>[number]>();
     for (const { trade_orders: order, trade_executions: execution } of rows) {
       const entry = journal.get(order.id) ?? { ...order, executions: [] };

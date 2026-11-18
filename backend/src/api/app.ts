@@ -9,8 +9,9 @@ import { strategyRoutes } from './strategy-routes.js';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { StrategySettings } from '../core/strategy-settings.js';
 
-export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket, robot }: {
-  auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection; strategy?: StrategySettings;
+export function createApp({ auth, secureCookies, settings, market, marketSocket, robot }: {
+  auth: OwnerAuth; secureCookies: boolean;
+  settings?: { sandbox: SandboxConnection; strategy?: StrategySettings; change: (action: () => Promise<void>) => Promise<void> };
   market?: MarketData;
   robot?: Robot;
   marketSocket?: { revoke(token: string | undefined): void; reload(): void };
@@ -76,9 +77,11 @@ export function createApp({ auth, secureCookies, sandbox, strategy, market, mark
     authenticated: true, remainingMs: res.locals.sessionRemainingMs,
   }));
   api.get('/dashboard', requireOwner, (_req, res) => res.json(robot?.status() ?? { mode: 'stopped' }));
-  const changeSettings = robot?.changeSettings.bind(robot);
-  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, marketSocket?.reload, changeSettings));
-  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, marketSocket?.reload, changeSettings));
+  if (settings) {
+    const { sandbox, strategy, change } = settings;
+    api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, marketSocket?.reload));
+    if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
+  }
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   if (robot) {
     api.get('/robot/history', requireOwner, async (req, res) => {
@@ -95,6 +98,15 @@ export function createApp({ auth, secureCookies, sandbox, strategy, market, mark
     });
     api.post('/robot/stop', requireOwner, (_req, res) => {
       robot.stop();
+      res.status(204).end();
+    });
+    api.post('/robot/close', requireOwner, async (req, res) => {
+      const { accountId, instrumentUid, confirmed } = req.body ?? {};
+      if (confirmed !== true || !isPrintableAscii(accountId, brokerIdLimit) || !isPrintableAscii(instrumentUid, brokerIdLimit)) {
+        res.status(400).json({ code: 'INVALID_REQUEST' });
+        return;
+      }
+      await robot.closePosition({ accountId, instrumentUid });
       res.status(204).end();
     });
   }

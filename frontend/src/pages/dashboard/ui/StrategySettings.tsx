@@ -5,7 +5,7 @@ import { Alert, AlertTitle, Button, Card, CardContent, CardDescription, CardHead
 import { strategyApi } from '../api/strategy-api';
 import { StrategyForm, type StrategyAccountProps } from './StrategyForm';
 
-export function StrategySettings(props: StrategyAccountProps) {
+export function StrategySettings({ settingsHint, ...props }: StrategyAccountProps & { settingsHint?: string }) {
   const config = strategyApi.useStrategyQuery();
   useEffect(() => {
     if (hasStatus(config.error, 401)) props.refreshSession();
@@ -20,6 +20,7 @@ export function StrategySettings(props: StrategyAccountProps) {
         <CardDescription>Выберите фьючерс, период EMA и размер позиции в лотах.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
+        {settingsHint && <p className="text-sm text-muted-foreground">{settingsHint}</p>}
         {config.isLoading && <p role="status" className="text-sm text-muted-foreground">Загружаем настройки…</p>}
         {config.isError && <>
           <Alert variant="destructive"><AlertTitle>Не удалось загрузить настройки стратегии.</AlertTitle></Alert>
