@@ -64,7 +64,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await expect(timeframe).toHaveValue('1h');
   await expect(lots).toHaveValue('');
   await expect(select.getByRole('option')).toHaveCount(3);
-  await expect(select.getByRole('option', { name: /18\.03\.2027.*quarterly-uid/ })).toHaveCount(1);
+  await expect(select.getByRole('option', { name: 'IMOEXF', exact: true })).toHaveCount(2);
   await lots.fill('3');
   await expect(save).toBeDisabled();
   await search.fill('Мосбиржи');
@@ -97,6 +97,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
 
   await page.reload();
   await expect(select).toHaveValue('quarterly-uid');
+  await expect(strategy.getByText('Выбран контракт:', { exact: true })).toHaveCount(0);
   await expect(period).toHaveValue('34');
   await expect(timeframe).toHaveValue('15m');
   await expect(lots).toHaveValue('3');
@@ -105,12 +106,11 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await page.reload();
   await expect(select.getByRole('option')).toHaveCount(2);
   await expect(select).toHaveValue('');
-  await expect(strategy.getByText(/Выбран контракт:.*quarterly-uid/)).toBeVisible();
   await expect(save).toBeDisabled();
 
   available = false;
   await page.reload();
-  await expect(strategy.getByText(/Выбран контракт:.*quarterly-uid/)).toBeVisible();
+  await expect(select).toBeDisabled();
   await expect(period).toHaveValue('34');
   await expect(lots).toHaveValue('3');
   await expect(timeframe).toBeDisabled();

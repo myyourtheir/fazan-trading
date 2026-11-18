@@ -13,7 +13,6 @@ import {
 } from "@/shared/ui";
 import {
   strategyApi,
-  type FutureContract,
   type StrategyConfig,
 } from "../api/strategy-api";
 import { sandboxErrorMessage } from "@/entities/sandbox";
@@ -21,17 +20,6 @@ import { timeframeLabels, timeframes } from "../model/timeframe";
 import { FuturesSearchForm } from "./FuturesSearchForm";
 
 const maxInt = 2_147_483_647;
-const dateFormat = new Intl.DateTimeFormat("ru-RU", {
-  dateStyle: "short",
-  timeZone: "UTC",
-});
-
-function label(contract: FutureContract) {
-  const expiration =
-    contract.expirationDate &&
-    dateFormat.format(new Date(contract.expirationDate));
-  return [contract.ticker, expiration, contract.uid].filter(Boolean).join(" · ");
-}
 
 export type StrategyAccountProps = {
   accountId: string | null;
@@ -48,7 +36,7 @@ export function StrategyForm({
   const initialTicker =
     config.settings?.instrument.ticker ?? config.defaults.ticker;
   const [query, setQuery] = useState(initialTicker);
-  const [contract, setContract] = useState(config.settings?.instrument);
+  const [contractUid, setContractUid] = useState(config.settings?.instrument.uid);
   const [timeframe, setTimeframe] = useState(
     config.settings?.timeframe ?? config.defaults.timeframe,
   );
@@ -71,7 +59,7 @@ export function StrategyForm({
 
   const canEdit = Boolean(accountId) && !disabled && !isLoading;
   const results = futures.currentData ?? [];
-  const selectedMatch = results.find((result) => result.uid === contract?.uid);
+  const selectedMatch = results.find((result) => result.uid === contractUid);
   const canSave =
     canEdit &&
     !futures.isFetching &&
@@ -141,9 +129,7 @@ export function StrategyForm({
                 futures.isError
               }
               onChange={(event) => {
-                setContract(
-                  results.find((result) => result.uid === event.target.value),
-                );
+                setContractUid(event.target.value);
                 reset();
               }}
             >
@@ -152,17 +138,11 @@ export function StrategyForm({
               </NativeSelectOption>
               {results.map((result) => (
                 <NativeSelectOption key={result.uid} value={result.uid}>
-                  {label(result)}
+                  {result.ticker}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
           </Field>
-          {contract && (
-            <p className="wrap-anywhere text-sm">
-              <span className="font-medium">Выбран контракт:</span>{" "}
-              {label(contract)}
-            </p>
-          )}
           <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,6rem),1fr))] gap-4">
             <Field>
               <FieldLabel htmlFor="strategy-timeframe">Таймфрейм</FieldLabel>
