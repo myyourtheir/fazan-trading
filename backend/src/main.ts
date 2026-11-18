@@ -2,16 +2,16 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { OwnerAuth } from './core/auth.js';
-import { InvestSandbox } from './invest-sandbox.js';
+import { InvestSandbox } from './infra/invest-sandbox.js';
 import { MarketData } from './core/market-data.js';
 import { attachMarketSocket } from './market-socket.js';
 import {
   connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings, PostgresTradingStore,
-} from './postgres.js';
+} from './infra/postgres.js';
 import { Robot, RobotError } from './core/robot.js';
 import { SandboxConnection } from './core/sandbox.js';
 import { StrategySettings } from './core/strategy-settings.js';
-import { TokenCipher } from './token-cipher.js';
+import { TokenCipher } from './infra/token-cipher.js';
 
 async function main() {
   const { DATABASE_URL, PGHOST, OWNER_PASSWORD, COOKIE_SECURE = 'true', HOST = '127.0.0.1', PORT = '3000' } = process.env;

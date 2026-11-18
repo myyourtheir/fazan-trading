@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
 import { bigint, check, doublePrecision, index, integer, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
-import type { BrokerOrder, JournalEntry, OrderIntent } from '../core/robot.js';
+import type { BrokerOrder, JournalEntry, OrderIntent } from '../../core/robot.js';
 
 export const ownerSessions = pgTable('owner_sessions', {
   tokenDigest: text('token_digest').primaryKey(),

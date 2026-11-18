@@ -6,11 +6,11 @@ import { InstrumentStatus } from '@ttech-pub/grpc-node-client/compiled/common.js
 import { Status } from 'nice-grpc';
 import { createApp } from '../src/app.js';
 import { OwnerAuth, type SessionStore } from '../src/core/auth.js';
-import { InvestSandbox } from '../src/invest-sandbox.js';
-import { connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresStrategySettings } from '../src/postgres.js';
+import { InvestSandbox } from '../src/infra/invest-sandbox.js';
+import { connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresStrategySettings } from '../src/infra/postgres.js';
 import { SandboxConnection, SandboxError, type SandboxBroker, type SandboxStore } from '../src/core/sandbox.js';
 import { StrategySettings, type StrategyStore } from '../src/core/strategy-settings.js';
-import { TokenCipher } from '../src/token-cipher.js';
+import { TokenCipher } from '../src/infra/token-cipher.js';
 
 const token = 'sandbox-secret-not-for-the-browser';
 const password = 'sandbox-test-owner-password';
