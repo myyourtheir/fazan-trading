@@ -118,6 +118,11 @@ export class SandboxConnection {
     return this.fetchTradableFutures(token);
   }
 
+  async marketDataToken() {
+    const { token } = await this.credentials();
+    return token;
+  }
+
   changeStrategyForAccount(accountId: string, action: (contracts: FutureContract[]) => Promise<void>) {
     return this.change(async () => {
       const token = await this.selectedAccountToken(accountId);

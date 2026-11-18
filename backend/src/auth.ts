@@ -6,6 +6,13 @@ const attemptWindowMs = 60_000;
 const maxAttempts = 5;
 const sessionToken = /^[A-Za-z0-9_-]{43}$/;
 
+export const ownerCookie = 'serfing_session';
+
+export function ownerSessionToken(cookie: string | undefined) {
+  return cookie?.split(';').map(value => value.trim())
+    .find(value => value.startsWith(`${ownerCookie}=`))?.slice(ownerCookie.length + 1);
+}
+
 export interface SessionStore {
   create(digest: string, expiresAt: Date): Promise<void>;
   activeUntil(digest: string, at: Date): Promise<Date | null>;

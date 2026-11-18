@@ -26,6 +26,10 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
           : { status: 'unavailable', accountId: 'sandbox-1', accounts: [], code: 'SANDBOX_UNREACHABLE' } });
       case '/api/strategy/futures':
         return route.fulfill({ json: ['IMOEXF', 'Мосбиржи'].includes(url.searchParams.get('q') ?? '') ? catalogue : [] });
+      case '/api/market':
+        return route.fulfill({ json: saved
+          ? { instrumentUid: saved.instrument.uid, emaPeriod: saved.emaPeriod, candles: [] }
+          : null });
       case '/api/strategy':
         if (request.method() === 'GET') {
           return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: saved } });
@@ -39,6 +43,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
         return route.fulfill({ status: 404 });
     }
   });
+  await page.routeWebSocket('**/api/market/live', socket => socket.send(JSON.stringify({ stream: 'live' })));
 
   await page.goto('/');
   const strategy = page.getByRole('region', { name: 'Настройки стратегии' });

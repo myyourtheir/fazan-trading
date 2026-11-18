@@ -7,6 +7,7 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field
 import { Input } from '@/components/ui/input';
 import { Spinner } from '@/components/ui/spinner';
 import { api, hasStatus } from './api';
+import { MarketChart } from './MarketChart';
 import { SandboxSettings } from './SandboxSettings';
 import { toggleTheme, useAppDispatch, useAppSelector } from './store';
 
@@ -94,6 +95,7 @@ function Dashboard({ refreshSession }: { refreshSession: () => void }) {
       </div>}
       {error && <Alert variant="destructive"><AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle></Alert>}
       {dashboard.data && <SandboxSettings refreshSession={refreshSession} />}
+      {dashboard.data && <MarketChart refreshSession={refreshSession} />}
     </div>
   );
 }

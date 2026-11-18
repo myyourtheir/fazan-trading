@@ -1,19 +1,15 @@
-import express, { type ErrorRequestHandler, type Request, type RequestHandler } from 'express';
-import type { OwnerAuth } from './auth.js';
+import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
+import { ownerCookie, ownerSessionToken, type OwnerAuth } from './auth.js';
+import type { MarketData } from './market-data.js';
 import { SandboxError, type SandboxConnection } from './sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
 import type { StrategySettings } from './strategy-settings.js';
 
-const cookieName = 'serfing_session';
-
-function sessionToken(request: Request) {
-  return request.headers.cookie?.split(';').map(value => value.trim())
-    .find(value => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
-}
-
-export function createApp({ auth, secureCookies, sandbox, strategy }: {
+export function createApp({ auth, secureCookies, sandbox, strategy, market, marketSocket }: {
   auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection; strategy?: StrategySettings;
+  market?: MarketData;
+  marketSocket?: { revoke(token: string | undefined): void; reload(): void };
 }) {
   const app = express();
   app.disable('x-powered-by');
@@ -36,7 +32,7 @@ export function createApp({ auth, secureCookies, sandbox, strategy }: {
   api.use(express.json({ limit: '4kb' }));
 
   const requireOwner: RequestHandler = async (req, res, next) => {
-    const remainingMs = await auth.remainingMs(sessionToken(req));
+    const remainingMs = await auth.remainingMs(ownerSessionToken(req.headers.cookie));
     if (!remainingMs) {
       res.status(401).json({ code: 'UNAUTHENTICATED' });
       return;
@@ -61,19 +57,24 @@ export function createApp({ auth, secureCookies, sandbox, strategy }: {
       res.set('Retry-After', String(result.retryAfter)).status(429).json({ code: 'TOO_MANY_ATTEMPTS' });
       return;
     }
-    await auth.logout(sessionToken(req));
-    res.cookie(cookieName, result.token, { ...cookie, maxAge: result.ttlMs }).json({ authenticated: true });
+    const previous = ownerSessionToken(req.headers.cookie);
+    await auth.logout(previous);
+    marketSocket?.revoke(previous);
+    res.cookie(ownerCookie, result.token, { ...cookie, maxAge: result.ttlMs }).json({ authenticated: true });
   });
   api.post('/auth/logout', async (req, res) => {
-    await auth.logout(sessionToken(req));
-    res.clearCookie(cookieName, cookie).sendStatus(204);
+    const token = ownerSessionToken(req.headers.cookie);
+    await auth.logout(token);
+    marketSocket?.revoke(token);
+    res.clearCookie(ownerCookie, cookie).sendStatus(204);
   });
   api.get('/auth/session', requireOwner, (_req, res) => res.json({
     authenticated: true, remainingMs: res.locals.sessionRemainingMs,
   }));
   api.get('/dashboard', requireOwner, (_req, res) => res.json({ mode: 'stopped' }));
-  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner));
-  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner));
+  if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, marketSocket?.reload));
+  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, marketSocket?.reload));
+  if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   api.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND' }));
 
   const onError: ErrorRequestHandler = (error: unknown, _req, res, next) => {

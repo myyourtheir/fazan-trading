@@ -2,11 +2,14 @@ import { Router, type Request, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { SandboxConnection } from './sandbox.js';
 
-export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler) {
+export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler, onTokenChange?: () => void) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));
-  router.put('/connection', mutation('token', 2048, token => sandbox.connect(token)));
+  router.put('/connection', mutation('token', 2048, async token => {
+    await sandbox.connect(token);
+    onTokenChange?.();
+  }));
   router.put('/account', mutation('accountId', brokerIdLimit, accountId => sandbox.selectAccount(accountId)));
   router.post('/accounts', async (_req, res) => {
     await sandbox.createAccount();

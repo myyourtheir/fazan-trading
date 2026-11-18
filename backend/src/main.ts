@@ -1,7 +1,10 @@
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { createApp } from './app.js';
 import { OwnerAuth } from './auth.js';
 import { InvestSandbox } from './invest-sandbox.js';
+import { MarketData } from './market-data.js';
+import { attachMarketSocket } from './market-socket.js';
 import {
   connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings,
 } from './postgres.js';
@@ -24,12 +27,24 @@ async function main() {
   try {
     await migrateDatabase(db);
     const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
-    const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, new InvestSandbox());
+    const broker = new InvestSandbox();
+    const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, broker);
     const strategy = new StrategySettings(new PostgresStrategySettings(db), sandbox);
-    const server = createApp({ auth, sandbox, strategy, secureCookies: COOKIE_SECURE === 'true' }).listen(port, HOST);
+    const market = new MarketData(broker, async () => {
+      const { settings } = await strategy.get();
+      return settings && { instrumentUid: settings.instrument.uid, emaPeriod: settings.emaPeriod,
+        token: await sandbox.marketDataToken() };
+    });
+    const server = createServer();
+    const marketSocket = attachMarketSocket(server, auth, market);
+    server.on('request', createApp({ auth, sandbox, strategy, market, marketSocket, secureCookies: COOKIE_SECURE === 'true' }));
+    server.listen(port, HOST);
     await once(server, 'listening');
     console.log(`Serfing API is listening on ${HOST}:${port}.`);
-    const shutdown = () => server.close(() => { void close(); });
+    const shutdown = () => {
+      marketSocket.shutdown();
+      server.close(() => { void close(); });
+    };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
   } catch {

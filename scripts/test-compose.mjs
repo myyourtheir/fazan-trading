@@ -45,6 +45,23 @@ try {
   assert.ok(cookie);
   const dashboard = () => fetch(`${origin}/dashboard`, { headers: { cookie } });
   assert.equal((await dashboard()).status, 200);
+  const liveUrl = new URL(`${origin}/market/live`);
+  const browserOrigin = liveUrl.origin;
+  liveUrl.protocol = 'ws:';
+  const live = new WebSocket(liveUrl, { headers: { origin: browserOrigin, cookie } });
+  try {
+    const update = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Market proxy did not deliver a WebSocket message')), 5_000);
+      live.addEventListener('message', event => { clearTimeout(timer); resolve(event.data); }, { once: true });
+      live.addEventListener('error', () => {
+        clearTimeout(timer);
+        reject(new Error('Market WebSocket upgrade through nginx failed'));
+      }, { once: true });
+    });
+    assert.deepEqual(JSON.parse(update), { stream: 'unconfigured' });
+  } finally {
+    live.close();
+  }
 
   // Force a new backend container without touching the frontend or the database.
   compose('up', '-d', '--no-deps', '--force-recreate', '--wait', 'backend');
@@ -57,7 +74,7 @@ try {
   assert.equal(status, 200);
   assert.equal((await fetch(`${origin}/auth/logout`, { method: 'POST', headers: { ...headers, cookie } })).status, 204);
   assert.equal((await dashboard()).status, 401);
-  console.log(`Compose check passed: ${legacyToken ? 'legacy database adopted without losing a session' : 'fresh database migrated'}, backend recreation, session persistence and logout.`);
+  console.log(`Compose check passed: ${legacyToken ? 'legacy database adopted without losing a session' : 'fresh database migrated'}, WebSocket proxy, backend recreation, session persistence and logout.`);
 } finally {
   compose('down', '--volumes');
 }

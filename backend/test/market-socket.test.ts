@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import { createServer } from 'node:http';
+import { setTimeout as delay } from 'node:timers/promises';
+import { test } from 'node:test';
+import { WebSocket } from 'ws';
+import { createApp } from '../src/app.js';
+import { OwnerAuth } from '../src/auth.js';
+import { MarketData } from '../src/market-data.js';
+import { attachMarketSocket } from '../src/market-socket.js';
+
+test('market REST and WebSocket require an owner session; logout closes the live socket', { timeout: 5_000 }, async t => {
+  const sessions = new Map<string, Date>();
+  const password = 'test-owner-password';
+  const auth = await OwnerAuth.create(password, {
+    async create(digest, expires) { sessions.set(digest, expires); },
+    async activeUntil(digest) { return sessions.get(digest) ?? null; },
+    async revoke(digest) { sessions.delete(digest); },
+  });
+  const market = new MarketData({
+    async candles() { return []; },
+    async ema() { return []; },
+    async *stream(_token, _uid, signal) {
+      yield { kind: 'subscribed' };
+      await delay(60_000, undefined, { signal }).catch(() => {});
+    },
+  }, async () => ({ token: 'not-for-browser', instrumentUid: 'future', emaPeriod: 55 }));
+  const server = createServer();
+  const marketSocket = attachMarketSocket(server, auth, market);
+  server.on('request', createApp({ auth, market, marketSocket, secureCookies: false }));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    marketSocket.shutdown();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const origin = `http://127.0.0.1:${address.port}`;
+  const url = `ws://127.0.0.1:${address.port}/api/market/live`;
+  const mutationHeaders = { 'Content-Type': 'application/json', 'X-Serfing-Request': '1' };
+  const rejected = (source: string, cookie?: string) => new Promise<number | undefined>((resolve, reject) => {
+    const socket = new WebSocket(url, { origin: source, headers: cookie ? { cookie } : {} });
+    socket.on('error', reject);
+    socket.on('open', () => { socket.terminate(); reject(new Error('Unexpected WebSocket upgrade')); });
+    socket.on('unexpected-response', (_request, response) => {
+      response.resume();
+      resolve(response.statusCode);
+    });
+  });
+
+  assert.equal((await fetch(`${origin}/api/market`)).status, 401);
+  assert.equal(await rejected(origin), 401);
+  const login = await fetch(`${origin}/api/auth/login`, {
+    method: 'POST', headers: mutationHeaders, body: JSON.stringify({ password }),
+  });
+  const cookie = login.headers.get('set-cookie')!.split(';')[0];
+  assert.equal(await rejected('http://different.example', cookie), 403);
+  const rest = await fetch(`${origin}/api/market`, { headers: { cookie } });
+  assert.deepEqual(await rest.json(), { instrumentUid: 'future', emaPeriod: 55, candles: [] });
+
+  const ws = new WebSocket(url, { origin, headers: { cookie } });
+  const events: unknown[] = [];
+  const liveHistory = new Promise<void>(resolve => ws.on('message', bytes => {
+    const message = JSON.parse(bytes.toString());
+    events.push(message);
+    if (message.history) resolve();
+  }));
+  await liveHistory;
+  assert.deepEqual(events, [
+    { stream: 'connecting' }, { stream: 'live' },
+    { stream: 'live', history: { instrumentUid: 'future', emaPeriod: 55, candles: [] } },
+  ]);
+  const closed = once(ws, 'close');
+  const logout = await fetch(`${origin}/api/auth/logout`, {
+    method: 'POST', headers: { ...mutationHeaders, cookie },
+  });
+  assert.equal(logout.status, 204);
+  assert.equal((await closed)[0], 1008);
+  assert.equal(await rejected(origin, cookie), 401);
+});

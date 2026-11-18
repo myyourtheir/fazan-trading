@@ -6,7 +6,7 @@ function positiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 2_147_483_647;
 }
 
-export function strategyRoutes(strategy: StrategySettings, requireOwner: RequestHandler) {
+export function strategyRoutes(strategy: StrategySettings, requireOwner: RequestHandler, onStrategyChange?: () => void) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await strategy.get()));
@@ -26,6 +26,7 @@ export function strategyRoutes(strategy: StrategySettings, requireOwner: Request
       return;
     }
     await strategy.save({ accountId, instrumentUid, emaPeriod, lots });
+    onStrategyChange?.();
     res.status(204).end();
   });
   return router;
