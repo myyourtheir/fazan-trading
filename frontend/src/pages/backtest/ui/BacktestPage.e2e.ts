@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 
 test('the owner can run a backtest without saving settings or selecting an account', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
+  // Pin the clock so the range calendar always opens on the month the scenario picks.
+  await page.clock.install({ time: '2026-11-18T12:00:00Z' });
   let signedIn = false;
   let requests = 0;
   await page.route('/api/**', route => {
@@ -13,7 +15,7 @@ test('the owner can run a backtest without saving settings or selecting an accou
           ? { json: { authenticated: true, remainingMs: 60_000 } }
           : { status: 401, json: { code: 'UNAUTHENTICATED' } });
       case '/api/backtest/limits':
-        return route.fulfill({ json: { maxDays: 7, maxEmaPeriod: 1000 } });
+        return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       case '/api/strategy':
         expect(request.method()).toBe('GET');
         return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null } });
@@ -53,14 +55,15 @@ test('the owner can run a backtest without saving settings or selecting an accou
   signedIn = true;
   await page.goto('/backtest');
   await expect(page.getByRole('heading', { name: 'Бэктест' })).toBeVisible();
-  await expect(page.getByText(/Лимит прогона: 7 календарных дней/)).toBeVisible();
+  await expect(page.getByText(/Лимит прогона: 30 календарных дней/)).toBeVisible();
   await page.getByLabel('Поиск фьючерса').fill('IMOEXF');
   await page.getByRole('button', { name: 'Найти' }).click();
   await page.getByLabel('Контракт').selectOption('future');
   await page.getByLabel('Период EMA').fill('55');
   await page.getByLabel('Объём, лотов').fill('3');
-  await page.getByLabel('С даты').fill('2026-11-18');
-  await page.getByLabel('По дату').fill('2026-11-19');
+  await page.getByLabel('Диапазон дат').click();
+  await page.getByRole('button', { name: /18/ }).click();
+  await page.getByRole('button', { name: /19/ }).click();
   expect(requests).toBe(0);
   const run = page.getByRole('button', { name: 'Запустить бэктест' });
   await run.click();

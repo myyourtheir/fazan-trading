@@ -2,6 +2,7 @@ import { Suspense, lazy } from 'react';
 import { timeframeLabels } from '@/entities/strategy';
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
 import type { BacktestReport } from '../api/backtest-api';
+import { calendarDay } from '../lib/calendar-day';
 
 const HistoryChart = lazy(() => import('./HistoryChart'));
 
@@ -34,7 +35,7 @@ export function BacktestReportCard({ report, stale, dark }: {
           {stale && <Badge variant="secondary">Параметры изменены</Badge>}
         </CardTitle>
         <CardDescription>
-          {parameters.from} — {parameters.to} · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
+          {calendarDay(parameters.from)} — {calendarDay(parameters.to)} · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
           {' · '}{parameters.lots} лот.
           {report.cutoff !== null && <> Последний день ещё не закончился: прогон до {moscowTime.format(report.cutoff)} МСК.</>}
         </CardDescription>

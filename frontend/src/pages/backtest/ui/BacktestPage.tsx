@@ -8,7 +8,9 @@ import {
   FieldGroup, FieldLabel, Input, NativeSelect, NativeSelectOption,
 } from '@/shared/ui';
 import { backtestApi, type BacktestParameters, type BacktestReport } from '../api/backtest-api';
+import { calendarDay } from '../lib/calendar-day';
 import { BacktestReportCard } from './BacktestReportCard';
+import { DateRangePicker } from './DateRangePicker';
 
 const runErrors = {
   BACKTEST_PERIOD_TOO_LONG: 'Сократите диапазон до указанного лимита.',
@@ -136,7 +138,7 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
                     <NativeSelectOption value="" disabled>Выберите контракт</NativeSelectOption>
                     {contracts.map(contract =>
                       <NativeSelectOption key={contract.uid} value={contract.uid}>
-                        {contract.ticker} · {contract.exchange}{contract.expirationDate ? ` · ${contract.expirationDate.slice(0, 10)}` : ''}
+                        {contract.ticker} · {contract.exchange}{contract.expirationDate ? ` · ${calendarDay(contract.expirationDate)}` : ''}
                       </NativeSelectOption>)}
                   </NativeSelect>
                 </Field>
@@ -162,14 +164,9 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
                     value={lots} onChange={event => setLots(event.target.value)} />
                 </Field>
                 <Field>
-                  <FieldLabel htmlFor="backtest-from">С даты</FieldLabel>
-                  <Input id="backtest-from" type="date" required aria-describedby="backtest-period"
-                    value={from} onChange={event => setFrom(event.target.value)} />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor="backtest-to">По дату</FieldLabel>
-                  <Input id="backtest-to" type="date" required aria-describedby="backtest-period"
-                    value={to} onChange={event => setTo(event.target.value)} />
+                  <FieldLabel htmlFor="backtest-range">Диапазон дат</FieldLabel>
+                  <DateRangePicker id="backtest-range" describedBy="backtest-period" from={from} to={to}
+                    onChange={(nextFrom, nextTo) => { setFrom(nextFrom); setTo(nextTo); }} />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-commission">Комиссия, %</FieldLabel>

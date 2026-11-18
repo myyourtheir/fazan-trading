@@ -7,6 +7,8 @@ const contract = {
 
 test('the strategy draft opens the backtest without saving and carries unsaved edits', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
+  // Pin the clock so the range calendar always opens on the month the scenario picks.
+  await page.clock.install({ time: '2026-11-18T12:00:00Z' });
   let saved = false;
   let run = 0;
   await page.route('/api/**', route => {
@@ -31,7 +33,7 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
       case '/api/strategy/futures':
         return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
       case '/api/backtest/limits':
-        return route.fulfill({ json: { maxDays: 7, maxEmaPeriod: 1000 } });
+        return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       case '/api/backtest/run': {
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
@@ -67,8 +69,9 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
   await expect(page.getByLabel('Период EMA')).toHaveValue('55');
   await expect(page.getByLabel('Объём, лотов')).toHaveValue('4');
 
-  await page.getByLabel('С даты').fill('2026-11-18');
-  await page.getByLabel('По дату').fill('2026-11-19');
+  await page.getByLabel('Диапазон дат').click();
+  await page.getByRole('button', { name: /18/ }).click();
+  await page.getByRole('button', { name: /19/ }).click();
   await page.getByRole('button', { name: 'Запустить бэктест' }).click();
   await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
   expect(run).toBe(1);
@@ -92,7 +95,7 @@ test('direct entry to the backtest restores the last saved parameters', async ({
       case '/api/strategy/futures':
         return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
       case '/api/backtest/limits':
-        return route.fulfill({ json: { maxDays: 7, maxEmaPeriod: 1000 } });
+        return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       default:
         return route.fulfill({ status: 404 });
     }
@@ -127,7 +130,7 @@ test('a refresh after opening from a draft restores the saved parameters, not th
       case '/api/strategy/futures':
         return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
       case '/api/backtest/limits':
-        return route.fulfill({ json: { maxDays: 7, maxEmaPeriod: 1000 } });
+        return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       default:
         return route.fulfill({ status: 404 });
     }
