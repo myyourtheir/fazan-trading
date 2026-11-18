@@ -98,8 +98,9 @@ export class InvestSandbox implements SandboxBroker, MarketBroker {
         indicatorType: GetTechAnalysisRequest_IndicatorType.INDICATOR_TYPE_EMA,
         typeOfPrice: GetTechAnalysisRequest_TypeOfPrice.TYPE_OF_PRICE_CLOSE,
       }, requestOptions(signal));
-      return technicalIndicators.flatMap(({ timestamp, middleBand }) => timestamp && middleBand
-        ? [{ time: timestamp.getTime(), value: price(middleBand) }]
+      // GetTechAnalysis returns EMA in signal; middleBand is specific to Bollinger Bands.
+      return technicalIndicators.flatMap(({ timestamp, signal: ema }) => timestamp && ema
+        ? [{ time: timestamp.getTime(), value: price(ema) }]
         : []);
     });
   }
