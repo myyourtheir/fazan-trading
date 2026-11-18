@@ -4,9 +4,8 @@ import { lazy, Suspense, useEffect } from 'react';
 import { hasStatus } from '@/shared/api';
 import { Alert, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
 import { marketApi } from '../api/market-api';
-import { strategyApi } from '../api/strategy-api';
+import { strategyApi, timeframeLabels } from '@/entities/strategy';
 import type { StreamState } from '../model/market-data';
-import { timeframeLabels } from '../model/timeframe';
 
 const TradingChart = lazy(() => import('./TradingChart'));
 

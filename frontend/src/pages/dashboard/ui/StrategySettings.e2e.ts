@@ -1,5 +1,5 @@
 import { expect, test, type WebSocketRoute } from '@playwright/test';
-import type { Timeframe } from '../model/timeframe';
+import type { Timeframe } from '@/entities/strategy';
 
 test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and restores saved values', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked futures catalogue.');

@@ -1,4 +1,4 @@
-import type { Timeframe } from './timeframe';
+import type { Timeframe } from '@/entities/strategy';
 
 export type MarketSelection = { instrumentUid: string; emaPeriod: number; timeframe: Timeframe };
 export type ChartCandle = {

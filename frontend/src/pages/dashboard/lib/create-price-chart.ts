@@ -1,6 +1,5 @@
 import {
   CandlestickSeries,
-  ColorType,
   CrosshairMode,
   LineSeries,
   LineStyle,
@@ -10,22 +9,9 @@ import {
   type MouseEventParams,
   type Time,
 } from "lightweight-charts";
+import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, priceChartTheme } from "@/shared/lib/price-chart";
 import type { ChartCandle } from "../model/market-data";
-import { chartTime, utc } from "./chart-format";
-
-const axisPriceFormatter = (precision: number) =>
-  new Intl.NumberFormat("ru-RU", {
-    minimumFractionDigits: precision,
-    maximumFractionDigits: precision,
-  }).format;
-
-const candlePoint = ({ time, open, high, low, close }: ChartCandle) => ({
-  time: chartTime(time),
-  open,
-  high,
-  low,
-  close,
-});
+import { utc } from "./chart-format";
 const samePoint = (a: LineData<Time>, b: LineData<Time>) =>
   a.time === b.time && a.value === b.value;
 
@@ -143,15 +129,7 @@ export function createPriceChart(
 
   return {
     setCandles(candles: ChartCandle[]) {
-      const precision = Math.max(
-        0,
-        ...candles.flatMap(({ open, high, low, close }) =>
-          [open, high, low, close].map(
-            (value) =>
-              (value.toFixed(9).split(".")[1] ?? "").replace(/0+$/, "").length,
-          ),
-        ),
-      );
+      const precision = candlePricePrecision(candles);
       if (precision !== pricePrecision) {
         const seriesPrecision = Math.max(2, precision);
         if (seriesPrecision !== Math.max(2, pricePrecision)) {
@@ -228,43 +206,22 @@ export function createPriceChart(
       previous = candles;
     },
     setTheme() {
-      const style = getComputedStyle(container);
-      const token = (name: string) => style.getPropertyValue(name).trim();
-      const border = token("--border");
-      const foreground = token("--muted-foreground");
-      const card = token("--card");
+      const theme = priceChartTheme(container);
       chart.applyOptions({
-        layout: {
-          background: { type: ColorType.Solid, color: card },
-          textColor: foreground,
-        },
-        grid: {
-          vertLines: { color: token("--muted") },
-          horzLines: { color: token("--muted") },
-        },
-        rightPriceScale: { borderColor: border },
-        timeScale: { borderColor: border },
+        ...theme.chart,
         crosshair: {
           vertLine: {
-            color: foreground,
-            labelBackgroundColor: token("--foreground"),
+            color: theme.foreground,
+            labelBackgroundColor: theme.labelBackground,
           },
           horzLine: {
-            color: foreground,
-            labelBackgroundColor: token("--foreground"),
+            color: theme.foreground,
+            labelBackgroundColor: theme.labelBackground,
           },
         },
       });
-      const up = token("--primary");
-      const down = token("--destructive");
-      bars.applyOptions({
-        upColor: up,
-        downColor: down,
-        borderVisible: false,
-        wickUpColor: up,
-        wickDownColor: down,
-      });
-      emaColor = token("--market-ema");
+      bars.applyOptions(theme.candles);
+      emaColor = theme.emaColor;
       for (const series of [...confirmed, preview])
         series.applyOptions({ color: emaColor });
     },

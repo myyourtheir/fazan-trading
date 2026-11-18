@@ -2,7 +2,7 @@ import { sandboxApi, sandboxMessageFor, selectedSandboxAccount } from '@/entitie
 import { hasStatus } from '@/shared/api';
 import { Alert, AlertTitle, Button, RecoveryCard, Spinner } from '@/shared/ui';
 import { robotApi } from '../api/robot-api';
-import { strategyApi } from '../api/strategy-api';
+import { strategyApi } from '@/entities/strategy';
 import { DashboardHeader } from './DashboardHeader';
 import { ExecutionJournal } from './ExecutionJournal';
 import { MarketChart } from './MarketChart';

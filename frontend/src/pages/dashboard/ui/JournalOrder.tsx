@@ -2,7 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/shared/ui';
 import type { JournalEntry } from '../api/journal-api';
 import { brokerStatuses } from '../lib/order-labels';
-import { timeframeLabels } from '../model/timeframe';
+import { timeframeLabels } from '@/entities/strategy';
 
 const orderStatuses: Record<JournalEntry['status'], string> = {
   reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена', reconciled: 'Заявка и позиция сверены',

@@ -8,12 +8,15 @@ import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { StrategySettings } from '../core/strategy-settings.js';
+import type { BacktestHistory } from '../core/backtest-history.js';
+import { backtestRoutes } from './backtest-routes.js';
 
-export function createApp({ auth, secureCookies, settings, market, marketSocket, robot }: {
+export function createApp({ auth, secureCookies, settings, market, marketSocket, robot, backtest }: {
   auth: OwnerAuth; secureCookies: boolean;
   settings?: { sandbox: SandboxConnection; strategy?: StrategySettings; change: (action: () => Promise<void>) => Promise<void> };
   market?: MarketData;
   robot?: Robot;
+  backtest?: BacktestHistory;
   marketSocket?: { revoke(token: string | undefined): void; reload(): void };
 }) {
   const app = express();
@@ -85,6 +88,7 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
     api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload));
     if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
   }
+  if (backtest) api.use('/backtest', backtestRoutes(backtest, requireOwner));
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   if (robot) {
     api.get('/robot/history', requireOwner, async (req, res) => {

@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { createApp } from './api/app.js';
 import { OwnerAuth } from './core/auth.js';
+import { BacktestHistory } from './core/backtest-history.js';
 import { InvestSandbox } from './infra/invest-sandbox.js';
 import { MarketData } from './core/market-data.js';
 import { attachMarketSocket } from './api/market-socket.js';
@@ -30,6 +31,7 @@ async function main() {
     const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
     const broker = new InvestSandbox();
     const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, broker);
+    const backtest = new BacktestHistory(broker, () => sandbox.marketDataToken());
     const strategy = new StrategySettings(new PostgresStrategySettings(db), sandbox);
     const market = new MarketData(broker, async () => {
       const { settings } = await strategy.get();
@@ -48,7 +50,7 @@ async function main() {
     const server = createServer();
     const marketSocket = attachMarketSocket(server, auth, market, robot);
     server.on('request', createApp({
-      auth, market, marketSocket, robot, secureCookies: COOKIE_SECURE === 'true',
+      auth, market, marketSocket, robot, backtest, secureCookies: COOKIE_SECURE === 'true',
       settings: { sandbox, strategy, change: action => robot.changeSettings(action) },
     }));
     server.listen(port, HOST);

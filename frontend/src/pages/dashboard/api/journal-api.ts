@@ -1,5 +1,5 @@
 import { rootApi } from '@/shared/api';
-import type { Timeframe } from '../model/timeframe';
+import type { Timeframe } from '@/entities/strategy';
 
 export type JournalEntry = {
   id: string; accountId: string; instrumentUid: string; ticker: string; timeframe: Timeframe;

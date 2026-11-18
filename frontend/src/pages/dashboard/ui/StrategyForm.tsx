@@ -12,12 +12,13 @@ import {
   NativeSelectOption,
 } from "@/shared/ui";
 import {
+  FuturesSearchForm,
   strategyApi,
+  timeframeLabels,
+  timeframes,
   type StrategyConfig,
-} from "../api/strategy-api";
+} from "@/entities/strategy";
 import { sandboxErrorMessage } from "@/entities/sandbox";
-import { timeframeLabels, timeframes } from "../model/timeframe";
-import { FuturesSearchForm } from "./FuturesSearchForm";
 
 const maxInt = 2_147_483_647;
 

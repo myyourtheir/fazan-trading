@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/shared/ui";
-import { chartTime } from "../lib/chart-format";
+import { chartTime } from "@/shared/lib/price-chart";
 import { createPriceChart } from "../lib/create-price-chart";
 import type { ChartCandle } from "../model/market-data";
 import { CandleDetails } from "./CandleDetails";

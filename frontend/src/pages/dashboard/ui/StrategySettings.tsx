@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { SlidersHorizontal } from 'lucide-react';
 import { hasStatus } from '@/shared/api';
 import { Alert, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
-import { strategyApi } from '../api/strategy-api';
+import { strategyApi } from '@/entities/strategy';
 import { StrategyForm, type StrategyAccountProps } from './StrategyForm';
 
 export function StrategySettings({ settingsHint, ...props }: StrategyAccountProps & { settingsHint?: string }) {

@@ -1,5 +1,6 @@
 import { NodeApiClient } from '@ttech-pub/grpc-node-client';
 import { InstrumentStatus, PriceType, type Quotation } from '@ttech-pub/grpc-node-client/compiled/common.js';
+import { InstrumentIdType } from '@ttech-pub/grpc-node-client/compiled/instruments.js';
 import {
   CandleInterval, GetTechAnalysisRequest_IndicatorInterval, GetTechAnalysisRequest_IndicatorType,
   GetTechAnalysisRequest_TypeOfPrice, SubscriptionAction, SubscriptionInterval, SubscriptionStatus,
@@ -14,6 +15,7 @@ import { SandboxError, virtualFundingRubles, type SandboxBroker } from '../core/
 import type { MarketCandle, MarketBroker } from '../core/market-data.js';
 import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from '../core/robot.js';
 import type { Timeframe } from '../core/timeframe.js';
+import type { BacktestBroker } from '../core/backtest-history.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
 const requestOptions = (signal?: AbortSignal, timeoutMs = 8_000) => {
@@ -67,7 +69,7 @@ const brokerStatuses: Partial<Record<ReportStatus, BrokerOrder['brokerStatus']>>
   [ReportStatus.EXECUTION_REPORT_STATUS_PARTIALLYFILL]: 'partial',
 };
 
-export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
+export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, BacktestBroker {
   private current?: { token: string; client: NodeApiClient };
 
   private async call<T>(token: string, operation: (client: NodeApiClient) => Promise<T>) {
@@ -138,6 +140,21 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
       return contracts.map(({ uid, ticker, name, classCode, exchange, expirationDate, apiTradeAvailableFlag }) => ({
         uid, ticker, name, classCode, exchange, expirationDate: expirationDate?.toISOString() ?? null, apiTradeAvailableFlag,
       }));
+    });
+  }
+
+  backtestFuture(token: string, uid: string) {
+    return this.call(token, async ({ instruments }) => {
+      const { instrument } = await instruments.futureBy({
+        idType: InstrumentIdType.INSTRUMENT_ID_TYPE_UID, id: uid, classCode: '',
+      }, requestOptions());
+      if (!instrument || instrument.uid !== uid) throw new Error('Unexpected futures contract.');
+      const { firstTradeDate, lastTradeDate, expirationDate, currency, lot, minPriceIncrement, minPriceIncrementAmount } = instrument;
+      return {
+        firstTrade: firstTradeDate, lastTrade: lastTradeDate ?? expirationDate, currency, lot,
+        priceStep: minPriceIncrement ? price(minPriceIncrement) : null,
+        priceStepAmount: minPriceIncrementAmount ? price(minPriceIncrementAmount) : null,
+      };
     });
   }
 
