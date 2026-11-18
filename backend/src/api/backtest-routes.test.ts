@@ -78,14 +78,15 @@ test('only the owner can check a bounded Moscow period independently of the robo
   assert.equal((await request('backtest/history', form)).status, 401);
   const cookie = await authorize();
   const { body: limits } = await request('backtest/limits', undefined, cookie);
-  assert.equal(limits.maxDays, 7);
+  assert.equal(limits.maxDays, 30);
   assert.equal(limits.maxEmaPeriod, 1000);
   for (const invalid of [
     { lots: 0 }, { lots: 1.5 }, { emaPeriod: 1001 }, { timeframe: '1m' }, { instrumentUid: '' },
     { from: '2026-11-31' }, { from: '2026-11-19' }, { to: '2026-11-20' },
     { commission: -0.1 }, { slippage: '1' }, { commission: null }, { slippage: Infinity },
   ]) assert.equal((await request('backtest/history', { ...form, ...invalid }, cookie)).status, 400);
-  const tooLong = await request('backtest/history', { ...form, from: '2026-11-11' }, cookie);
+  // Just over the 30-day limit: 2026-10-19–2026-11-18 spans 31 inclusive calendar days.
+  const tooLong = await request('backtest/history', { ...form, from: '2026-10-19' }, cookie);
   assert.equal(tooLong.body.code, 'BACKTEST_PERIOD_TOO_LONG');
   assert.equal(calls.length, 0);
   const response = await request('backtest/history', form, cookie);

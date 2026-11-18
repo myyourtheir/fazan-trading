@@ -6,7 +6,7 @@ import type { Side } from './crossing.js';
 const dayMs = 86_400_000;
 const maxChunkMs = 6 * dayMs;
 const baselineMs = 7 * dayMs;
-export const backtestLimits = { maxDays: 7, maxEmaPeriod: 1000 };
+export const backtestLimits = { maxDays: 30, maxEmaPeriod: 1000 };
 
 const moscowDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow', dateStyle: 'short' });
 const moscowOffset = new Intl.DateTimeFormat('en', { timeZone: 'Europe/Moscow', timeZoneName: 'longOffset' });
