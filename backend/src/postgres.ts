@@ -2,10 +2,10 @@ import { fileURLToPath } from 'node:url';
 import { and, desc, eq, gt, inArray, lte } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
-import type { SessionStore } from './auth.js';
-import type { SandboxStore, SavedSandboxConnection } from './sandbox.js';
-import type { SavedStrategy, StrategyStore } from './strategy-settings.js';
-import type { OrderIntent, OrderResult, TradingStore } from './robot.js';
+import type { SessionStore } from './core/auth.js';
+import type { SandboxStore, SavedSandboxConnection } from './core/sandbox.js';
+import type { SavedStrategy, StrategyStore } from './core/strategy-settings.js';
+import type { OrderIntent, OrderResult, TradingStore } from './core/robot.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));

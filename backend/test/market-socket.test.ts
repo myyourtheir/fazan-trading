@@ -5,8 +5,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { test } from 'node:test';
 import { WebSocket } from 'ws';
 import { createApp } from '../src/app.js';
-import { OwnerAuth } from '../src/auth.js';
-import { MarketData } from '../src/market-data.js';
+import { OwnerAuth } from '../src/core/auth.js';
+import { MarketData } from '../src/core/market-data.js';
 import { attachMarketSocket } from '../src/market-socket.js';
 
 test('market REST and WebSocket require an owner session; logout closes the live socket', { timeout: 5_000 }, async t => {

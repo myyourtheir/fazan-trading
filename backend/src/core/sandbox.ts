@@ -1,5 +1,3 @@
-import type { TokenCipher } from './token-cipher.js';
-
 export const virtualFundingRubles = 100_000;
 
 type Account = { id: string; name: string };
@@ -24,6 +22,11 @@ export interface SandboxBroker {
 export interface SandboxStore {
   load(): Promise<SavedSandboxConnection | null>;
   save(connection: SavedSandboxConnection): Promise<void>;
+}
+
+export interface TokenCipher {
+  encrypt(token: string): string;
+  decrypt(encryptedToken: string): string;
 }
 
 const errorStatus = {

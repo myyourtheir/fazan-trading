@@ -10,9 +10,9 @@ import {
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
 import { AccountStatus } from '@ttech-pub/grpc-node-client/compiled/users.js';
 import { Status } from 'nice-grpc';
-import { SandboxError, virtualFundingRubles, type SandboxBroker } from './sandbox.js';
-import type { HourlyCandle, MarketBroker } from './market-data.js';
-import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from './robot.js';
+import { SandboxError, virtualFundingRubles, type SandboxBroker } from './core/sandbox.js';
+import type { HourlyCandle, MarketBroker } from './core/market-data.js';
+import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from './core/robot.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
 const requestOptions = (signal?: AbortSignal) => {

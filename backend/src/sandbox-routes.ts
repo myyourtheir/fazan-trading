@@ -1,6 +1,6 @@
 import { Router, type Request, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
-import type { SandboxConnection } from './sandbox.js';
+import type { SandboxConnection } from './core/sandbox.js';
 
 export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler, onTokenChange?: () => void,
   changeSettings = (action: () => Promise<void>) => action()) {

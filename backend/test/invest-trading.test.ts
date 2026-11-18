@@ -7,9 +7,9 @@ import {
   OrderDirection, OrderExecutionReportStatus, OrderIdType, OrderType,
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
 import { InvestSandbox } from '../src/invest-sandbox.js';
-import { hourMs, type MarketHistory, type MarketUpdate } from '../src/market-data.js';
+import { hourMs, type MarketHistory, type MarketUpdate } from '../src/core/market-data.js';
 import { connectToPostgres, migrateDatabase, PostgresTradingStore } from '../src/postgres.js';
-import { Robot, type OrderIntent, type TradingConfig } from '../src/robot.js';
+import { Robot, type OrderIntent, type TradingConfig } from '../src/core/robot.js';
 
 const intent: OrderIntent = {
   id: randomUUID(), accountId: 'test-account', instrumentUid: 'test-future', ticker: 'TEST',

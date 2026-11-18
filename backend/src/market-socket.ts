@@ -1,7 +1,7 @@
 import type { IncomingMessage, Server } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
-import { ownerSessionToken, type OwnerAuth } from './auth.js';
-import type { MarketData } from './market-data.js';
+import { ownerSessionToken, type OwnerAuth } from './core/auth.js';
+import type { MarketData } from './core/market-data.js';
 
 function hasMatchingOriginHost({ headers }: IncomingMessage) {
   if (!headers.origin) return false;
