@@ -15,3 +15,19 @@ export const sandboxConnection = pgTable('sandbox_connection', {
 }, table => [
   check('sandbox_connection_singleton', sql`${table.id} = 1`),
 ]);
+
+export const strategySettings = pgTable('strategy_settings', {
+  id: integer('id').primaryKey(),
+  uid: text('instrument_uid').notNull(),
+  ticker: text('ticker').notNull(),
+  name: text('name').notNull(),
+  classCode: text('class_code').notNull(),
+  exchange: text('exchange').notNull(),
+  expirationDate: text('expiration_date'),
+  emaPeriod: integer('ema_period').notNull(),
+  lots: integer('lots').notNull(),
+}, table => [
+  check('strategy_settings_singleton', sql`${table.id} = 1`),
+  check('strategy_settings_positive_ema', sql`${table.emaPeriod} > 0`),
+  check('strategy_settings_positive_lots', sql`${table.lots} > 0`),
+]);

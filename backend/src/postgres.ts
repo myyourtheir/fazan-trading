@@ -4,10 +4,11 @@ import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { SessionStore } from './auth.js';
 import type { SandboxStore, SavedSandboxConnection } from './sandbox.js';
+import type { SavedStrategy, StrategyStore } from './strategy-settings.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../migrations', import.meta.url));
-const { ownerSessions, sandboxConnection } = schema;
+const { ownerSessions, sandboxConnection, strategySettings } = schema;
 type Database = NodePgDatabase<typeof schema>;
 
 export function connectToPostgres(connectionString: string | undefined) {
@@ -54,5 +55,22 @@ export class PostgresSandboxConnection implements SandboxStore {
   async save(connection: SavedSandboxConnection) {
     await this.db.insert(sandboxConnection).values({ id: 1, ...connection })
       .onConflictDoUpdate({ target: sandboxConnection.id, set: connection });
+  }
+}
+
+export class PostgresStrategySettings implements StrategyStore {
+  constructor(private readonly db: Database) {}
+
+  async load() {
+    const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
+    if (!saved) return null;
+    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots } = saved;
+    return { instrument: { uid, ticker, name, classCode, exchange, expirationDate }, emaPeriod, lots };
+  }
+
+  async save({ instrument, emaPeriod, lots }: SavedStrategy) {
+    const values = { ...instrument, emaPeriod, lots };
+    await this.db.insert(strategySettings).values({ id: 1, ...values })
+      .onConflictDoUpdate({ target: strategySettings.id, set: values });
   }
 }

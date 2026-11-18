@@ -15,6 +15,13 @@
       "when": 1795003025479,
       "tag": "0001_sandbox_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795004568964,
+      "tag": "0002_strategy_settings",
+      "breakpoints": true
     }
   ]
 }

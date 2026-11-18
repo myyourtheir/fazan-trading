@@ -2,6 +2,8 @@ import express, { type ErrorRequestHandler, type Request, type RequestHandler } 
 import type { OwnerAuth } from './auth.js';
 import { SandboxError, type SandboxConnection } from './sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
+import { strategyRoutes } from './strategy-routes.js';
+import type { StrategySettings } from './strategy-settings.js';
 
 const cookieName = 'serfing_session';
 
@@ -10,8 +12,8 @@ function sessionToken(request: Request) {
     .find(value => value.startsWith(`${cookieName}=`))?.slice(cookieName.length + 1);
 }
 
-export function createApp({ auth, secureCookies, sandbox }: {
-  auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection;
+export function createApp({ auth, secureCookies, sandbox, strategy }: {
+  auth: OwnerAuth; secureCookies: boolean; sandbox?: SandboxConnection; strategy?: StrategySettings;
 }) {
   const app = express();
   app.disable('x-powered-by');
@@ -71,6 +73,7 @@ export function createApp({ auth, secureCookies, sandbox }: {
   }));
   api.get('/dashboard', requireOwner, (_req, res) => res.json({ mode: 'stopped' }));
   if (sandbox) api.use('/sandbox', sandboxRoutes(sandbox, requireOwner));
+  if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner));
   api.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND' }));
 
   const onError: ErrorRequestHandler = (error: unknown, _req, res, next) => {

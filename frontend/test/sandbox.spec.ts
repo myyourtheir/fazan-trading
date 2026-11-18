@@ -13,6 +13,10 @@ test('the owner can check a token and select, create, and fund a sandbox account
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped' } });
+      case '/api/strategy':
+        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null } });
+      case '/api/strategy/futures':
+        return route.fulfill({ json: [] });
       case '/api/sandbox':
         return route.fulfill({ json: {
           status: configured ? 'connected' : 'unconfigured', accountId, accounts: configured ? accounts : [],
@@ -54,7 +58,7 @@ test('the owner can check a token and select, create, and fund a sandbox account
   const connect = page.getByRole('button', { name: 'Проверить и сохранить' });
   await input.fill('bad-token');
   await connect.click();
-  await expect(page.getByRole('alert')).toContainText('Песочница отклонила токен.');
+  await expect(connectionCard.getByRole('alert')).toContainText('Песочница отклонила токен.');
   await input.fill(token);
   await connect.click();
   await expect(page.getByText('Песочница подключена.')).toBeVisible();

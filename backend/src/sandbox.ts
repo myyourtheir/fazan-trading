@@ -5,10 +5,20 @@ export const virtualFundingRubles = 100_000;
 type Account = { id: string; name: string };
 export type SavedSandboxConnection = { encryptedToken: string; accountId: string | null };
 
+export type FutureContract = {
+  uid: string;
+  ticker: string;
+  name: string;
+  classCode: string;
+  exchange: string;
+  expirationDate: string | null;
+};
+
 export interface SandboxBroker {
   accounts(token: string): Promise<Account[]>;
   openAccount(token: string): Promise<string>;
   fundAccount(token: string, accountId: string): Promise<void>;
+  futures(token: string): Promise<(FutureContract & { apiTradeAvailableFlag: boolean })[]>;
 }
 
 export interface SandboxStore {
@@ -26,6 +36,7 @@ const errorStatus = {
   SANDBOX_NOT_CONFIGURED: 409,
   SANDBOX_TOKEN_UNREADABLE: 409,
   SANDBOX_BUSY: 409,
+  FUTURE_UNAVAILABLE: 422,
 } as const;
 
 export class SandboxError extends Error {
@@ -92,9 +103,7 @@ export class SandboxConnection {
 
   fundAccount(accountId: string) {
     return this.change(async () => {
-      const { saved, token } = await this.credentials();
-      if (saved.accountId !== accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
-      await this.requireAccount(token, accountId);
+      const token = await this.selectedAccountToken(accountId);
       try {
         await this.broker.fundAccount(token, accountId);
       } catch (error) {
@@ -102,6 +111,29 @@ export class SandboxConnection {
         throw failure.code === 'SANDBOX_UNREACHABLE' ? new SandboxError('SANDBOX_FUNDING_UNCERTAIN') : failure;
       }
     });
+  }
+
+  async tradableFutures(): Promise<FutureContract[]> {
+    const { token } = await this.credentials();
+    return this.fetchTradableFutures(token);
+  }
+
+  changeStrategyForAccount(accountId: string, action: (contracts: FutureContract[]) => Promise<void>) {
+    return this.change(async () => {
+      const token = await this.selectedAccountToken(accountId);
+      await action(await this.fetchTradableFutures(token));
+    });
+  }
+
+  private async fetchTradableFutures(token: string): Promise<FutureContract[]> {
+    try {
+      const contracts = await this.broker.futures(token);
+      return contracts.filter(contract => contract.uid && contract.apiTradeAvailableFlag)
+        .map(({ uid, ticker, name, classCode, exchange, expirationDate }) =>
+          ({ uid, ticker, name, classCode, exchange, expirationDate }));
+    } catch (error) {
+      throw brokerError(error);
+    }
   }
 
   private async change(action: () => Promise<void>) {
@@ -126,6 +158,13 @@ export class SandboxConnection {
     const saved = await this.store.load();
     if (!saved) throw new SandboxError('SANDBOX_NOT_CONFIGURED');
     return { saved, token: this.decrypt(saved) };
+  }
+
+  private async selectedAccountToken(accountId: string) {
+    const { saved, token } = await this.credentials();
+    if (saved.accountId !== accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    await this.requireAccount(token, accountId);
+    return token;
   }
 
   private async listAccounts(token: string) {

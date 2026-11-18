@@ -32,7 +32,7 @@ try {
   }
   compose('up', '--build', '--wait');
   const origin = `http://${compose('port', 'frontend', '80')}/api`;
-  assert.equal(migrations(), '2');
+  assert.equal(migrations(), '3');
   assert.equal((await fetch(`${origin}/dashboard`)).status, 401);
   if (legacyToken) {
     const response = await fetch(`${origin}/dashboard`, { headers: { cookie: `serfing_session=${legacyToken}` } });
@@ -48,7 +48,7 @@ try {
 
   // Force a new backend container without touching the frontend or the database.
   compose('up', '-d', '--no-deps', '--force-recreate', '--wait', 'backend');
-  assert.equal(migrations(), '2');
+  assert.equal(migrations(), '3');
   let status = (await dashboard()).status;
   for (let attempt = 0; status === 502 && attempt < 6; attempt++) {
     await delay(1_000);

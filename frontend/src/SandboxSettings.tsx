@@ -10,29 +10,9 @@ import { Input } from '@/components/ui/input';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Separator } from '@/components/ui/separator';
 import { api, hasStatus, saveSandboxToken, type SandboxStatus } from './api';
+import { sandboxErrorMessage, sandboxMessageFor } from './sandbox-errors';
+import { StrategySettings } from './StrategySettings';
 import { useAppDispatch } from './store';
-
-const errors: Record<string, string> = {
-  SANDBOX_TOKEN_REJECTED: 'Песочница отклонила токен. Проверьте, что токен действителен и даёт доступ к песочнице.',
-  SANDBOX_UNREACHABLE: 'Не удалось связаться с песочницей. Попробуйте позже.',
-  SANDBOX_TOKEN_UNREADABLE: 'Не удалось прочитать сохранённый токен. Проверьте ключ сервера или введите токен заново.',
-  SANDBOX_ACCOUNT_UNAVAILABLE: 'Счёт недоступен или больше не выбран. Обновите список счетов.',
-  SANDBOX_OPERATION_REJECTED: 'Песочница отклонила операцию. Проверьте состояние счёта в песочнице.',
-  SANDBOX_BUSY: 'Другое изменение ещё выполняется. Попробуйте позже.',
-  SANDBOX_NOT_CONFIGURED: 'Сначала подключите песочницу.',
-  SANDBOX_CREATION_UNCERTAIN: 'Создание счёта не подтверждено. Обновите список счетов перед повторной попыткой.',
-  SANDBOX_FUNDING_UNCERTAIN: 'Пополнение не подтверждено. Проверьте баланс в песочнице перед повторной попыткой.',
-  INVALID_REQUEST: 'Проверьте введённые данные.',
-};
-
-function messageFor(code: string) {
-  return Object.hasOwn(errors, code) ? errors[code] : 'Не удалось выполнить запрос. Попробуйте позже.';
-}
-
-function errorMessage(error: unknown) {
-  const data = typeof error === 'object' && error && 'data' in error ? error.data : null;
-  return messageFor(typeof data === 'object' && data && 'code' in data && typeof data.code === 'string' ? data.code : '');
-}
 
 const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
 type Notice = { kind: 'error' | 'success'; text: string; section: 'connection' | 'accounts' };
@@ -109,6 +89,8 @@ export function SandboxSettings({ refreshSession }: { refreshSession: () => void
   const connection = sandbox.data;
   const fundingAmount = connection?.status === 'connected' ? rubles.format(connection.virtualFundingRubles) : '';
   const disabled = pending || sandbox.isFetching;
+  const selectedAccountId = !sandbox.isError && connection?.status === 'connected'
+    && connection.accounts.some(account => account.id === connection.accountId) ? connection.accountId : null;
 
   useEffect(() => {
     if (hasStatus(sandbox.error, 401)) refreshSession();
@@ -122,7 +104,7 @@ export function SandboxSettings({ refreshSession }: { refreshSession: () => void
       setNotice({ kind: 'success', text: success, section });
     } catch (error) {
       if (hasStatus(error, 401)) refreshSession();
-      else setNotice({ kind: 'error', text: errorMessage(error), section });
+      else setNotice({ kind: 'error', text: sandboxErrorMessage(error), section });
     } finally {
       setPending(false);
     }
@@ -152,7 +134,7 @@ export function SandboxSettings({ refreshSession }: { refreshSession: () => void
           {sandbox.isFetching ? <Badge role="status" variant="secondary">Проверяем подключение…</Badge>
             : sandbox.isError ? <Alert variant="destructive"><AlertTitle>Не удалось загрузить подключение.</AlertTitle></Alert>
             : connection?.status === 'unavailable' ? <Alert variant="destructive">
-              <AlertTitle>{messageFor(connection.code)}</AlertTitle>
+              <AlertTitle>{sandboxMessageFor(connection.code)}</AlertTitle>
             </Alert>
             : connection && <Badge role="status" variant="secondary"
               className={connection.status === 'connected' ? 'bg-primary/10 text-primary' : undefined}>
@@ -201,6 +183,7 @@ export function SandboxSettings({ refreshSession }: { refreshSession: () => void
           <Feedback notice={notice?.section === 'accounts' ? notice : undefined} />
         </CardContent>
       </Card>
+      <StrategySettings accountId={selectedAccountId} disabled={disabled} refreshSession={refreshSession} />
     </div>
   );
 }

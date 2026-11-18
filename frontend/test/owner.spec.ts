@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const emptyStrategy = { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null };
+
 test('the owner can enter and leave the protected dashboard', async ({ page }) => {
   const target = process.env.SERFING_E2E_URL;
   const password = target ? process.env.SERFING_E2E_PASSWORD : 'local-browser-test-password';
@@ -22,6 +24,7 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
       }
       if (!signedIn) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
       if (path.endsWith('/sandbox')) return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
+      if (path === '/api/strategy') return route.fulfill({ json: emptyStrategy });
       return route.fulfill({ json: path.endsWith('/dashboard')
         ? { mode: 'stopped' } : { authenticated: true, remainingMs: 60_000 } });
     });
@@ -61,10 +64,12 @@ test('the protected panel closes when a session expires in a focused tab', async
   let expired = false;
   await page.route('**/api/**', route => {
     if (expired) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
-    if (new URL(route.request().url()).pathname.endsWith('/sandbox')) {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/sandbox')) {
       return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
     }
-    const dashboard = new URL(route.request().url()).pathname.endsWith('/dashboard');
+    if (path === '/api/strategy') return route.fulfill({ json: emptyStrategy });
+    const dashboard = path.endsWith('/dashboard');
     return route.fulfill({ json: dashboard ? { mode: 'stopped' } : { authenticated: true, remainingMs: 5_000 } });
   });
   await page.goto('/');

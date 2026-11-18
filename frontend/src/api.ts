@@ -11,12 +11,21 @@ export type SandboxStatus = {
   | { status: 'unconfigured' }
   | { status: 'unavailable'; code: string });
 
+export type FutureContract = {
+  uid: string; ticker: string; name: string; classCode: string; exchange: string; expirationDate: string | null;
+};
+type StrategyConfig = {
+  defaults: { ticker: string; emaPeriod: number };
+  settings: { instrument: FutureContract; emaPeriod: number; lots: number } | null;
+};
+type StrategyUpdate = { accountId: string; instrumentUid: string; emaPeriod: number; lots: number };
+
 export function hasStatus(error: unknown, status: number) {
   return typeof error === 'object' && error !== null && 'status' in error && error.status === status;
 }
 
 const mutationHeaders = { 'X-Serfing-Request': '1' };
-const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard', 'Sandbox'] as const;
+const changedSessionTags = (_data: unknown, error: unknown) => error ? [] : ['Session', 'Dashboard', 'Sandbox', 'Strategy'] as const;
 const changedSandboxTags = (_data: unknown, error: unknown) => error ? [] : ['Sandbox'] as const;
 
 // RTK Query mutation arguments appear in Redux actions. Keep this credential out of Redux.
@@ -32,11 +41,20 @@ export async function saveSandboxToken(token: string): Promise<{ status: number;
 export const api = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({ baseUrl: '/api', credentials: 'same-origin' }),
-  tagTypes: ['Session', 'Dashboard', 'Sandbox'],
+  tagTypes: ['Session', 'Dashboard', 'Sandbox', 'Strategy'],
   endpoints: builder => ({
     session: builder.query<Session, void>({ query: () => 'auth/session', providesTags: ['Session'] }),
     dashboard: builder.query<Dashboard, void>({ query: () => 'dashboard', providesTags: ['Dashboard'] }),
     sandbox: builder.query<SandboxStatus, void>({ query: () => 'sandbox', providesTags: ['Sandbox'] }),
+    strategy: builder.query<StrategyConfig, void>({ query: () => 'strategy', providesTags: ['Strategy'] }),
+    searchFutures: builder.query<FutureContract[], string>({
+      query: q => ({ url: 'strategy/futures', params: { q } }),
+      providesTags: ['Sandbox'],
+    }),
+    saveStrategy: builder.mutation<null, StrategyUpdate>({
+      query: body => ({ url: 'strategy', method: 'PUT', headers: mutationHeaders, body }),
+      invalidatesTags: (_data, error) => error ? [] : ['Strategy'],
+    }),
     selectSandboxAccount: builder.mutation<null, string>({
       query: accountId => ({ url: 'sandbox/account', method: 'PUT', headers: mutationHeaders, body: { accountId } }),
       invalidatesTags: changedSandboxTags,
