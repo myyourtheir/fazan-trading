@@ -19,6 +19,9 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   let journal: JournalEntry[] = [];
   let accountId = 'virtual-account';
   let closeRequests = 0;
+  let reconcileRequests = 0;
+  let resumeRequests = 0;
+  let recoveredOrder: JournalEntry | undefined;
   let blockAccountSwitch = options.blockAccountSwitch;
   const accounts = [{ id: accountId, name: 'Первый' }, { id: 'next-account', name: 'Второй' }];
   await page.route('/api/**', route => {
@@ -35,6 +38,18 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
         return route.fulfill({ status: 204 });
       case '/api/robot/stop':
         dashboard = { ...dashboard, mode: 'stopped' };
+        return route.fulfill({ status: 204 });
+      case '/api/robot/reconcile':
+        reconcileRequests++;
+        if (recoveredOrder) {
+          journal = [recoveredOrder];
+          dashboard = { ...dashboard, reason: null, position: recoveredOrder.position,
+            recovery: { orderId: recoveredOrder.id, ready: true } };
+        }
+        return route.fulfill({ status: 204 });
+      case '/api/robot/resume':
+        resumeRequests++;
+        dashboard = { mode: 'running', reason: null, position: dashboard.position };
         return route.fulfill({ status: 204 });
       case '/api/robot/close':
         closeRequests++;
@@ -73,6 +88,13 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   const tradingSockets: WebSocketRoute[] = [];
   await page.routeWebSocket('**/api/robot/live', socket => { tradingSockets.push(socket); });
   return { selection, candle, nextCandle, history, sockets, tradingSockets, closeRequests: () => closeRequests,
+    reconcileRequests: () => reconcileRequests, resumeRequests: () => resumeRequests,
+    setProblem: (order: JournalEntry) => {
+      journal = [order];
+      dashboard = { mode: 'paused', reason: 'ROBOT_ORDER_SUBMISSION_UNCERTAIN', position: order.position,
+        recovery: { orderId: order.id, ready: false } };
+    },
+    setRecoveredOrder: (order: JournalEntry) => { recoveredOrder = order; },
     setOrders: (...orders: JournalEntry[]) => {
     dashboard = { ...dashboard, position: orders[0]?.position ?? null };
     journal = orders;
@@ -137,6 +159,40 @@ test('shows one reversal order with its fill and distinguishes an unconfirmed ta
   tradingSockets[0].send(JSON.stringify({ tradingChanged: true }));
   await expect(row.getByText('Позиция подтверждена')).toBeVisible();
   await expect(row.getByText('Позиция: 1 → -1; факт: -1')).toBeVisible();
+});
+
+test('shows the problem order, updates the journal after reconciliation, and waits for manual resume', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
+  const market = await mockMarket(page);
+  const filled = filledOrder(market.candle);
+  market.setProblem({ ...filled, brokerStatus: 'unknown', status: 'unconfirmed', position: null, executedLots: null,
+    brokerOrderId: null, executions: [] });
+  await page.goto('/');
+  const robot = page.getByRole('region', { name: 'Управление роботом' });
+  const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
+  const reconcile = robot.getByRole('button', { name: 'Сверить заявку' });
+  const resume = robot.getByRole('button', { name: 'Возобновить торговлю' });
+  await expect(robot.getByText('Робот на паузе')).toBeVisible();
+  await expect(robot.getByText('Результат отправки неизвестен.', { exact: false })).toBeVisible();
+  await expect(robot.getByText('Клиентский ID: client-order')).toBeVisible();
+  await expect(robot.getByText('Подтверждённая позиция: неизвестна')).toBeVisible();
+  await expect(resume).toBeDisabled();
+  await reconcile.click();
+  await expect.poll(market.reconcileRequests).toBe(1);
+  await expect(resume).toBeDisabled();
+
+  market.setRecoveredOrder(filled);
+  await reconcile.click();
+  await expect(robot.getByText('Робот на паузе')).toBeVisible();
+  await expect(robot.getByText('Подтверждённая позиция: 1')).toBeVisible();
+  await expect(journal.getByText('Позиция подтверждена')).toBeVisible();
+  await journal.getByText('Покупка · IMOEXF').click();
+  await expect(journal.getByText('Лотов: 1; цена сделки: 105,25')).toBeVisible();
+  await expect(resume).toBeEnabled();
+  expect(market.resumeRequests()).toBe(0);
+  await resume.click();
+  await expect(robot.getByText('Робот запущен')).toBeVisible();
+  expect(market.resumeRequests()).toBe(1);
 });
 
 test('keeps balance and journal on the confirmed account and reflows on mobile', async ({ page }) => {

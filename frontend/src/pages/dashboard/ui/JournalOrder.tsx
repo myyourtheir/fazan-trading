@@ -1,16 +1,13 @@
 import { ChevronDown } from 'lucide-react';
 import { Badge } from '@/shared/ui';
 import type { JournalEntry } from '../api/journal-api';
+import { brokerStatuses } from '../lib/order-labels';
 
 const orderStatuses: Record<JournalEntry['status'], string> = {
-  reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена',
+  reserved: 'Намерение сохранено', confirmed: 'Позиция подтверждена', reconciled: 'Заявка и позиция сверены',
   unconfirmed: 'Требуется сверка', 'stopped-before-send': 'Робот остановлен до отправки',
   'feed-lost-before-send': 'Поток потерян до отправки',
   'account-check-failed-before-send': 'Счёт не прошёл проверку до отправки',
-};
-const brokerStatuses: Record<JournalEntry['brokerStatus'], string> = {
-  filled: 'Исполнена', rejected: 'Отклонена', cancelled: 'Отменена',
-  new: 'Принята', partial: 'Частично исполнена', unknown: 'Неизвестен',
 };
 const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'UTC' });
 const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 9 });

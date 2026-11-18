@@ -100,6 +100,14 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
       robot.stop();
       res.status(204).end();
     });
+    api.post('/robot/reconcile', requireOwner, async (_req, res) => {
+      await robot.reconcile();
+      res.status(204).end();
+    });
+    api.post('/robot/resume', requireOwner, async (_req, res) => {
+      await robot.resume();
+      res.status(204).end();
+    });
     api.post('/robot/close', requireOwner, async (req, res) => {
       const { accountId, instrumentUid, confirmed } = req.body ?? {};
       if (confirmed !== true || !isPrintableAscii(accountId, brokerIdLimit) || !isPrintableAscii(instrumentUid, brokerIdLimit)) {

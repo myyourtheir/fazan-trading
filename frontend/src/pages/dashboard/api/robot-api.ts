@@ -1,8 +1,11 @@
 import { mutationHeaders, rootApi, watchSocket } from '@/shared/api';
 
-export type Dashboard = { mode: 'stopped' | 'starting' | 'running' | 'paused'; reason: string | null; position: number | null };
+export type Dashboard = {
+  mode: 'stopped' | 'starting' | 'running' | 'paused'; reason: string | null; position: number | null;
+  recovery?: { orderId: string; ready: boolean };
+};
 export type CloseSelection = { accountId: string; instrumentUid: string };
-type RobotCommand = 'start' | 'stop' | CloseSelection;
+type RobotCommand = 'start' | 'stop' | 'reconcile' | 'resume' | CloseSelection;
 
 export const robotApi = rootApi.injectEndpoints({
   endpoints: builder => ({

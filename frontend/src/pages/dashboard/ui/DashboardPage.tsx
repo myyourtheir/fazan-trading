@@ -18,7 +18,7 @@ export function DashboardPage({ dark, refreshSession }: { dark: boolean; refresh
   const closeTarget = accountId && instrument && !sandbox.isFetching && !strategy.isFetching
     ? { accountId, instrumentUid: instrument.uid, ticker: instrument.ticker } : undefined;
   const robot = dashboard.isError ? undefined : dashboard.currentData;
-  const settingsLock = robot?.reason === 'ROBOT_ORDER_UNRESOLVED' ? sandboxMessageFor(robot.reason)
+  const settingsLock = robot?.recovery || robot?.reason === 'ROBOT_ORDER_UNRESOLVED' ? sandboxMessageFor('ROBOT_ORDER_UNRESOLVED')
     : robot && robot.mode !== 'stopped' ? 'Остановите робота, чтобы изменить счёт или стратегию.' : undefined;
   const settingsHint = settingsLock ?? (robot?.position
     ? 'Последняя сверка показала открытую позицию. Перед изменением настроек сервер снова проверит счёт.' : undefined);
@@ -37,7 +37,7 @@ export function DashboardPage({ dark, refreshSession }: { dark: boolean; refresh
       </div>}
       <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[17rem_minmax(0,1fr)_19rem]">
         <div className="grid min-w-0 gap-4">
-          {robot && <RobotControls dashboard={robot} closeTarget={closeTarget} />}
+          {robot && <RobotControls dashboard={robot} closeTarget={closeTarget} accountId={accountId} />}
           <StrategySettings accountId={accountId} disabled={sandbox.isFetching || Boolean(settingsLock)}
             settingsHint={settingsHint} refreshSession={refreshSession} />
         </div>

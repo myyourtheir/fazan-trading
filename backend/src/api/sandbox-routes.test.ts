@@ -125,7 +125,15 @@ test('the server rejects trading settings changes until stopped and broker-confi
   const selection = { accountId: 'existing', instrumentUid: 'contract-a' };
   const close = (body: object, withSession = true) => request('robot/close', 'POST', body, withSession);
   assert.equal((await close({ ...selection, confirmed: true }, false)).status, 401);
+  for (const action of ['reconcile', 'resume']) {
+    assert.equal((await request(`robot/${action}`, 'POST', undefined, false)).status, 401);
+  }
   await request('auth/login', 'POST', { password });
+  for (const action of ['reconcile', 'resume']) {
+    assert.deepEqual(await request(`robot/${action}`, 'POST'), {
+      status: 409, body: { code: 'ROBOT_NO_ORDER_TO_RECONCILE' },
+    });
+  }
   assert.equal((await close(selection)).status, 400);
   assert.equal((await close({ ...selection, confirmed: 'true' })).status, 400);
   await request('strategy/futures?q=IMOEXF');
