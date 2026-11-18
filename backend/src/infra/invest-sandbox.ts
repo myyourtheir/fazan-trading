@@ -15,8 +15,8 @@ import type { HourlyCandle, MarketBroker } from '../core/market-data.js';
 import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from '../core/robot.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
-const requestOptions = (signal?: AbortSignal) => {
-  const timeout = AbortSignal.timeout(8_000);
+const requestOptions = (signal?: AbortSignal, timeoutMs = 8_000) => {
+  const timeout = AbortSignal.timeout(timeoutMs);
   return { signal: signal ? AbortSignal.any([signal, timeout]) : timeout };
 };
 const definiteRejections = new Set<unknown>([
@@ -87,8 +87,9 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
 
   futures(token: string) {
     return this.call(token, async ({ instruments }) => {
+      // The full catalogue includes inactive contracts, which the strategy cannot use.
       const { instruments: contracts } = await instruments.futures(
-        { instrumentStatus: InstrumentStatus.INSTRUMENT_STATUS_ALL }, requestOptions());
+        { instrumentStatus: InstrumentStatus.INSTRUMENT_STATUS_BASE }, requestOptions(undefined, 15_000));
       return contracts.map(({ uid, ticker, name, classCode, exchange, expirationDate, apiTradeAvailableFlag }) => ({
         uid, ticker, name, classCode, exchange, expirationDate: expirationDate?.toISOString() ?? null, apiTradeAvailableFlag,
       }));

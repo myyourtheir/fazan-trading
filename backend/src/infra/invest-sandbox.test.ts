@@ -22,7 +22,7 @@ test('the SDK adapter distinguishes definite rejection from transport failure', 
   });
 });
 
-test('the SDK requests the futures catalogue through the sandbox channel', async t => {
+test('the SDK requests the base futures catalogue through the sandbox channel', async t => {
   const instruments = {
     async futures(_request: { instrumentStatus: InstrumentStatus }) {
       return { instruments: [{ ...futures[1], expirationDate: new Date(futures[1].expirationDate!) }] };
@@ -32,5 +32,5 @@ test('the SDK requests the futures catalogue through the sandbox channel', async
   const create = t.mock.method(NodeApiClient, 'create', async () => ({ instruments }) as unknown as NodeApiClient);
   assert.deepEqual(await new InvestSandbox().futures(token), [futures[1]]);
   assert.equal(create.mock.calls[0].arguments[0]?.url, 'https://sandbox-invest-public-api.tbank.ru:443');
-  assert.deepEqual(list.mock.calls[0].arguments[0], { instrumentStatus: InstrumentStatus.INSTRUMENT_STATUS_ALL });
+  assert.deepEqual(list.mock.calls[0].arguments[0], { instrumentStatus: InstrumentStatus.INSTRUMENT_STATUS_BASE });
 });
