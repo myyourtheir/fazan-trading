@@ -23,6 +23,7 @@ const definiteRejections = new Set<unknown>([
   Status.INVALID_ARGUMENT, Status.NOT_FOUND, Status.ALREADY_EXISTS, Status.FAILED_PRECONDITION,
   Status.OUT_OF_RANGE, Status.RESOURCE_EXHAUSTED, Status.UNIMPLEMENTED,
 ]);
+const grpcCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 
 const hourlySubscription = SubscriptionInterval.SUBSCRIPTION_INTERVAL_ONE_HOUR;
 const price = ({ units, nano }: Quotation) => units + nano / 1e9;
@@ -55,7 +56,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
       this.current = { token, client };
       return result;
     } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+      const code = grpcCode(error);
       if (code === Status.UNAUTHENTICATED || code === Status.PERMISSION_DENIED) {
         throw new SandboxError('SANDBOX_TOKEN_REJECTED');
       }
@@ -145,7 +146,13 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker {
         orderType: OrderType.ORDER_TYPE_MARKET, timeInForce: TimeInForceType.TIME_IN_FORCE_UNSPECIFIED,
         direction: brokerDirection(order.direction),
         confirmMarginTrade: order.direction === 'sell', priceType: PriceType.PRICE_TYPE_UNSPECIFIED,
-      }, requestOptions());
+      }, requestOptions()).catch((error: unknown) => {
+        // A validation error from PostSandboxOrder (e.g. insufficient virtual funds) rejects the request.
+        // Other RPC failures, including deadline and already-exists, do not prove it never reached the broker.
+        if (grpcCode(error) === Status.INVALID_ARGUMENT) return null;
+        throw error;
+      });
+      if (!reply) return { brokerOrderId: null, brokerStatus: 'rejected' as const, executedLots: 0 };
       return {
         brokerOrderId: reply.orderId || null, brokerStatus: brokerStatuses[reply.executionReportStatus] ?? 'unknown',
         executedLots: reply.lotsExecuted,

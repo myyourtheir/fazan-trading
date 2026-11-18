@@ -6,6 +6,7 @@ import { NodeApiClient } from '@ttech-pub/grpc-node-client';
 import {
   OrderDirection, OrderExecutionReportStatus, OrderIdType, OrderType,
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
+import { ClientError, Status } from 'nice-grpc';
 import { hourMs, type MarketHistory, type MarketUpdate } from '../core/market-data.js';
 import { Robot, type OrderIntent, type TradingConfig } from '../core/robot.js';
 import { InvestSandbox } from './invest-sandbox.js';
@@ -55,6 +56,21 @@ test('SDK posts a sandbox market order with the saved client ID and maps actual 
   assert.deepEqual(await broker.orderState('fake', intent, null), state);
   assert.deepEqual(requestIds, ['exchange-id', intent.id]);
   assert.deepEqual(state.executions, [{ tradeId: 'fill', lots: 1, price: 98.5, time: fillTime.getTime() }]);
+});
+
+test('SDK reports a post validation rejection without treating ambiguous RPC failures as rejection', async t => {
+  let code = Status.INVALID_ARGUMENT;
+  t.mock.method(NodeApiClient, 'create', async () => ({
+    sandbox: {
+      async postSandboxOrder() { throw new ClientError('/SandboxService/PostSandboxOrder', code, 'broker error'); },
+    },
+  }) as unknown as NodeApiClient);
+  const broker = new InvestSandbox();
+  assert.deepEqual(await broker.submit('fake', intent), { brokerOrderId: null, brokerStatus: 'rejected', executedLots: 0 });
+  code = Status.DEADLINE_EXCEEDED;
+  await assert.rejects(broker.submit('fake', intent), { message: 'SANDBOX_UNREACHABLE' });
+  code = Status.ALREADY_EXISTS;
+  await assert.rejects(broker.submit('fake', intent), { message: 'SANDBOX_OPERATION_REJECTED' });
 });
 
 test('SDK position check does not mistake a blocked or unidentified balance for a flat position', async t => {

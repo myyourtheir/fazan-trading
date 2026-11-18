@@ -1,10 +1,8 @@
-import { skipToken } from '@reduxjs/toolkit/query/react';
 import { Alert, AlertTitle, Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
-import { journalApi } from '../api/journal-api';
 import { robotApi, type Dashboard } from '../api/robot-api';
 import { sandboxErrorMessage, sandboxMessageFor } from '@/entities/sandbox';
 import { ClosePositionDialog, type CloseTarget } from './ClosePositionDialog';
-import { brokerStatuses } from '../lib/order-labels';
+import { OrderRecovery } from './OrderRecovery';
 
 const modes: Record<Dashboard['mode'], string> = {
   stopped: 'Робот остановлен', starting: 'Робот запускается',
@@ -17,9 +15,6 @@ export function RobotControls({ dashboard, closeTarget, accountId }: {
   const [command, { isLoading, error }] = robotApi.useRobotCommandMutation();
   const stopped = dashboard.mode === 'stopped';
   const recovery = dashboard.recovery;
-  const { currentData } = journalApi.useJournalQuery(recovery && accountId ? accountId : skipToken);
-  const order = currentData?.find(({ id }) => id === recovery?.orderId);
-  const canReconcile = stopped || dashboard.mode === 'paused';
   return (
     <Card role="region" aria-labelledby="robot-controls-title">
       <CardHeader>
@@ -42,21 +37,9 @@ export function RobotControls({ dashboard, closeTarget, accountId }: {
           <span className="text-sm">Подтверждённая позиция: {dashboard.position ?? 'неизвестна'}</span>
         </div>
         {dashboard.reason && <Alert variant="destructive"><AlertTitle>{sandboxMessageFor(dashboard.reason)}</AlertTitle></Alert>}
-        {recovery && <div className="grid w-full min-w-0 justify-items-start gap-2 text-sm" aria-live="polite">
-          <span className="font-medium">Проблемная заявка</span>
-          <span className="break-all text-muted-foreground">Клиентский ID: {recovery.orderId}</span>
-          {order && <>
-            <span>{order.ticker} · {order.direction === 'buy' ? 'Покупка' : 'Продажа'}, лотов: {order.lots}</span>
-            <span>Статус брокера: {brokerStatuses[order.brokerStatus]}. Исполнено лотов: {order.executedLots ?? '—'}</span>
-          </>}
-          {recovery.ready && <span>Заявка и позиция сверены. Торговля не возобновится без вашей команды.</span>}
-          <Button variant="outline" disabled={isLoading || !canReconcile} onClick={() => void command('reconcile')}>
-            Сверить заявку
-          </Button>
-          <Button disabled={isLoading || !canReconcile || !recovery.ready} onClick={() => void command('resume')}>
-            Возобновить торговлю
-          </Button>
-        </div>}
+        {recovery && <OrderRecovery recovery={recovery} accountId={accountId}
+          disabled={isLoading || (!stopped && dashboard.mode !== 'paused')}
+          onReconcile={() => void command('reconcile')} onResume={() => void command('resume')} />}
         {error && <Alert variant="destructive"><AlertTitle>{sandboxErrorMessage(error)}</AlertTitle></Alert>}
       </CardContent>
     </Card>

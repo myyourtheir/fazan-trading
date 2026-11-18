@@ -28,6 +28,7 @@ export type JournalEntry = OrderIntent & Omit<OrderResult, 'status'> & { status:
 export interface Broker {
   verifySelection(config: TradingConfig): Promise<void>;
   accountState(config: TradingConfig): Promise<{ position: number | null; activeOrders: boolean }>;
+  // A definite rejection before creating an order is rejected, with no broker ID and zero lots. Ambiguous failures throw.
   submit(token: string, order: OrderIntent): Promise<Omit<BrokerOrder, 'executions'>>;
   orderState(token: string, order: OrderIntent, brokerOrderId: string | null): Promise<BrokerOrder>;
 }
@@ -51,7 +52,7 @@ type Run = {
 };
 type Signal = { candleTime: number; signalTime: number; signalPrice: number; ema: number; targetPosition: number };
 type Selection = Pick<TradingConfig, 'accountId' | 'instrumentUid'>;
-type Recovery = { order: OrderIntent; state: BrokerOrder; verifiedPosition: number | null };
+type Recovery = { order: OrderIntent; state: BrokerOrder; rejectedBeforeAcceptance: boolean; verifiedPosition: number | null };
 
 const unknownOrder: BrokerOrder = {
   brokerOrderId: null, brokerStatus: 'unknown', executedLots: null, executions: [],
@@ -117,7 +118,7 @@ export class Robot {
 
   async start() {
     this.requireStopped();
-    await this.begin(async () => {
+    await this.beginTradingRun(async () => {
       await this.requireNoUnresolved();
       const config = await this.loadConfig();
       await this.broker.verifySelection(config);
@@ -130,15 +131,19 @@ export class Robot {
     const recovery = this.requireRecovery();
     const expected = recovery.verifiedPosition;
     if (expected === null) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
-    await this.begin(async () => {
+    await this.beginTradingRun(async () => {
       const config = await this.recoveryConfig(recovery);
       await this.broker.verifySelection(config);
       const reason = await this.recheckPosition(config, expected);
       if (reason) {
-        if (this.mode === 'starting') {
+        if (this.recovery === recovery) {
           recovery.verifiedPosition = null;
           this.reason = reason;
-          await this.store.record(recovery.order.id, { ...recovery.state, status: 'unconfirmed', position: this.position });
+          try {
+            await this.store.record(recovery.order.id, { ...recovery.state, status: 'unconfirmed', position: this.position });
+          } finally {
+            this.publish();
+          }
         }
         throw new RobotError(reason);
       }
@@ -146,7 +151,10 @@ export class Robot {
     }, recovery);
   }
 
-  private async begin(prepare: () => Promise<{ config: TradingConfig; hasConfirmedEntry: boolean }>, recovery?: Recovery) {
+  private async beginTradingRun(
+    prepare: () => Promise<{ config: TradingConfig; hasConfirmedEntry: boolean }>,
+    recovery?: Recovery,
+  ) {
     const previousMode = this.mode;
     let run: Run | undefined;
     this.mode = 'starting';
@@ -155,7 +163,10 @@ export class Robot {
     this.publish();
     try {
       const { config, hasConfirmedEntry } = await prepare();
-      if (this.mode !== 'starting') return;
+      if (this.mode !== 'starting') {
+        this.publish();
+        return;
+      }
       const next: Run = { config, liveSince: null, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry };
       this.run = run = next;
       this.reason = null;
@@ -179,7 +190,7 @@ export class Robot {
   }
 
   stop() {
-    if (this.recovery?.verifiedPosition != null) this.recovery = undefined;
+    if (!this.starting && this.recovery?.verifiedPosition != null) this.recovery = undefined;
     else if (this.mode === 'stopped') return;
     if (this.run) this.run.cancelledBy = 'stopped-before-send';
     this.clearRun();
@@ -230,8 +241,10 @@ export class Robot {
     const config = await this.recoveryConfig(recovery);
     const { order } = recovery;
     // Always ask with the original saved request ID, not a new order or a guessed exchange ID.
-    const state = await this.broker.orderState(config.token, order, null).catch(() => null);
-    const account = await this.broker.accountState(config).catch(() => null);
+    const { state: lookup, account } = await this.readOrderAndAccount(config, order, null);
+    if (lookup && lookup.brokerStatus !== 'rejected') recovery.rejectedBeforeAcceptance = false;
+    // The post RPC itself can definitively reject the request before creating a lookup record.
+    const state = lookup ?? (recovery.rejectedBeforeAcceptance ? recovery.state : null);
     const reason = orderProblem(order, state, account);
     const position = account?.position ?? null;
     this.position = position;
@@ -387,12 +400,19 @@ export class Robot {
     return this.store.record(intent.id, { ...unknownOrder, status, position: this.position });
   }
 
+  private async readOrderAndAccount(config: TradingConfig, order: OrderIntent, brokerOrderId: string | null) {
+    const state = await this.broker.orderState(config.token, order, brokerOrderId).catch(() => null);
+    const account = await this.broker.accountState(config).catch(() => null);
+    return { state, account };
+  }
+
   private async submitAndRecord(config: TradingConfig, intent: OrderIntent) {
     // A failed submission is ambiguous, even if the first lookup appears to settle it.
     const posted = await this.broker.submit(config.token, intent).catch(() => null);
-    const state = await this.broker.orderState(config.token, intent, posted?.brokerOrderId ?? null).catch(() => null);
-    const account = await this.broker.accountState(config).catch(() => null);
+    const { state, account } = await this.readOrderAndAccount(config, intent, posted?.brokerOrderId ?? null);
     const details = state ?? { ...unknownOrder, ...posted };
+    const rejectedBeforeAcceptance = posted?.brokerStatus === 'rejected' && posted.brokerOrderId === null
+      && posted.executedLots === 0 && (!state || state.brokerStatus === 'rejected');
     const reason = !posted || posted.brokerStatus === 'unknown' ? 'ROBOT_ORDER_SUBMISSION_UNCERTAIN'
       : posted.brokerStatus === 'partial' ? 'ROBOT_ORDER_PARTIAL'
       : posted.brokerStatus === 'rejected' ? 'ROBOT_ORDER_REJECTED'
@@ -403,16 +423,16 @@ export class Robot {
     try {
       await this.store.record(intent.id, { ...details, position: this.position, status: reason ? 'unconfirmed' : 'confirmed' });
     } catch (error) {
-      this.pauseForOrder(intent, details, reason ?? 'ROBOT_ORDER_UNRESOLVED');
+      this.pauseForOrder(intent, details, rejectedBeforeAcceptance, reason ?? 'ROBOT_ORDER_UNRESOLVED');
       throw error;
     }
-    if (reason) this.pauseForOrder(intent, details, reason);
+    if (reason) this.pauseForOrder(intent, details, rejectedBeforeAcceptance, reason);
     return !reason;
   }
 
-  private pauseForOrder(order: OrderIntent, state: BrokerOrder, reason: string) {
+  private pauseForOrder(order: OrderIntent, state: BrokerOrder, rejectedBeforeAcceptance: boolean, reason: string) {
     this.clearRun();
-    this.recovery = { order, state, verifiedPosition: null };
+    this.recovery = { order, state, rejectedBeforeAcceptance, verifiedPosition: null };
     if (this.mode !== 'stopped' || order.action === 'manual-close') this.mode = 'paused';
     this.reason = reason;
     this.publish();

@@ -462,6 +462,65 @@ test('a rejected order is reconciled without a resend and waits for explicit res
   assert.equal(submitted.length, 1);
 });
 
+test('a definitive rejection before order creation still requires the original lookup and matching account state', async () => {
+  const { robot, broker, history, setNow, setAccount } = setup();
+  const attempted: string[] = [];
+  const lookedUp: string[] = [];
+  broker.submit = async (_token, order) => {
+    attempted.push(order.id);
+    return { brokerOrderId: null, brokerStatus: 'rejected', executedLots: 0 };
+  };
+  broker.orderState = async (_token, order, brokerOrderId) => {
+    assert.equal(brokerOrderId, null);
+    lookedUp.push(order.id);
+    throw new Error('not found');
+  };
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  assert.equal(robot.status().reason, 'ROBOT_ORDER_REJECTED');
+  setAccount(1);
+  await robot.reconcile();
+  assert.equal(robot.status().reason, 'ROBOT_ORDER_POSITION_MISMATCH');
+  await assert.rejects(robot.resume(), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  setAccount(0);
+  await robot.reconcile();
+  assert.equal((await robot.history())[0].status, 'reconciled');
+  assert.deepEqual(lookedUp, Array(3).fill(attempted[0]));
+  assert.equal(attempted.length, 1);
+});
+
+test('stopping during a resume check does not discard an account mismatch or let a fresh start bypass it', async () => {
+  const { robot, broker, history, setNow, setAccount, submitted } = setup();
+  const orderState = broker.orderState;
+  broker.orderState = async () => { throw new Error('offline'); };
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  broker.orderState = orderState;
+  await robot.reconcile();
+  assert.equal(robot.status().recovery?.ready, true);
+  const checking = deferred();
+  const release = deferred();
+  const accountState = broker.accountState;
+  broker.accountState = async config => {
+    checking.resolve();
+    await release.promise;
+    return accountState(config);
+  };
+  const resumed = assert.rejects(robot.resume(), { code: 'ROBOT_POSITION_CHANGED' });
+  await checking.promise;
+  robot.stop();
+  setAccount(0);
+  release.resolve();
+  await resumed;
+  assert.equal(robot.status().mode, 'stopped');
+  assert.equal(robot.status().recovery?.ready, false);
+  assert.equal((await robot.history())[0].status, 'unconfirmed');
+  await assert.rejects(robot.start(), { code: 'ROBOT_ORDER_UNRESOLVED' });
+  assert.equal(submitted.length, 1);
+});
+
 test('partial execution blocks resume until the remainder is cancelled and fills match the position', async () => {
   const fixture = setup();
   const { robot, broker, history, setNow, setAccount, submitted } = fixture;
