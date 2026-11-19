@@ -3,7 +3,12 @@ import type { JournalEntry } from '../api/journal-api';
 import type { Dashboard } from '../api/robot-api';
 import type { ChartCandle } from '../model/market-data';
 
-async function mockMarket(page: Page, options: { failInitialHistory?: boolean; historySize?: number; blockAccountSwitch?: boolean } = {}) {
+async function mockMarket(page: Page, options: {
+  failInitialHistory?: boolean;
+  historySize?: number;
+  blockAccountSwitch?: boolean;
+  wideHistoricalDetails?: boolean;
+} = {}) {
   const instrument = { uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
     exchange: 'MOEX', expirationDate: null };
   const selection = { instrumentUid: instrument.uid, emaPeriod: 3, timeframe: '1h' };
@@ -13,7 +18,18 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
   const nextCandle = { ...candle, time: time + 3_600_000, complete: false, confirmedEma: null };
   const history = Array.from({ length: options.historySize ?? 1 }, (_, index) => ({
     ...candle, time: time - index * 3_600_000,
-  })).reverse();
+  })).reverse().map((historyCandle, index, candles) =>
+    options.wideHistoricalDetails && index < candles.length - 1
+      ? {
+          ...historyCandle,
+          open: 1_000_000_000,
+          high: 1_000_000_010,
+          low: 999_999_990,
+          close: 1_000_000_004,
+          confirmedEma: 1_000_000_002,
+        }
+      : historyCandle,
+  );
   let historyRequests = 0;
   let timeZone = 'UTC';
   let dashboard: Dashboard = { mode: 'stopped', reason: null, position: null };
@@ -116,6 +132,29 @@ const filledOrder = (candle: ChartCandle): JournalEntry => ({
 
 const chartCanvas = (page: Page) => page.getByRole('group', { name: 'График свечей' })
   .getByRole('row').first().getByRole('cell').nth(1).locator('canvas').last();
+
+test('hovering a differently wrapped historical candle keeps the plot in place', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
+  await page.setViewportSize({ width: 360, height: 800 });
+  await mockMarket(page, { historySize: 80, wideHistoricalDetails: true });
+  await page.goto('/');
+  const chart = page.getByRole('region', { name: 'Свечи и EMA' });
+  const canvas = chartCanvas(page);
+  await canvas.scrollIntoViewIfNeeded();
+  const initialBox = (await canvas.boundingBox())!;
+  const latestHeight = (await chart.getByLabel('Последняя свеча').boundingBox())!.height;
+  const position = { x: initialBox.width / 2, y: initialBox.height / 2 };
+
+  await canvas.hover({ position });
+  const historical = chart.getByLabel('Выбранная свеча');
+  await expect(historical).toContainText('1 000 000 000');
+  expect(await canvas.boundingBox()).toEqual(initialBox);
+  expect((await historical.boundingBox())!.height).toBeGreaterThan(latestHeight);
+
+  await page.mouse.move(initialBox.x, initialBox.y - 20);
+  await expect(chart.getByLabel('Последняя свеча')).toBeVisible();
+  expect(await canvas.boundingBox()).toEqual(initialBox);
+});
 
 test('starts the robot and refreshes its separate signal and fill after a live notification', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');

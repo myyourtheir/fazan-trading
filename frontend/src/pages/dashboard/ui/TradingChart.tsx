@@ -48,9 +48,6 @@ export default function TradingChart({
 
   return (
     <figure className="grid min-w-0 gap-2">
-      {selected && (
-        <CandleDetails candle={selected} hovered={Boolean(hovered)} timeLabel={formatTime(selected.time)} />
-      )}
       <div className="min-w-0 overflow-hidden rounded-md border">
         <div
           ref={container}
@@ -66,6 +63,9 @@ export default function TradingChart({
           }}
         />
       </div>
+      {selected && (
+        <CandleDetails candle={selected} hovered={Boolean(hovered)} timeLabel={formatTime(selected.time)} />
+      )}
       <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
           {candles.length} св. · Время: {timeZone} · Сплошная EMA брокера, пунктир —
