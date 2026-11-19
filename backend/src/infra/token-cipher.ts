@@ -5,7 +5,7 @@ export class TokenCipher {
 
   constructor(hexKey: string | undefined) {
     if (!hexKey || !/^[0-9a-f]{64}$/i.test(hexKey)) {
-      throw new Error('SANDBOX_TOKEN_KEY must be a 32-byte key encoded as 64 hexadecimal characters.');
+      throw new Error('SANDBOX_TOKEN_ENCRYPTION_KEY must be a 32-byte key encoded as 64 hexadecimal characters.');
     }
     this.key = Buffer.from(hexKey, 'hex');
   }

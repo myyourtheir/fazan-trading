@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 const project = `fazan-trading-test-${randomBytes(6).toString('hex')}`;
 const password = randomBytes(24).toString('hex');
 const env = { ...process.env, OWNER_PASSWORD: password, POSTGRES_PASSWORD: randomBytes(24).toString('hex'),
-  SANDBOX_TOKEN_KEY: randomBytes(32).toString('hex'), COOKIE_SECURE: 'false', FRONTEND_PORT: '0' };
+  SANDBOX_TOKEN_ENCRYPTION_KEY: randomBytes(32).toString('hex'), COOKIE_SECURE: 'false', FRONTEND_PORT: '0' };
 const cwd = fileURLToPath(new URL('..', import.meta.url));
 const compose = (...args) => execFileSync('docker', ['compose', '-p', project, ...args], {
   cwd, env, encoding: 'utf8', timeout: 180_000,

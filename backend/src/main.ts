@@ -23,7 +23,7 @@ async function main() {
   if (!['true', 'false'].includes(COOKIE_SECURE)) throw new Error('COOKIE_SECURE must be true or false.');
   const port = Number(PORT);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be a valid port number.');
-  const cipher = new TokenCipher(process.env.SANDBOX_TOKEN_KEY);
+  const cipher = new TokenCipher(process.env.SANDBOX_TOKEN_ENCRYPTION_KEY);
 
   const { db, close } = connectToPostgres(DATABASE_URL);
   try {
