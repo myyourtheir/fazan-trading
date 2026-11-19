@@ -15,7 +15,7 @@ export function AppShell() {
   return (
     <SessionGate layout={(authenticated, content) => (
       <div className="min-h-dvh">
-        <header className="border-b border-border bg-card px-4">
+        <header className="sticky top-0 z-40 border-b border-border bg-card px-4">
           <div className="mx-auto flex max-w-screen-2xl flex-wrap items-center justify-between gap-x-5 gap-y-3 py-3">
             {authenticated
               ? <Link to="/dashboard" className="text-lg font-extrabold hover:text-primary">fazan-trading</Link>

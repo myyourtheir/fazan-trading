@@ -2,6 +2,40 @@ import { expect, test } from '@playwright/test';
 
 const emptyStrategy = { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null };
 
+test('the app header stays visible while the page scrolls', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Creates deterministic overflow in the local browser.');
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.route('**/api/auth/session', route => route.fulfill({ status: 401 }));
+  await page.goto('/login');
+
+  const header = page.getByRole('banner');
+  const main = page.locator('main');
+  const theme = header.getByRole('button');
+  await expect(header).toBeVisible();
+  await expect(theme).toBeVisible();
+  const headerBefore = (await header.boundingBox())!;
+  const mainBefore = (await main.boundingBox())!;
+  expect(mainBefore.y).toBeGreaterThanOrEqual(headerBefore.y + headerBefore.height);
+
+  await page.evaluate(() => {
+    const overflow = document.createElement('div');
+    overflow.textContent = 'Конец прокручиваемого содержимого';
+    overflow.style.height = `${window.innerHeight * 3}px`;
+    document.querySelector('main')!.append(overflow);
+  });
+  const contentBefore = (await page.getByText('Конец прокручиваемого содержимого').boundingBox())!;
+  await page.evaluate(() => window.scrollTo({ top: 400 }));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(400);
+
+  const headerAfter = (await header.boundingBox())!;
+  const contentAfter = (await page.getByText('Конец прокручиваемого содержимого').boundingBox())!;
+  expect(headerAfter.y).toBe(headerBefore.y);
+  expect(contentAfter.y).toBeLessThan(contentBefore.y);
+  const darkBefore = await page.locator('html').evaluate(element => element.classList.contains('dark'));
+  await theme.click();
+  expect(await page.locator('html').evaluate(element => element.classList.contains('dark'))).toBe(!darkBefore);
+});
+
 test('the owner can enter and leave the protected dashboard', async ({ page }) => {
   const target = process.env.SERFING_E2E_URL;
   const password = target ? process.env.SERFING_E2E_PASSWORD : 'local-browser-test-password';
