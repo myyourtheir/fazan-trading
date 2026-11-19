@@ -16,8 +16,7 @@ const runErrors = {
   BACKTEST_PERIOD_TOO_LONG: 'Сократите диапазон до указанного лимита.',
   BACKTEST_CONTRACT_PERIOD: 'Диапазон выходит за период торгов выбранного контракта.',
   BACKTEST_CANDLES_MISSING: 'Не хватает завершённых свечей. Сократите или сдвиньте период.',
-  BACKTEST_EMA_MISSING: 'Брокер не вернул EMA для всех завершённых свечей. Сократите или сдвиньте период.',
-  BACKTEST_BASELINE_MISSING: 'Не удалось определить сторону EMA до начала периода. Сдвиньте начало периода.',
+  BACKTEST_WARMUP_MISSING: 'Недостаточно свечей до начала диапазона для прогрева EMA.',
   BACKTEST_HISTORY_CONFLICT: 'Данные брокера не совпали на стыке диапазонов. Сократите или сдвиньте период.',
   BACKTEST_CONTRACT_PARAMS_MISSING: 'Нет параметров контракта для пересчёта цены в деньги. Выберите другой контракт.',
   SANDBOX_OPERATION_REJECTED: 'Песочница отклонила запрос истории. Проверьте контракт и период.',
@@ -26,6 +25,16 @@ const runErrors = {
 function errorMessage(error: unknown) {
   const data = typeof error === 'object' && error && 'data' in error ? error.data : null;
   const code = typeof data === 'object' && data && 'code' in data ? data.code : undefined;
+  if (code === 'BACKTEST_WARMUP_MISSING' && data && typeof data === 'object' && 'details' in data) {
+    const details = data.details;
+    if (details && typeof details === 'object' && 'required' in details && 'available' in details && 'searchedFrom' in details
+      && typeof details.required === 'number' && typeof details.available === 'number'
+      && typeof details.searchedFrom === 'string' && Number.isFinite(Date.parse(details.searchedFrom))) {
+      return `Для EMA(${details.required}) нужно завершённых свечей до старта: ${details.required}. `
+        + `Найдено: ${details.available} (искали до ${calendarDay(details.searchedFrom)} включительно). `
+        + 'Выберите более позднюю дату начала или уменьшите период EMA.';
+    }
+  }
   return typeof code === 'string' && Object.hasOwn(runErrors, code)
     ? runErrors[code as keyof typeof runErrors] : sandboxErrorMessage(error);
 }
@@ -182,7 +191,7 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
             </fieldset>
             <p id="backtest-period" className="text-sm text-muted-foreground">
               Обе даты включительно, часовой пояс — Москва. {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
-              Доступность истории зависит от контракта и параметров EMA.
+              Для EMA нужны завершённые свечи до начала диапазона: их число равно периоду EMA.
             </p>
             <Button type="submit" className="justify-self-start" disabled={!canRun}>
               {result.isLoading ? 'Считаем…' : 'Запустить бэктест'}

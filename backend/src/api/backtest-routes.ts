@@ -39,7 +39,7 @@ export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHa
       res.json(await history.check(parameters));
     } catch (error) {
       if (!(error instanceof BacktestError)) throw error;
-      res.status(errorStatus(error)).json({ code: error.code });
+      res.status(errorStatus(error)).json({ code: error.code, details: error.details });
     }
   });
   router.post('/run', async (req, res) => {
@@ -52,7 +52,7 @@ export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHa
       res.json(await history.run(parameters));
     } catch (error) {
       if (!(error instanceof BacktestError)) throw error;
-      res.status(errorStatus(error)).json({ code: error.code });
+      res.status(errorStatus(error)).json({ code: error.code, details: error.details });
     }
   });
   return router;

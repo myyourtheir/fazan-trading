@@ -31,7 +31,9 @@ test('the owner can run a backtest without saving settings or selecting an accou
           instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-10-18', to: '2026-10-19',
           commission: 0.0123, slippage: 0,
         });
-        if (++requests === 2) return route.fulfill({ status: 422, json: { code: 'BACKTEST_EMA_MISSING' } });
+        if (++requests === 2) return route.fulfill({ status: 422, json: {
+          code: 'BACKTEST_WARMUP_MISSING', details: { required: 55, available: 42, searchedFrom: '2026-10-01' },
+        } });
         return route.fulfill({ json: {
           parameters, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
           candles: [{
@@ -85,7 +87,7 @@ test('the owner can run a backtest without saving settings or selecting an accou
   await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
   await run.click();
   // A failed rerun keeps the last successful report visible instead of passing it off as the new result.
-  await expect(page.getByText(/Брокер не вернул EMA/)).toBeVisible();
+  await expect(page.getByText(/Для EMA\(55\).*Найдено: 42.*01\.10\.2026/)).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Отчёт по стратегии' })).toBeVisible();
   // The parameters are unchanged, so the surviving report is not flagged as stale.
   await expect(page.getByText('Параметры изменены')).toHaveCount(0);

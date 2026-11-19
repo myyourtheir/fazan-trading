@@ -50,7 +50,7 @@ export function BacktestReportCard({ report, stale, dark }: {
           <Stat label="Исполнений" value={String(executions.length)} />
         </dl>
         <p className="text-sm text-muted-foreground">
-          EMA — брокерская (по закрытиям свечей). Сигнал определяется по завершённой свече, исполнение
+          EMA рассчитана по закрытиям свечей с прогревом до начала диапазона. Сигнал определяется по завершённой свече, исполнение
           {' '}моделируется по цене открытия следующей свечи внутри периода.
         </p>
         <p className="text-sm text-muted-foreground">

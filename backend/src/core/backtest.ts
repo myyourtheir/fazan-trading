@@ -23,7 +23,7 @@ export type BacktestDataset = {
   parameters: BacktestParameters;
   candles: BacktestCandle[];
   contract: ResolvedBacktestContract;
-  initialSide: Side;
+  initialSide: Side | null;
   cutoff: number | null;
 };
 
@@ -60,7 +60,7 @@ export function runBacktest({ parameters, candles, contract, initialSide, cutoff
   const slippageRate = parameters.slippage / 100;
   const commissionRate = parameters.commission / 100;
 
-  let side: Side = initialSide;
+  let side = initialSide;
   let position = 0;
   let entryPrice = 0;
   let entryCommission = 0;
@@ -110,8 +110,7 @@ export function runBacktest({ parameters, candles, contract, initialSide, cutoff
     }
 
     const next = crossing(side, candle.close, candle.ema);
-    // `side` is a strict side, so crossing keeps it strict: equality preserves the previous non-null side.
-    side = next.side as Side;
+    side = next.side;
     if (next.direction !== null) {
       const targetPosition = next.direction * parameters.lots;
       const delta = positionDelta(position, targetPosition);

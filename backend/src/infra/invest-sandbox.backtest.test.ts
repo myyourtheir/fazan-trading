@@ -24,38 +24,16 @@ test('sandbox supports the requested historical coverage and exposes futures pri
   assert.ok(contract.priceStep && contract.priceStep > 0);
   assert.ok(contract.priceStepAmount && contract.priceStepAmount > 0);
   const timeframes = Object.keys(timeframeMs) as (keyof typeof timeframeMs)[];
-  const seamOverlaps = new Map<string, number>();
+  const history = new BacktestHistory(broker, async () => token);
   for (const timeframe of timeframes) {
     for (const emaPeriod of [5, 55, backtestLimits.maxEmaPeriod]) {
       await t.test(`${timeframe} / EMA ${emaPeriod} / ${from}–${lastDate}`, async sample => {
-        const samples = new Map<number, number>();
-        const history = new BacktestHistory({
-          candles: broker.candles.bind(broker),
-          backtestFuture: broker.backtestFuture.bind(broker),
-          async ema(...args) {
-            const points = await broker.ema(...args);
-            for (const time of new Set(points.map(point => point.time))) {
-              samples.set(time, (samples.get(time) ?? 0) + 1);
-            }
-            return points;
-          },
-        }, async () => token);
         const result = await history.check({ instrumentUid, timeframe, emaPeriod, lots: 1, from, to: lastDate, commission: 0, slippage: 0 });
         assert.equal(result.cutoff, null, 'Use a final date that has already ended in Moscow');
-        // A seam value read in more than one chunk proves the overlap was real and that its values
-        // agreed (check merges them with a tolerance). A seam on a session close or a weekend has no
-        // overlapping candle, which is a pause, not missing data.
-        const overlaps = result.candles.filter(bar => (samples.get(bar.time) ?? 0) > 1).length;
-        seamOverlaps.set(timeframe, (seamOverlaps.get(timeframe) ?? 0) + overlaps);
-        sample.diagnostic(`Matched ${result.candles.length} completed candles; ${overlaps} seam overlaps`);
+        assert.ok(result.candles.every((bar, index, rows) =>
+          bar.complete && Number.isFinite(bar.ema) && (index === 0 || rows[index - 1].time < bar.time)));
+        sample.diagnostic(`Loaded ${result.candles.length} completed candles with locally calculated EMA`);
       });
     }
-  }
-  // The 5-minute seam always lands on the session close (23:50 MSK), so it can never overlap; every
-  // other timeframe must exercise the seam-consistency merge on a trading day.
-  for (const timeframe of timeframes) {
-    if (timeframe === '5m') continue;
-    assert.ok((seamOverlaps.get(timeframe) ?? 0) > 0, `No seam overlap for ${timeframe}. Choose `
-      + 'SERFING_TEST_BACKTEST_TO so the in-period seam (two days before it, in the evening) falls on a trading day.');
   }
 });

@@ -13,6 +13,8 @@ const form = { instrumentUid: 'future', emaPeriod: 55, lots: 3, timeframe: '1h',
 const candle = (time: number, close: number, complete = true) => ({
   time, open: close, high: close, low: close, close, complete,
 });
+const warmup = (last: number) => Array.from({ length: form.emaPeriod }, (_, index) =>
+  candle(start - (form.emaPeriod - index) * hour, index === 0 ? 200 - last : index === form.emaPeriod - 1 ? last : 100));
 
 async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * hour) {
   const sessions = new Map<string, Date>();
@@ -50,9 +52,8 @@ async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * 
 }
 
 function data() {
-  const candles = [candle(start - hour, 99), candle(start, 101), candle(start + 12 * hour, 103),
+  const candles = [...warmup(99), candle(start, 101), candle(start + 12 * hour, 103),
     candle(start + 24 * hour, 105)];
-  const ema = candles.map(({ time }) => ({ time, value: 100 })).reverse();
   const calls: [number, number][] = [];
   const broker: BacktestBroker = {
     async backtestFuture() {
@@ -63,12 +64,8 @@ function data() {
       calls.push([+from, +to]);
       return candles.filter(({ time }) => time >= +from && time <= +to).reverse();
     },
-    async ema(_token, _uid, _timeframe, period, from, to) {
-      assert.equal(period, 55);
-      return ema.filter(({ time }) => time >= +from && time <= +to);
-    },
   };
-  return { broker, calls, candles, ema };
+  return { broker, calls, candles };
 }
 
 test('only the owner can check a bounded Moscow period independently of the robot or account', async t => {
@@ -93,38 +90,33 @@ test('only the owner can check a bounded Moscow period independently of the robo
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.parameters, form);
   assert.equal(response.body.cutoff, null);
+  const firstEma = 100 + 1 / 28;
   assert.deepEqual(response.body.candles, [
-    { ...candle(start, 101), ema: 100 }, { ...candle(start + 12 * hour, 103), ema: 100 },
+    { ...candle(start, 101), ema: firstEma },
+    { ...candle(start + 12 * hour, 103), ema: firstEma + (103 - firstEma) / 28 },
   ]);
-  assert.equal(calls.at(-1)?.[1], start + 24 * hour);
+  assert.ok(calls.some(([, to]) => to === start + 24 * hour));
 });
 
-test('overlapping pages do not duplicate candles or bridge a gap in broker data', async t => {
-  const { broker, calls, candles, ema } = data();
-  const boundary = start + (5 * 24 - 1) * hour;
+test('overlapping pages do not duplicate candles or reset the EMA', async t => {
+  const { broker, calls, candles } = data();
+  const boundary = start + (6 * 24 - 1) * hour;
   candles.push(candle(boundary, 109));
-  ema.push({ time: boundary, value: 100 });
   const { request, authorize } = await serve(t, broker, start + 8 * 24 * hour);
   const cookie = await authorize();
   const query = { ...form, to: '2026-11-24' };
   const success = await request('backtest/history', query, cookie);
   assert.equal(success.status, 200);
-  assert.equal(success.body.candles.filter((row: { time: number }) => row.time === boundary).length, 1);
+  const rows = success.body.candles as { time: number; ema: number }[];
+  assert.deepEqual(rows.map(row => row.time), [start, start + 12 * hour, start + 24 * hour, boundary]);
+  assert.equal(rows[3].ema, rows[2].ema + (109 - rows[2].ema) / 28);
   assert.ok(calls.filter(([from, to]) => from <= boundary && boundary <= to).length > 1);
 
-  ema.splice(ema.findIndex(row => row.time === boundary), 1);
-  assert.equal((await request('backtest/history', query, cookie)).body.code, 'BACKTEST_EMA_MISSING');
-  ema.push({ time: boundary, value: 100 });
-  candles.splice(candles.findIndex(row => row.time === boundary), 1);
-  assert.equal((await request('backtest/history', query, cookie)).body.code, 'BACKTEST_CANDLES_MISSING');
-
-  candles[0] = candle(start - hour, 100);
-  assert.equal((await request('backtest/history', form, cookie)).body.code, 'BACKTEST_BASELINE_MISSING');
-  assert.equal((await request('backtest/history', { ...form, from: '2026-11-24', to: '2026-11-24' }, cookie)).body.code,
+  assert.equal((await request('backtest/history', { ...form, from: '2026-11-25', to: '2026-11-25' }, cookie)).body.code,
     'BACKTEST_CANDLES_MISSING');
 });
 
-test('an expired contract or conflicting EMA cannot produce a successful check', async t => {
+test('an expired contract or conflicting candles cannot produce a successful check', async t => {
   const { broker } = data();
   const getFuture = broker.backtestFuture;
   broker.backtestFuture = async (...args) => ({ ...await getFuture(...args), lastTrade: new Date(start - hour) });
@@ -135,53 +127,67 @@ test('an expired contract or conflicting EMA cannot produce a successful check',
   assert.equal(expired.body.code, 'BACKTEST_CONTRACT_PERIOD');
 
   broker.backtestFuture = getFuture;
-  const readEma = broker.ema;
-  const overlap = start + (5 * 24 - 1) * hour;
-  broker.ema = async (...args) => {
-    const points = await readEma(...args);
-    const [, , , , from, to] = args;
-    if (+from <= overlap && overlap <= +to) points.push({ time: overlap, value: 100 + Number(+from > start) });
-    return points;
+  const readCandles = broker.candles;
+  const overlap = start + (6 * 24 - 1) * hour;
+  broker.candles = async (...args) => {
+    const bars = await readCandles(...args);
+    const [, , , from, to] = args;
+    if (+from <= overlap && overlap <= +to) bars.push(candle(overlap, 100 + Number(+from > start)));
+    return bars;
   };
   const conflict = await request('backtest/history', { ...form, to: '2026-11-24' }, cookie);
   assert.equal(conflict.status, 422);
   assert.equal(conflict.body.code, 'BACKTEST_HISTORY_CONFLICT');
 });
 
-test('EMA values that differ only by float rounding at a chunk seam do not conflict', async t => {
-  const { broker, candles } = data();
-  const boundary = start + (5 * 24 - 1) * hour;
-  candles.push(candle(boundary, 109));
-  const readEma = broker.ema;
-  broker.ema = async (...args) => {
-    const points = await readEma(...args);
-    const [, , , , from, to] = args;
-    // GetTechAnalysis recomputes EMA from its own start, so the same seam time can come back a few ulps apart.
-    if (+from <= boundary && boundary <= +to) {
-      points.push({ time: boundary, value: 2459.314608 + Number(+from > start) * 1e-6 });
-    }
-    return points;
-  };
-  const { request, authorize } = await serve(t, broker, start + 8 * 24 * hour);
+test('warmup searches beyond seven days and uses only the nearest distinct completed candles', async t => {
+  const { broker, candles, calls } = data();
+  const day = 24 * hour;
+  candles.splice(0, candles.length,
+    candle(start - 9 * day, 999), candle(start - 8 * day, 120),
+    candle(start - 6 * day + hour, 90), candle(start - hour, 90),
+    candle(start - 2 * hour, 999, false), candle(start, 110));
+  const { request, authorize } = await serve(t, broker);
   const cookie = await authorize();
-  const response = await request('backtest/history', { ...form, to: '2026-11-24' }, cookie);
+  const response = await request('backtest/history', { ...form, emaPeriod: 3 }, cookie);
   assert.equal(response.status, 200);
-  assert.equal(response.body.candles.filter((row: { time: number }) => row.time === boundary).length, 1);
+  assert.deepEqual(response.body.candles, [{ ...candle(start, 110), ema: 105 }]);
+  assert.equal(calls.length, 3);
+});
+
+test('insufficient warmup stops at the contract start or the one-year limit and reports the actual count', async t => {
+  const { broker, candles, calls } = data();
+  candles.push(candle(start - 5_000 * hour, 100));
+  const getFuture = broker.backtestFuture;
+  broker.backtestFuture = async (...args) => ({ ...await getFuture(...args), firstTrade: new Date(start - 48 * hour) });
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const insufficient = await request('backtest/run', form, cookie);
+  assert.equal(insufficient.status, 422);
+  assert.deepEqual(insufficient.body, { code: 'BACKTEST_WARMUP_MISSING',
+    details: { required: 55, available: 48, searchedFrom: '2026-11-16' } });
+  assert.equal(Math.min(...calls.map(([from]) => from)), start - 48 * hour);
+
+  broker.backtestFuture = getFuture;
+  calls.length = 0;
+  const bounded = await request('backtest/history', { ...form, emaPeriod: 1000 }, cookie);
+  assert.equal(bounded.status, 422);
+  assert.deepEqual(bounded.body, { code: 'BACKTEST_WARMUP_MISSING',
+    details: { required: 1000, available: 56, searchedFrom: '2025-11-18' } });
+  assert.equal(Math.min(...calls.map(([from]) => from)), start - 365 * 24 * hour);
 });
 
 test('today reports the effective cutoff and does not treat a forming candle as history', async t => {
-  const { broker, candles, ema } = data();
+  const { broker, candles } = data();
   const current = start + 13 * hour;
   const cutoff = current + hour / 2;
   candles.push(candle(current - 2 * hour, 102, false), candle(current, 104, false));
-  ema.push({ time: current, value: 100 }, { time: current - 2 * hour, value: 100 });
   const { request, authorize } = await serve(t, broker, cutoff);
   const cookie = await authorize();
   const incomplete = await request('backtest/history', form, cookie);
   assert.equal(incomplete.status, 422);
   assert.equal(incomplete.body.code, 'BACKTEST_CANDLES_MISSING');
   candles.splice(candles.findIndex(bar => bar.time === current - 2 * hour), 1);
-  ema.splice(ema.findIndex(point => point.time === current - 2 * hour), 1);
   const result = await request('backtest/history', form, cookie);
   assert.equal(result.status, 200);
   assert.equal(result.body.cutoff, cutoff);
@@ -192,18 +198,17 @@ function runCandle(time: number, open: number, close: number, complete = true) {
   return { time, open, high: Math.max(open, close), low: Math.min(open, close), close, complete };
 }
 
-// A period with a constant EMA at 100 and closes that cross it up, down, touch, then cross up again.
+// The EMA starts at 100; closes cross it up, down, and then up again.
 function runData() {
   const bars = [
-    runCandle(start - hour, 89, 90),          // baseline below the EMA
+    ...warmup(90),                           // baseline below the EMA
     runCandle(start, 100, 105),               // crossing up
     runCandle(start + hour, 101, 98),         // crossing down
-    runCandle(start + 2 * hour, 103, 100),    // touch, keeps the short side
+    runCandle(start + 2 * hour, 103, 100),    // stays below the EMA
     runCandle(start + 3 * hour, 104, 95),
     runCandle(start + 4 * hour, 97, 110),     // crossing up again
     runCandle(start + 5 * hour, 112, 112),
   ];
-  const ema = bars.map(({ time }) => ({ time, value: 100 }));
   const broker: BacktestBroker = {
     async backtestFuture() {
       return { firstTrade: undefined, lastTrade: undefined, currency: 'rub', priceStep: 0.5, priceStepAmount: 5, lot: 1 };
@@ -211,16 +216,13 @@ function runData() {
     async candles(_token, _uid, _timeframe, from, to) {
       return bars.filter(({ time }) => time >= +from && time <= +to).reverse();
     },
-    async ema(_token, _uid, _timeframe, _period, from, to) {
-      return ema.filter(({ time }) => time >= +from && time <= +to);
-    },
   };
   return { broker, bars };
 }
 
 test('running the backtest reports executions and money without touching the robot or account', async t => {
   const { broker } = runData();
-  // The run goes through BacktestBroker (candles/ema/backtestFuture only): the fake has no order,
+  // The run goes through BacktestBroker (candles/backtestFuture only): the fake has no order,
   // stream, robot, or journal methods, so a successful report here proves none were used.
   const { request, authorize } = await serve(t, broker);
   assert.equal((await request('backtest/run', form)).status, 401);
@@ -242,28 +244,34 @@ test('running the backtest reports executions and money without touching the rob
   assert.ok(!JSON.stringify(body).includes('private-test-token'));
 });
 
-test('a complete period without crossings yields a report with zero executions', async t => {
-  const { broker, bars } = runData();
-  const flat = bars.map(bar => ({ ...bar, close: 90 }));
-  const ema = bars.map(({ time }) => ({ time, value: 100 }));
-  broker.candles = async (_token, _uid, _timeframe, from, to) =>
-    flat.filter(({ time }) => time >= +from && time <= +to).reverse();
-  broker.ema = async (_token, _uid, _timeframe, _period, from, to) =>
-    ema.filter(({ time }) => time >= +from && time <= +to);
+test('EMA(1) equals the close and yields zero executions', async t => {
+  const { broker } = runData();
   const { request, authorize } = await serve(t, broker);
   const cookie = await authorize();
-  const response = await request('backtest/run', form, cookie);
+  const response = await request('backtest/run', { ...form, emaPeriod: 1 }, cookie);
   assert.equal(response.status, 200);
+  assert.ok(response.body.candles.every((row: { close: number; ema: number }) => row.close === row.ema));
   assert.deepEqual(response.body.executions, []);
   assert.deepEqual(response.body.result, { closed: 0, open: 0, total: 0, position: 0, maxDrawdown: 0 });
+});
+
+test('with no strict warmup side, the first strict close establishes it without a signal', async t => {
+  const { broker, candles } = data();
+  candles.splice(0, candles.length, candle(start - 2 * hour, 100), candle(start - hour, 100),
+    candle(start, 105), candle(start + hour, 95), candle(start + 2 * hour, 95));
+  const { request, authorize } = await serve(t, broker);
+  const cookie = await authorize();
+  const response = await request('backtest/run', { ...form, emaPeriod: 2 }, cookie);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.executions, [
+    { time: start + 2 * hour, direction: 'sell', lots: 3, price: 95, commission: 0 },
+  ]);
 });
 
 test('a signal on the final candle is reported without an execution', async t => {
   const { broker, bars } = runData();
   broker.candles = async (_token, _uid, _timeframe, from, to) =>
-    bars.slice(0, 3).filter(({ time }) => time >= +from && time <= +to).reverse();
-  broker.ema = async (_token, _uid, _timeframe, _period, from, to) =>
-    bars.slice(0, 3).map(({ time }) => ({ time, value: 100 })).filter(({ time }) => time >= +from && time <= +to);
+    bars.filter(({ time }) => time >= +from && time <= +to && time <= start + hour).reverse();
   const { request, authorize } = await serve(t, broker);
   const cookie = await authorize();
   const response = await request('backtest/run', form, cookie);
@@ -286,23 +294,19 @@ test('a contract without money parameters cannot produce a money report', async 
 // An entry, a full reversal to the other side, and an open remainder at the last close.
 function costData() {
   const bars = [
-    runCandle(start - hour, 89, 90),          // baseline below the EMA
+    ...warmup(90),                           // baseline below the EMA
     runCandle(start, 100, 105),               // crossing up
     runCandle(start + hour, 101, 98),         // crossing down -> reverse
     runCandle(start + 2 * hour, 103, 95),
     runCandle(start + 3 * hour, 99, 97),
     runCandle(start + 4 * hour, 96, 94),      // remainder stays short
   ];
-  const ema = bars.map(({ time }) => ({ time, value: 100 }));
   const broker: BacktestBroker = {
     async backtestFuture() {
       return { firstTrade: undefined, lastTrade: undefined, currency: 'rub', priceStep: 0.5, priceStepAmount: 5, lot: 1 };
     },
     async candles(_token, _uid, _timeframe, from, to) {
       return bars.filter(({ time }) => time >= +from && time <= +to).reverse();
-    },
-    async ema(_token, _uid, _timeframe, _period, from, to) {
-      return ema.filter(({ time }) => time >= +from && time <= +to);
     },
   };
   return { broker, bars };
