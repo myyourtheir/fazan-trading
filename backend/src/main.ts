@@ -3,11 +3,12 @@ import { createServer } from 'node:http';
 import { createApp } from './api/app.js';
 import { OwnerAuth } from './core/auth.js';
 import { BacktestHistory } from './core/backtest-history.js';
+import { DisplaySettings } from './core/display-settings.js';
 import { InvestSandbox } from './infra/invest-sandbox.js';
 import { MarketData } from './core/market-data.js';
 import { attachMarketSocket } from './api/market-socket.js';
 import {
-  connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings, PostgresTradingStore,
+  connectToPostgres, migrateDatabase, PostgresDisplaySettings, PostgresSandboxConnection, PostgresSessions, PostgresStrategySettings, PostgresTradingStore,
 } from './infra/postgres.js';
 import { Robot, RobotError } from './core/robot.js';
 import { SandboxConnection } from './core/sandbox.js';
@@ -52,6 +53,7 @@ async function main() {
     server.on('request', createApp({
       auth, market, marketSocket, robot, backtest, secureCookies: COOKIE_SECURE === 'true',
       settings: { sandbox, strategy, change: action => robot.changeSettings(action) },
+      displaySettings: new DisplaySettings(new PostgresDisplaySettings(db)),
     }));
     server.listen(port, HOST);
     await once(server, 'listening');

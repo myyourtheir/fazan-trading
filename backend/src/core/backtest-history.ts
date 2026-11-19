@@ -1,3 +1,4 @@
+import { Temporal } from '@js-temporal/polyfill';
 import type { MarketBroker, MarketCandle } from './market-data.js';
 import { timeframeMs } from './timeframe.js';
 import { runBacktest, type BacktestContract, type BacktestDataset, type BacktestParameters, type BacktestReport, type BacktestCandle } from './backtest.js';
@@ -7,9 +8,6 @@ const dayMs = 86_400_000;
 const maxChunkMs = 6 * dayMs;
 const maxWarmupMs = 365 * dayMs;
 export const backtestLimits = { maxDays: 30, maxEmaPeriod: 1000 };
-
-const moscowDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Moscow', dateStyle: 'short' });
-const moscowOffset = new Intl.DateTimeFormat('en', { timeZone: 'Europe/Moscow', timeZoneName: 'longOffset' });
 
 export interface BacktestBroker extends Pick<MarketBroker, 'candles'> {
   backtestFuture(token: string, uid: string): Promise<{
@@ -34,18 +32,11 @@ export class BacktestError extends Error {
 
 function parseDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BacktestError('INVALID_REQUEST');
-  const parsed = new Date(`${value}T00:00:00Z`);
-  if (!Number.isFinite(+parsed) || parsed.toISOString().slice(0, 10) !== value) {
+  try {
+    return Temporal.PlainDate.from(value);
+  } catch {
     throw new BacktestError('INVALID_REQUEST');
   }
-  return +parsed;
-}
-
-function moscowMidnight(calendarDay: number) {
-  const date = new Date(calendarDay).toISOString().slice(0, 10);
-  const offset = moscowOffset.formatToParts(calendarDay).find(part => part.type === 'timeZoneName')?.value;
-  // Since 2014 Moscow is UTC+3; use the IANA offset rather than applying that to earlier history.
-  return Date.parse(`${date}T00:00:00${offset?.slice(3) || 'Z'}`);
 }
 
 function mergeCandle(entries: Map<number, MarketCandle>, candle: MarketCandle) {
@@ -83,22 +74,28 @@ export class BacktestHistory {
   }
 
   private async gather(parameters: BacktestParameters): Promise<RawBacktestDataset> {
+    const { timeZone } = parameters;
     const fromDay = parseDate(parameters.from);
     const toDay = parseDate(parameters.to);
-    const from = moscowMidnight(fromDay);
-    const to = moscowMidnight(toDay + dayMs);
     const now = this.now();
-    if (!Number.isFinite(from) || !Number.isFinite(to) || fromDay > toDay || parameters.to > moscowDate.format(now)) {
+    const localDay = (time: number) => Temporal.Instant.fromEpochMilliseconds(time).toZonedDateTimeISO(timeZone).toPlainDate();
+    const startOfDay = (day: Temporal.PlainDate) => day.toZonedDateTime(timeZone).epochMilliseconds;
+    const days = fromDay.until(toDay).days + 1;
+    if (days < 1 || Temporal.PlainDate.compare(toDay, localDay(now)) > 0) {
       throw new BacktestError('INVALID_REQUEST');
     }
-    if ((toDay - fromDay) / dayMs + 1 > backtestLimits.maxDays) throw new BacktestError('BACKTEST_PERIOD_TOO_LONG');
+    if (days > backtestLimits.maxDays) throw new BacktestError('BACKTEST_PERIOD_TOO_LONG');
+    const from = startOfDay(fromDay);
+    // Calendar days can be shorter or longer than 24 hours, and midnight itself can be skipped.
+    const to = startOfDay(toDay.add({ days: 1 }));
+    if (from >= to) throw new BacktestError('INVALID_REQUEST');
 
     const { instrumentUid, timeframe, emaPeriod } = parameters;
     const token = await this.loadToken();
     const contract = await this.broker.backtestFuture(token, instrumentUid);
-    const firstTradeDay = contract.firstTrade && moscowDate.format(contract.firstTrade);
-    if ((firstTradeDay && parameters.from < firstTradeDay)
-      || (contract.lastTrade && parameters.to > moscowDate.format(contract.lastTrade))) {
+    const firstTradeDay = contract.firstTrade && localDay(+contract.firstTrade);
+    if ((firstTradeDay && Temporal.PlainDate.compare(fromDay, firstTradeDay) < 0)
+      || (contract.lastTrade && Temporal.PlainDate.compare(toDay, localDay(+contract.lastTrade)) > 0)) {
       throw new BacktestError('BACKTEST_CONTRACT_PERIOD');
     }
     const interval = timeframeMs[timeframe];
@@ -123,7 +120,7 @@ export class BacktestHistory {
       throw new BacktestError('BACKTEST_CANDLES_MISSING');
     }
 
-    const earliest = Math.max(from - maxWarmupMs, firstTradeDay ? moscowMidnight(parseDate(firstTradeDay)) : -Infinity);
+    const earliest = Math.max(from - maxWarmupMs, firstTradeDay ? startOfDay(firstTradeDay) : -Infinity);
     const before = new Map<number, MarketCandle>();
     for (let stop = from; stop > earliest && before.size < emaPeriod;) {
       const start = Math.max(stop - maxChunkMs, earliest);
@@ -138,7 +135,7 @@ export class BacktestHistory {
     }
     if (before.size < emaPeriod) {
       throw new BacktestError('BACKTEST_WARMUP_MISSING', {
-        required: emaPeriod, available: before.size, searchedFrom: moscowDate.format(earliest),
+        required: emaPeriod, available: before.size, searchedFrom: localDay(earliest).toString(),
       });
     }
 

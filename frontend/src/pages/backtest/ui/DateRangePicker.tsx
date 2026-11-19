@@ -1,36 +1,36 @@
 import { ru } from 'date-fns/locale';
 import { useState } from 'react';
 import { Button, Calendar, Popover, PopoverContent, PopoverTrigger } from '@/shared/ui';
+import { calendarDay } from '../lib/calendar-day';
 
-// Wire days are pure Moscow calendar dates ("YYYY-MM-DD"); the picker holds local-midnight dates,
-// so the grid marks the same day in any browser timezone.
-const parseDay = (day: string) =>
-  new Date(Number(day.slice(0, 4)), Number(day.slice(5, 7)) - 1, Number(day.slice(8, 10)));
+// The grid uses UTC as a neutral representation of date-only labels, not as the backtest range.
+// Only "today" needs an instant-to-date conversion here; the server resolves the actual boundaries.
+const parseDay = (day: string) => new Date(`${day}T00:00:00Z`);
 const toDay = (date: Date) =>
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-const dayLabel = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
-export function DateRangePicker({ id, from, to, describedBy, onChange }: {
-  id: string; from: string; to: string; describedBy: string;
+export function DateRangePicker({ id, from, to, describedBy, timeZone, onChange }: {
+  id: string; from: string; to: string; describedBy: string; timeZone: string | undefined;
   onChange: (from: string, to: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(() => new Date());
+  const [month, setMonth] = useState<Date>();
+  const today = timeZone ? parseDay(new Intl.DateTimeFormat('sv-SE', { timeZone, dateStyle: 'short' }).format(Date.now())) : undefined;
   // react-day-picker completes a single-day range on the first click, so a period is shown once
   // both wire days are set.
   const caption = !from ? 'Выберите период'
-    : from === to ? dayLabel.format(parseDay(from))
-      : `${dayLabel.format(parseDay(from))} — ${dayLabel.format(parseDay(to))}`;
+    : from === to ? calendarDay(from)
+      : `${calendarDay(from)} — ${calendarDay(to)}`;
   return (
     <Popover open={open} onOpenChange={nextOpen => {
       if (nextOpen) {
         const selectedDay = to || from;
-        setMonth(selectedDay ? parseDay(selectedDay) : new Date());
+        setMonth(selectedDay ? parseDay(selectedDay) : undefined);
       }
       setOpen(nextOpen);
     }}>
       <PopoverTrigger render={
-        <Button id={id} variant="outline" aria-describedby={describedBy}
+        <Button id={id} variant="outline" aria-describedby={describedBy} disabled={!today}
           className="w-full justify-between font-normal" />
       }>
         {caption}
@@ -38,8 +38,11 @@ export function DateRangePicker({ id, from, to, describedBy, onChange }: {
       <PopoverContent align="start" className="w-auto">
         <Calendar
           locale={ru}
+          timeZone="UTC"
+          today={today}
+          disabled={today ? { after: today } : undefined}
           mode="range"
-          month={month}
+          month={month ?? today}
           onMonthChange={setMonth}
           selected={{ from: from ? parseDay(from) : undefined, to: to ? parseDay(to) : undefined }}
           onSelect={range => {

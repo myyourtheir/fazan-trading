@@ -1,10 +1,18 @@
 import { skipToken } from '@reduxjs/toolkit/query/react';
+import { useMemo } from 'react';
+import { useDisplayTimeZone } from '@/shared/api';
+import { displayTimeFormatter } from '@/shared/lib/display-time';
 import { Alert, AlertTitle, Card, CardContent, CardHeader, CardTitle } from '@/shared/ui';
 import { journalApi } from '../api/journal-api';
 import { JournalOrder } from './JournalOrder';
 
 export function ExecutionJournal({ accountId }: { accountId: string | null }) {
   const journal = journalApi.useJournalQuery(accountId ?? skipToken, { refetchOnFocus: true, refetchOnReconnect: true });
+  const timeZone = useDisplayTimeZone();
+  const formatTime = useMemo(() => {
+    const format = displayTimeFormatter(timeZone, true);
+    return (time: number | null) => time === null ? '—' : format(time);
+  }, [timeZone]);
   return (
     <Card role="region" aria-labelledby="journal-title" className="min-w-0">
       <CardHeader><CardTitle><h2 id="journal-title">Журнал заявок и исполнений</h2></CardTitle></CardHeader>
@@ -13,7 +21,7 @@ export function ExecutionJournal({ accountId }: { accountId: string | null }) {
         {accountId && journal.isFetching && !journal.currentData && <p role="status">Загружаем журнал…</p>}
         {journal.isError && <Alert variant="destructive"><AlertTitle>Не удалось загрузить журнал.</AlertTitle></Alert>}
         {journal.currentData?.length === 0 && <p className="text-sm text-muted-foreground">Заявок пока нет.</p>}
-        {journal.currentData?.map(order => <JournalOrder key={order.id} order={order} />)}
+        {journal.currentData?.map(order => <JournalOrder key={order.id} order={order} formatTime={formatTime} />)}
       </CardContent>
     </Card>
   );

@@ -2,7 +2,7 @@ import { skipToken } from '@reduxjs/toolkit/query/react';
 import { useEffect, useState } from 'react';
 import { sandboxErrorMessage } from '@/entities/sandbox';
 import { FuturesSearchForm, strategyApi, timeframeLabels, timeframes, type BacktestDraft, type Timeframe } from '@/entities/strategy';
-import { hasStatus } from '@/shared/api';
+import { hasStatus, useDisplayTimeZoneSettings } from '@/shared/api';
 import {
   Alert, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field,
   FieldGroup, FieldLabel, Input, NativeSelect, NativeSelectOption,
@@ -14,6 +14,7 @@ import { DateRangePicker } from './DateRangePicker';
 
 const runErrors = {
   BACKTEST_PERIOD_TOO_LONG: 'Сократите диапазон до указанного лимита.',
+  INVALID_REQUEST: 'Проверьте параметры и даты прогона в выбранном часовом поясе.',
   BACKTEST_CONTRACT_PERIOD: 'Диапазон выходит за период торгов выбранного контракта.',
   BACKTEST_CANDLES_MISSING: 'Не хватает завершённых свечей. Сократите или сдвиньте период.',
   BACKTEST_WARMUP_MISSING: 'Недостаточно свечей до начала диапазона для прогрева EMA.',
@@ -42,7 +43,7 @@ function errorMessage(error: unknown) {
 function sameParameters(a: BacktestParameters, b: BacktestParameters) {
   return a.instrumentUid === b.instrumentUid && a.timeframe === b.timeframe && a.emaPeriod === b.emaPeriod
     && a.lots === b.lots && a.from === b.from && a.to === b.to
-    && a.commission === b.commission && a.slippage === b.slippage;
+    && a.commission === b.commission && a.slippage === b.slippage && a.timeZone === b.timeZone;
 }
 
 function isNonNegativeCost(value: string) {
@@ -66,6 +67,7 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
   const futures = strategyApi.useSearchFuturesQuery(query || skipToken);
   const strategy = strategyApi.useStrategyQuery();
   const limits = backtestApi.useBacktestLimitsQuery();
+  const { settings: displaySettings, timeZone } = useDisplayTimeZoneSettings();
   const [run, result] = backtestApi.useRunBacktestMutation();
   const [lastReport, setLastReport] = useState<BacktestReport | null>(null);
 
@@ -73,8 +75,10 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
   const selected = contracts.find(contract => contract.uid === instrumentUid);
   const errors = futures.error ?? strategy.error ?? limits.error ?? result.error;
   useEffect(() => {
-    if ([futures.error, strategy.error, limits.error, result.error].some(error => hasStatus(error, 401))) refreshSession();
-  }, [futures.error, strategy.error, limits.error, result.error, refreshSession]);
+    if ([futures.error, strategy.error, limits.error, result.error, displaySettings.error].some(error => hasStatus(error, 401))) {
+      refreshSession();
+    }
+  }, [futures.error, strategy.error, limits.error, result.error, displaySettings.error, refreshSession]);
 
   // A draft snapshot takes precedence; otherwise a direct entry or refresh starts from the last saved settings.
   useEffect(() => {
@@ -88,13 +92,13 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
   }, [strategy.data, initialDraft]);
 
   const currentParameters = (): BacktestParameters | null => {
-    if (!selected) return null;
+    if (!selected || !timeZone) return null;
     const ema = Number(emaPeriod);
     const lot = Number(lots);
     if (!Number.isInteger(ema) || ema < 1 || !Number.isInteger(lot) || lot < 1 || !from || !to) return null;
     if (!isNonNegativeCost(commission) || !isNonNegativeCost(slippage)) return null;
     return {
-      instrumentUid: selected.uid, timeframe, emaPeriod: ema, lots: lot, from, to,
+      instrumentUid: selected.uid, timeframe, emaPeriod: ema, lots: lot, from, to, timeZone,
       commission: Number(commission), slippage: Number(slippage),
     };
   };
@@ -105,8 +109,9 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
   })();
 
   const submit = async () => {
-    const parameters = currentParameters();
-    if (!parameters) return;
+    const current = currentParameters();
+    if (!current) return;
+    const { timeZone: _timeZone, ...parameters } = current;
     try {
       setLastReport(await run(parameters).unwrap());
     } catch {
@@ -175,6 +180,7 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
                 <Field>
                   <FieldLabel htmlFor="backtest-range">Диапазон дат</FieldLabel>
                   <DateRangePicker id="backtest-range" describedBy="backtest-period" from={from} to={to}
+                    timeZone={timeZone}
                     onChange={(nextFrom, nextTo) => { setFrom(nextFrom); setTo(nextTo); }} />
                 </Field>
                 <Field>
@@ -190,9 +196,17 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
               </FieldGroup>
             </fieldset>
             <p id="backtest-period" className="text-sm text-muted-foreground">
-              Обе даты включительно, часовой пояс — Москва. {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
+              Обе даты включительно. {timeZone && `Часовой пояс — ${timeZone}. `}
+              {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
               Для EMA нужны завершённые свечи до начала диапазона: их число равно периоду EMA.
             </p>
+            {displaySettings.isError && <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="text-sm">Не удалось загрузить часовой пояс.</p>
+              <Button type="button" size="sm" variant="outline" onClick={() => void displaySettings.refetch()}>Повторить загрузку</Button>
+            </div>}
+            {displaySettings.data && !timeZone && <p role="alert" className="text-sm">
+              Браузер не поддерживает {displaySettings.data.timeZone}. Обновите браузер или выберите другой пояс в настройках.
+            </p>}
             <Button type="submit" className="justify-self-start" disabled={!canRun}>
               {result.isLoading ? 'Считаем…' : 'Запустить бэктест'}
             </Button>

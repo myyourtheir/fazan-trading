@@ -10,12 +10,10 @@ const orderStatuses: Record<JournalEntry['status'], string> = {
   'feed-lost-before-send': 'Поток потерян до отправки',
   'account-check-failed-before-send': 'Счёт не прошёл проверку до отправки',
 };
-const date = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'medium', timeZone: 'UTC' });
 const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 9 });
-const formatTime = (time: number | null) => time === null ? '—' : `${date.format(time)} UTC`;
 const formatPrice = (price: number | null) => price === null ? '—' : number.format(price);
 
-export function JournalOrder({ order }: { order: JournalEntry }) {
+export function JournalOrder({ order, formatTime }: { order: JournalEntry; formatTime: (time: number | null) => string }) {
   const direction = order.direction === 'buy' ? 'Покупка' : 'Продажа';
   const manual = order.action === 'manual-close';
   return (

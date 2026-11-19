@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
+import { DisplaySettings } from '../core/display-settings.js';
 import { createApp } from './app.js';
 
 const password = 'test-owner-password';
@@ -18,7 +19,12 @@ async function setup(t: TestContext, secureCookies = false) {
     async revoke(digest) { store.delete(digest); },
   };
   const auth = await OwnerAuth.create(password, sessions, { now: () => now, ttlMs: 10_000 });
-  const server = createApp({ auth, secureCookies }).listen(0, '127.0.0.1');
+  let timeZone: string | null = null;
+  const displaySettings = new DisplaySettings({
+    async loadTimeZone() { return timeZone; },
+    async saveTimeZone(value) { timeZone = value; },
+  });
+  const server = createApp({ auth, secureCookies, displaySettings }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address();
@@ -80,4 +86,26 @@ test('repeated incorrect passwords are rate limited', async t => {
   assert.ok(Number(throttled.headers.get('retry-after')) > 0);
   advance(60_001);
   assert.equal((await login()).status, 200);
+});
+
+test('display settings are protected, default to UTC, and retain a valid owner preference', async t => {
+  const { request, login, mutation } = await setup(t);
+  const path = '/settings/display';
+  assert.equal((await request(path)).status, 401);
+  assert.equal((await request(path, { ...mutation, method: 'PUT' })).status, 401);
+  const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
+  const read = async () => (await request(path, { headers: { cookie } })).json();
+  const save = (timeZone: unknown) => request(path, {
+    ...mutation, method: 'PUT', headers: { ...mutation.headers, cookie }, body: JSON.stringify({ timeZone }),
+  });
+  assert.deepEqual(await read(), { timeZone: 'UTC' });
+  const saved = await save('America/New_York');
+  assert.equal(saved.status, 200);
+  assert.deepEqual(await saved.json(), { timeZone: 'America/New_York' });
+  for (const invalid of ['Mars/Olympus', '+03:00', '', 60]) {
+    const response = await save(invalid);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { code: 'INVALID_TIME_ZONE' });
+  }
+  assert.deepEqual(await read(), { timeZone: 'America/New_York' });
 });

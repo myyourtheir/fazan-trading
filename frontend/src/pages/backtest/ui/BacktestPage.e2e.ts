@@ -1,9 +1,20 @@
 import { expect, test } from '@playwright/test';
 
+test.use({ timezoneId: 'Asia/Tokyo' });
+
 test('the owner can run a backtest without saving settings or selecting an account', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
-  // Start on a later month than the range the scenario selects.
-  await page.clock.install({ time: '2026-11-18T12:00:00Z' });
+  // December in the browser, but November in the saved New York timezone.
+  await page.clock.install({ time: '2026-12-01T02:00:00Z' });
+  await page.addInitScript(() => {
+    // Chart ticks are drawn on canvas rather than exposed as DOM text.
+    const fillText = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
+      if (/^\d{2}:\d{2}$/.test(text)) this.canvas.dataset.clockTick = text;
+      if (maxWidth === undefined) fillText.call(this, text, x, y);
+      else fillText.call(this, text, x, y, maxWidth);
+    };
+  });
   let signedIn = false;
   let requests = 0;
   await page.route('/api/**', route => {
@@ -14,6 +25,8 @@ test('the owner can run a backtest without saving settings or selecting an accou
         return route.fulfill(signedIn
           ? { json: { authenticated: true, remainingMs: 60_000 } }
           : { status: 401, json: { code: 'UNAUTHENTICATED' } });
+      case '/api/settings/display':
+        return route.fulfill({ json: { timeZone: 'America/New_York' } });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       case '/api/strategy':
@@ -35,7 +48,7 @@ test('the owner can run a backtest without saving settings or selecting an accou
           code: 'BACKTEST_WARMUP_MISSING', details: { required: 55, available: 42, searchedFrom: '2026-10-01' },
         } });
         return route.fulfill({ json: {
-          parameters, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
+          parameters: { ...parameters, timeZone: 'America/New_York' }, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
           candles: [{
             time: Date.UTC(2026, 9, 18, 12), open: 101, high: 104, low: 100, close: 103, complete: true, ema: 102,
           }, {
@@ -57,6 +70,7 @@ test('the owner can run a backtest without saving settings or selecting an accou
   signedIn = true;
   await page.goto('/backtest');
   await expect(page.getByRole('heading', { name: 'Бэктест' })).toBeVisible();
+  await expect(page.getByText(/Обе даты включительно. Часовой пояс — America\/New_York/)).toBeVisible();
   await expect(page.getByText(/Лимит прогона: 30 календарных дней/)).toBeVisible();
   await page.getByLabel('Поиск фьючерса').fill('IMOEXF');
   await page.getByRole('button', { name: 'Найти' }).click();
@@ -84,7 +98,11 @@ test('the owner can run a backtest without saving settings or selecting an accou
   await expect(page.getByRole('cell', { name: '0,3801' })).toBeVisible();
   await expect(page.getByText('Макс. просадка')).toBeVisible();
   await expect(page.getByText('Покупка')).toBeVisible();
-  await expect(page.getByRole('img', { name: 'График исторических свечей и EMA' }).locator('canvas').first()).toBeVisible();
+  const chart = page.getByRole('img', { name: 'График исторических свечей и EMA' });
+  await expect(chart.locator('canvas').first()).toBeVisible();
+  await expect(chart.locator('canvas[data-clock-tick="09:00"]')).toBeVisible();
+  await expect(page.getByText('Время: America/New_York')).toBeVisible();
+  await expect(page.getByRole('cell', { name: /09:00/ })).toBeVisible();
   await run.click();
   // A failed rerun keeps the last successful report visible instead of passing it off as the new result.
   await expect(page.getByText(/Для EMA\(55\).*Найдено: 42.*01\.10\.2026/)).toBeVisible();

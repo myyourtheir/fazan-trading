@@ -1,4 +1,5 @@
 import { ColorType, type UTCTimestamp } from 'lightweight-charts';
+export { chartTimeOptions } from './time-options';
 
 type Prices = { open: number; high: number; low: number; close: number };
 

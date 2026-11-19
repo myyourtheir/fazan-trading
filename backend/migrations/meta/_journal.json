@@ -43,6 +43,13 @@
       "when": 1795027906451,
       "tag": "0005_strategy_timeframe",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795088372185,
+      "tag": "0006_display_settings",
+      "breakpoints": true
     }
   ]
 }

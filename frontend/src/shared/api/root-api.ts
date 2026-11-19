@@ -3,7 +3,7 @@ import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
 export const rootApi = createApi({
   reducerPath: 'api',
   baseQuery: fetchBaseQuery({ baseUrl: '/api', credentials: 'same-origin' }),
-  tagTypes: ['Session', 'Dashboard', 'Sandbox', 'SandboxBalance', 'Strategy', 'Journal', 'Market'],
+  tagTypes: ['Session', 'Dashboard', 'Sandbox', 'SandboxBalance', 'Strategy', 'Journal', 'Market', 'DisplaySettings'],
   endpoints: () => ({}),
 });
 

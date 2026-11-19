@@ -2,7 +2,7 @@ import type { MarketCandle, MarketSelection } from './market-data.js';
 import { crossing, positionDelta, type Side } from './crossing.js';
 
 export type BacktestParameters = MarketSelection & {
-  lots: number; from: string; to: string;
+  lots: number; from: string; to: string; timeZone: string;
   // Costs in percent, each non-negative and zero by default.
   commission: number; slippage: number;
 };

@@ -8,7 +8,7 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
-function readParameters(body: unknown): BacktestParameters | null {
+function readParameters(body: unknown): Omit<BacktestParameters, 'timeZone'> | null {
   if (typeof body !== 'object' || body === null) return null;
   const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage } = body as Record<string, unknown>;
   if (!isPrintableAscii(instrumentUid, brokerIdLimit) || !isTimeframe(timeframe)
@@ -25,7 +25,7 @@ function readParameters(body: unknown): BacktestParameters | null {
 const errorStatus = (error: BacktestError) =>
   error.code === 'INVALID_REQUEST' || error.code === 'BACKTEST_PERIOD_TOO_LONG' ? 400 : 422;
 
-export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHandler) {
+export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHandler, loadTimeZone: () => Promise<string>) {
   const router = Router();
   router.use(requireOwner);
   router.get('/limits', (_req, res) => res.json(backtestLimits));
@@ -36,7 +36,7 @@ export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHa
       return;
     }
     try {
-      res.json(await history.check(parameters));
+      res.json(await history.check({ ...parameters, timeZone: await loadTimeZone() }));
     } catch (error) {
       if (!(error instanceof BacktestError)) throw error;
       res.status(errorStatus(error)).json({ code: error.code, details: error.details });
@@ -49,7 +49,7 @@ export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHa
       return;
     }
     try {
-      res.json(await history.run(parameters));
+      res.json(await history.run({ ...parameters, timeZone: await loadTimeZone() }));
     } catch (error) {
       if (!(error instanceof BacktestError)) throw error;
       res.status(errorStatus(error)).json({ code: error.code, details: error.details });

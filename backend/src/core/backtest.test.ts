@@ -9,7 +9,7 @@ const contract = { currency: 'rub', priceStep: 0.5, priceStepAmount: 5, lot: 1 }
 
 function parameters(overrides: Partial<BacktestParameters> = {}): BacktestParameters {
   return { instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3,
-    from: '2026-11-18', to: '2026-11-18', commission: 0, slippage: 0, ...overrides };
+    from: '2026-11-18', to: '2026-11-18', timeZone: 'UTC', commission: 0, slippage: 0, ...overrides };
 }
 
 const candle = (index: number, open: number, close: number, ema: number): BacktestCandle =>

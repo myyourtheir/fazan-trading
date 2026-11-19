@@ -4,6 +4,7 @@ import { hasStatus, rootApi } from '@/shared/api';
 import { sandboxApi, sandboxErrorMessage, saveSandboxToken } from '@/entities/sandbox';
 import { SandboxAccountsCard } from './SandboxAccountsCard';
 import { SandboxConnectionCard } from './SandboxConnectionCard';
+import { DisplaySettingsCard } from './DisplaySettingsCard';
 import type { SandboxNotice } from './SandboxFeedback';
 
 const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 0 });
@@ -51,6 +52,7 @@ export function SettingsPage({ refreshSession }: { refreshSession: () => void })
   return (
     <div className="grid w-full min-w-0 max-w-5xl gap-6">
       <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Настройки</h1>
+      <DisplaySettingsCard refreshSession={refreshSession} />
       <div className="grid items-start gap-4 md:grid-cols-2">
         <SandboxConnectionCard {...sandboxState} saveToken={submitToken} refresh={() => void sandbox.refetch()}
           notice={notice?.section === 'connection' ? notice : undefined} />

@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useDisplayTimeZone } from "@/shared/api";
+import { displayTimeFormatter } from "@/shared/lib/display-time";
 import { Button } from "@/shared/ui";
 import { chartTime } from "@/shared/lib/price-chart";
 import { createPriceChart } from "../lib/create-price-chart";
@@ -16,6 +18,8 @@ export default function TradingChart({
   const plot = useRef<ReturnType<typeof createPriceChart>>(null);
   const pointerInside = useRef(false);
   const [hoverTime, setHoverTime] = useState<number>();
+  const timeZone = useDisplayTimeZone();
+  const formatTime = useMemo(() => displayTimeFormatter(timeZone), [timeZone]);
   const hovered = candles.find(
     (candle) => chartTime(candle.time) === hoverTime,
   );
@@ -36,13 +40,16 @@ export default function TradingChart({
     plot.current?.setTheme();
   }, [dark]);
   useEffect(() => {
+    plot.current?.setTimeZone(timeZone);
+  }, [timeZone]);
+  useEffect(() => {
     plot.current?.setCandles(candles);
   }, [candles]);
 
   return (
     <figure className="grid min-w-0 gap-2">
       {selected && (
-        <CandleDetails candle={selected} hovered={Boolean(hovered)} />
+        <CandleDetails candle={selected} hovered={Boolean(hovered)} timeLabel={formatTime(selected.time)} />
       )}
       <div className="min-w-0 overflow-hidden rounded-md border">
         <div
@@ -61,7 +68,7 @@ export default function TradingChart({
       </div>
       <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
-          {candles.length} св. · Время UTC · Сплошная EMA брокера, пунктир —
+          {candles.length} св. · Время: {timeZone} · Сплошная EMA брокера, пунктир —
           предварительная
         </span>
         <Button

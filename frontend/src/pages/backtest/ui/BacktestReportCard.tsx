@@ -1,12 +1,13 @@
-import { Suspense, lazy } from 'react';
+import { Suspense, lazy, useMemo } from 'react';
 import { timeframeLabels } from '@/entities/strategy';
+import { useDisplayTimeZone } from '@/shared/api';
+import { displayTimeFormatter } from '@/shared/lib/display-time';
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
 import type { BacktestReport } from '../api/backtest-api';
 import { calendarDay } from '../lib/calendar-day';
 
 const HistoryChart = lazy(() => import('./HistoryChart'));
 
-const moscowTime = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'short', timeStyle: 'short' });
 const moneyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const preciseFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
 const percentFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
@@ -24,6 +25,8 @@ export function BacktestReportCard({ report, stale, dark }: {
   report: BacktestReport; stale: boolean; dark: boolean;
 }) {
   const { parameters, currency, result, executions, finalSignal, pointValue, priceStep, priceStepAmount, lot } = report;
+  const timeZone = useDisplayTimeZone();
+  const formatTime = useMemo(() => displayTimeFormatter(timeZone), [timeZone]);
   const currencyCode = currency.toUpperCase();
   const money = (value: number) => `${moneyFormat.format(value)} ${currencyCode}`;
   const noCosts = parameters.commission === 0 && parameters.slippage === 0;
@@ -35,9 +38,9 @@ export function BacktestReportCard({ report, stale, dark }: {
           {stale && <Badge variant="secondary">Параметры изменены</Badge>}
         </CardTitle>
         <CardDescription>
-          {calendarDay(parameters.from)} — {calendarDay(parameters.to)} · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
+          {calendarDay(parameters.from)} — {calendarDay(parameters.to)} ({parameters.timeZone}) · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
           {' · '}{parameters.lots} лот.
-          {report.cutoff !== null && <> Последний день ещё не закончился: прогон до {moscowTime.format(report.cutoff)} МСК.</>}
+          {report.cutoff !== null && <> Последний день ещё не закончился: прогон до {formatTime(report.cutoff)}.</>}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -66,11 +69,11 @@ export function BacktestReportCard({ report, stale, dark }: {
         {finalSignal && (
           <p className="text-sm text-muted-foreground">
             Последний сигнал без следующей свечи — {finalSignal.direction === 'buy' ? 'покупка' : 'продажа'}{' '}
-            на {moscowTime.format(finalSignal.candleTime)} МСК — не исполнен и не меняет позицию.
+            на {formatTime(finalSignal.candleTime)} — не исполнен и не меняет позицию.
           </p>
         )}
         <Suspense fallback={<p role="status">Загружаем график…</p>}>
-          <HistoryChart candles={report.candles} executions={executions} dark={dark} />
+          <HistoryChart candles={report.candles} executions={executions} dark={dark} timeZone={timeZone} />
         </Suspense>
         {executions.length === 0 ? (
           <p className="text-sm text-muted-foreground">Пересечений за период не было — исполнений нет.</p>
@@ -78,7 +81,7 @@ export function BacktestReportCard({ report, stale, dark }: {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-muted-foreground">
-                <th className="py-1 pr-4 font-normal">Время (МСК)</th>
+                <th className="py-1 pr-4 font-normal">Время ({timeZone})</th>
                 <th className="py-1 pr-4 font-normal">Направление</th>
                 <th className="py-1 pr-4 text-right font-normal">Лоты</th>
                 <th className="py-1 pr-4 text-right font-normal">Цена</th>
@@ -88,7 +91,7 @@ export function BacktestReportCard({ report, stale, dark }: {
             <tbody>
               {executions.map((execution, index) => (
                 <tr key={index} className="border-t">
-                  <td className="py-1 pr-4">{moscowTime.format(execution.time)}</td>
+                  <td className="py-1 pr-4">{formatTime(execution.time)}</td>
                   <td className="py-1 pr-4">{execution.direction === 'buy' ? 'Покупка' : 'Продажа'}</td>
                   <td className="py-1 pr-4 text-right">{execution.lots}</td>
                   <td className="py-1 pr-4 text-right">{preciseFormat.format(execution.price)}</td>

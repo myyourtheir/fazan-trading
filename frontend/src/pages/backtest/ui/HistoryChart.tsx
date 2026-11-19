@@ -1,18 +1,13 @@
 import {
-  CandlestickSeries, LineSeries, TickMarkType, createChart, createSeriesMarkers,
+  CandlestickSeries, LineSeries, createChart, createSeriesMarkers,
   type ISeriesApi, type ISeriesMarkersPluginApi, type Time,
 } from 'lightweight-charts';
 import { useEffect, useRef } from 'react';
-import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, priceChartTheme } from '@/shared/lib/price-chart';
+import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, chartTimeOptions, priceChartTheme } from '@/shared/lib/price-chart';
 import type { BacktestExecution, HistoricalCandle } from '../api/backtest-api';
 
-const zone = 'Europe/Moscow';
-const day = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: 'numeric', month: 'short' });
-const clock = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, hour: '2-digit', minute: '2-digit' });
-const full = new Intl.DateTimeFormat('ru-RU', { timeZone: zone, dateStyle: 'short', timeStyle: 'short' });
-
-export default function HistoryChart({ candles, executions, dark }: {
-  candles: HistoricalCandle[]; executions: BacktestExecution[]; dark: boolean;
+export default function HistoryChart({ candles, executions, dark, timeZone }: {
+  candles: HistoricalCandle[]; executions: BacktestExecution[]; dark: boolean; timeZone: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
@@ -24,15 +19,8 @@ export default function HistoryChart({ candles, executions, dark }: {
     const chart = createChart(container.current, {
       autoSize: true,
       layout: { attributionLogo: false },
-      timeScale: {
-        timeVisible: true, secondsVisible: false,
-        tickMarkFormatter: (time: Time, type: TickMarkType) => typeof time === 'number'
-          ? (type <= TickMarkType.DayOfMonth ? day : clock).format(time * 1000) : null,
-      },
-      localization: {
-        locale: 'ru-RU',
-        timeFormatter: (time: Time) => typeof time === 'number' ? `${full.format(time * 1000)} МСК` : '',
-      },
+      timeScale: { timeVisible: true, secondsVisible: false },
+      localization: { locale: 'ru-RU' },
     });
     chartRef.current = chart;
     barsRef.current = chart.addSeries(CandlestickSeries, { borderVisible: false });
@@ -43,6 +31,9 @@ export default function HistoryChart({ candles, executions, dark }: {
       chart.remove();
     };
   }, []);
+  useEffect(() => {
+    chartRef.current?.applyOptions(chartTimeOptions(timeZone));
+  }, [timeZone]);
   useEffect(() => {
     const precision = candlePricePrecision(candles);
     const seriesPrecision = Math.max(2, precision);
@@ -68,5 +59,10 @@ export default function HistoryChart({ candles, executions, dark }: {
     emaRef.current?.applyOptions({ color: theme.emaColor });
   }, [dark]);
 
-  return <div ref={container} className="h-96 w-full" role="img" aria-label="График исторических свечей и EMA" />;
+  return (
+    <figure className="min-w-0">
+      <div ref={container} className="h-96 w-full" role="img" aria-label="График исторических свечей и EMA" />
+      <figcaption className="text-xs text-muted-foreground">Время: {timeZone}</figcaption>
+    </figure>
+  );
 }

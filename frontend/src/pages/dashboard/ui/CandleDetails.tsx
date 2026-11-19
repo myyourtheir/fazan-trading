@@ -1,7 +1,7 @@
-import { emaPrice, price, utc } from "../lib/chart-format";
+import { emaPrice, price } from "../lib/chart-format";
 import type { ChartCandle } from "../model/market-data";
 
-export function CandleDetails({ candle, hovered }: { candle: ChartCandle; hovered: boolean }) {
+export function CandleDetails({ candle, hovered, timeLabel }: { candle: ChartCandle; hovered: boolean; timeLabel: string }) {
   const fields = [
     ["Открытие", price.format(candle.open)],
     ["Максимум", price.format(candle.high)],
@@ -27,7 +27,7 @@ export function CandleDetails({ candle, hovered }: { candle: ChartCandle; hovere
       <div className="flex gap-1">
         <dt className="sr-only">Начало свечи</dt>
         <dd className="font-medium tabular-nums">
-          {utc.format(candle.time)} UTC
+          {timeLabel}
         </dd>
       </div>
       {fields.map(([label, value]) => (

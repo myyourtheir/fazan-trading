@@ -3,13 +3,14 @@ import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { SessionStore } from '../core/auth.js';
+import type { DisplaySettingsStore } from '../core/display-settings.js';
 import type { SandboxStore, SavedSandboxConnection } from '../core/sandbox.js';
 import type { SavedStrategy, StrategyStore } from '../core/strategy-settings.js';
 import type { OrderIntent, OrderResult, TradingStore } from '../core/robot.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../../migrations/', import.meta.url));
-const { ownerSessions, sandboxConnection, strategySettings, tradeOrders, tradeExecutions } = schema;
+const { ownerSessions, displaySettings, sandboxConnection, strategySettings, tradeOrders, tradeExecutions } = schema;
 type Database = NodePgDatabase<typeof schema>;
 
 export function connectToPostgres(connectionString: string | undefined) {
@@ -40,6 +41,21 @@ export class PostgresSessions implements SessionStore {
 
   async revoke(digest: string) {
     await this.db.delete(ownerSessions).where(eq(ownerSessions.tokenDigest, digest));
+  }
+}
+
+export class PostgresDisplaySettings implements DisplaySettingsStore {
+  constructor(private readonly db: Database) {}
+
+  async loadTimeZone() {
+    const [saved] = await this.db.select({ timeZone: displaySettings.timeZone }).from(displaySettings)
+      .where(eq(displaySettings.id, 1));
+    return saved?.timeZone ?? null;
+  }
+
+  async saveTimeZone(timeZone: string) {
+    await this.db.insert(displaySettings).values({ id: 1, timeZone })
+      .onConflictDoUpdate({ target: displaySettings.id, set: { timeZone } });
   }
 }
 

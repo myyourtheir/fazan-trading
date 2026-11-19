@@ -12,6 +12,8 @@ test('the owner can check a token and select, create, and fund a sandbox account
     switch (new URL(request.url()).pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
+      case '/api/settings/display':
+        return route.fulfill({ json: { timeZone: 'UTC' } });
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/robot/history':

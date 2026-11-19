@@ -3,7 +3,7 @@ import { mutationHeaders, rootApi } from './root-api';
 type Authenticated = { authenticated: true };
 type Session = Authenticated & { remainingMs: number };
 const changedSessionTags = (_data: unknown, error: unknown) => error ? []
-  : ['Session', 'Dashboard', 'Sandbox', 'SandboxBalance', 'Strategy', 'Journal'] as const;
+  : ['Session', 'Dashboard', 'Sandbox', 'SandboxBalance', 'Strategy', 'Journal', 'DisplaySettings'] as const;
 
 export const sessionApi = rootApi.injectEndpoints({
   endpoints: builder => ({

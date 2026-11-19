@@ -15,6 +15,7 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
     ...candle, time: time - index * 3_600_000,
   })).reverse();
   let historyRequests = 0;
+  let timeZone = 'UTC';
   let dashboard: Dashboard = { mode: 'stopped', reason: null, position: null };
   let journal: JournalEntry[] = [];
   let accountId = 'virtual-account';
@@ -29,6 +30,9 @@ async function mockMarket(page: Page, options: { failInitialHistory?: boolean; h
     switch (url.pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
+      case '/api/settings/display':
+        if (route.request().method() === 'PUT') timeZone = route.request().postDataJSON().timeZone;
+        return route.fulfill({ json: { timeZone } });
       case '/api/dashboard':
         return route.fulfill({ json: dashboard });
       case '/api/robot/history':
@@ -322,6 +326,27 @@ test('charts REST history, replaces live candles, and restores the chart after a
   publish(sockets[1], { ...nextCandle, close: 110, complete: true, previewEma: null });
   await expect(latest).toContainText('Нет подтверждения');
   await expect(chart.getByText(/2 св\./)).toBeVisible();
+});
+
+test('the owner can save a display timezone and see it on the dashboard after reloading', async ({ page }) => {
+  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
+  await mockMarket(page);
+  await page.goto('/');
+  const latest = page.getByLabel('Последняя свеча');
+  await expect(latest).toContainText('12:00 UTC');
+
+  await page.getByRole('button', { name: 'Профиль' }).click();
+  await page.getByRole('menuitem', { name: 'Настройки' }).click();
+  const preference = page.getByRole('combobox', { name: 'Часовой пояс' });
+  await expect(preference).toHaveValue('UTC');
+  await preference.selectOption('America/New_York');
+  await expect(page.getByText('Часовой пояс сохранён.')).toBeVisible();
+
+  await page.getByRole('banner').getByRole('link', { name: 'fazan-trading' }).click();
+  await expect(latest).toContainText('07:00');
+  await expect(page.getByText(/Время: America\/New_York/)).toBeVisible();
+  await page.reload();
+  await expect(latest).toContainText('07:00');
 });
 
 test('the mobile price axis and crosshair follow the same candle precision', async ({ page }) => {

@@ -10,6 +10,13 @@ export const ownerSessions = pgTable('owner_sessions', {
   index('owner_sessions_expiry').on(table.expiresAt),
 ]);
 
+export const displaySettings = pgTable('display_settings', {
+  id: integer('id').primaryKey(),
+  timeZone: text('time_zone').notNull(),
+}, table => [
+  check('display_settings_singleton', sql`${table.id} = 1`),
+]);
+
 export const sandboxConnection = pgTable('sandbox_connection', {
   id: integer('id').primaryKey(),
   encryptedToken: text('encrypted_token').notNull(),

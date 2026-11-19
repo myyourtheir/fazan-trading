@@ -10,10 +10,12 @@ import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { StrategySettings } from '../core/strategy-settings.js';
 import type { BacktestHistory } from '../core/backtest-history.js';
 import { backtestRoutes } from './backtest-routes.js';
+import { defaultTimeZone, type DisplaySettings } from '../core/display-settings.js';
 
-export function createApp({ auth, secureCookies, settings, market, marketSocket, robot, backtest }: {
+export function createApp({ auth, secureCookies, settings, displaySettings, market, marketSocket, robot, backtest }: {
   auth: OwnerAuth; secureCookies: boolean;
   settings?: { sandbox: SandboxConnection; strategy?: StrategySettings; change: (action: () => Promise<void>) => Promise<void> };
+  displaySettings?: DisplaySettings;
   market?: MarketData;
   robot?: Robot;
   backtest?: BacktestHistory;
@@ -79,6 +81,17 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
   api.get('/auth/session', requireOwner, (_req, res) => res.json({
     authenticated: true, remainingMs: res.locals.sessionRemainingMs,
   }));
+  if (displaySettings) {
+    api.get('/settings/display', requireOwner, async (_req, res) => res.json(await displaySettings.get()));
+    api.put('/settings/display', requireOwner, async (req, res) => {
+      const saved = await displaySettings.setTimeZone(req.body?.timeZone);
+      if (!saved) {
+        res.status(400).json({ code: 'INVALID_TIME_ZONE' });
+        return;
+      }
+      res.json(saved);
+    });
+  }
   api.get('/dashboard', requireOwner, (_req, res) => res.json(robot?.status() ?? { mode: 'stopped' }));
   if (settings) {
     const { sandbox, strategy, change } = settings;
@@ -88,7 +101,8 @@ export function createApp({ auth, secureCookies, settings, market, marketSocket,
     api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload));
     if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
   }
-  if (backtest) api.use('/backtest', backtestRoutes(backtest, requireOwner));
+  if (backtest) api.use('/backtest', backtestRoutes(backtest, requireOwner,
+    async () => (await displaySettings?.get())?.timeZone ?? defaultTimeZone));
   if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   if (robot) {
     api.get('/robot/history', requireOwner, async (req, res) => {

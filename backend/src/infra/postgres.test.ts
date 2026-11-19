@@ -8,12 +8,30 @@ import { SandboxConnection } from '../core/sandbox.js';
 import { fakeBroker, token } from '../core/sandbox.test-support.js';
 import { StrategySettings } from '../core/strategy-settings.js';
 import { timeframeMs } from '../core/timeframe.js';
-import { connectToPostgres, migrateDatabase, PostgresSandboxConnection, PostgresStrategySettings, PostgresTradingStore } from './postgres.js';
+import { connectToPostgres, migrateDatabase, PostgresDisplaySettings, PostgresSandboxConnection, PostgresStrategySettings, PostgresTradingStore } from './postgres.js';
 import { TokenCipher } from './token-cipher.js';
 
 const testDatabase = process.env.SERFING_TEST_DATABASE_URL;
 const cipher = new TokenCipher('ab'.repeat(32));
 const hourMs = timeframeMs['1h'];
+
+test('PostgreSQL restores the latest display timezone after reconnecting', { skip: !testDatabase }, async () => {
+  const first = connectToPostgres(testDatabase);
+  try {
+    await migrateDatabase(first.db);
+    const store = new PostgresDisplaySettings(first.db);
+    await store.saveTimeZone('Asia/Kolkata');
+    await store.saveTimeZone('America/New_York');
+  } finally {
+    await first.close();
+  }
+  const restarted = connectToPostgres(testDatabase);
+  try {
+    assert.equal(await new PostgresDisplaySettings(restarted.db).loadTimeZone(), 'America/New_York');
+  } finally {
+    await restarted.close();
+  }
+});
 
 test('PostgreSQL restores one active strategy, including the exact contract, without the broker',
   { skip: !testDatabase && 'Requires a disposable PostgreSQL database' }, async () => {

@@ -9,9 +9,8 @@ import {
   type MouseEventParams,
   type Time,
 } from "lightweight-charts";
-import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, priceChartTheme } from "@/shared/lib/price-chart";
+import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, chartTimeOptions, priceChartTheme } from "@/shared/lib/price-chart";
 import type { ChartCandle } from "../model/market-data";
-import { utc } from "./chart-format";
 const samePoint = (a: LineData<Time>, b: LineData<Time>) =>
   a.time === b.time && a.value === b.value;
 
@@ -72,8 +71,6 @@ export function createPriceChart(
       locale: "ru-RU",
       // Both price ticks and the crosshair label use this formatter.
       priceFormatter: axisPriceFormatter(0),
-      timeFormatter: (time: Time) =>
-        typeof time === "number" ? `${utc.format(time * 1000)} UTC` : "",
     },
   });
   const bars = chart.addSeries(CandlestickSeries);
@@ -128,6 +125,9 @@ export function createPriceChart(
   }
 
   return {
+    setTimeZone(timeZone: string) {
+      chart.applyOptions(chartTimeOptions(timeZone));
+    },
     setCandles(candles: ChartCandle[]) {
       const precision = candlePricePrecision(candles);
       if (precision !== pricePrecision) {

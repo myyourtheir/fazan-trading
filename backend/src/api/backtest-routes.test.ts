@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
 import { BacktestHistory, type BacktestBroker } from '../core/backtest-history.js';
+import { DisplaySettings } from '../core/display-settings.js';
 import { createApp } from './app.js';
 
 const password = 'backtest-test-owner-password';
@@ -10,6 +11,7 @@ const hour = 3_600_000;
 const start = Date.parse('2026-11-17T21:00:00Z');
 const form = { instrumentUid: 'future', emaPeriod: 55, lots: 3, timeframe: '1h', from: '2026-11-18', to: '2026-11-18',
   commission: 0, slippage: 0 };
+const moscow = 'Europe/Moscow';
 const candle = (time: number, close: number, complete = true) => ({
   time, open: close, high: close, low: close, close, complete,
 });
@@ -24,16 +26,21 @@ async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * 
     async revoke(digest) { sessions.delete(digest); },
   };
   const auth = await OwnerAuth.create(password, store);
+  let timeZone = moscow;
+  const displaySettings = new DisplaySettings({
+    async loadTimeZone() { return timeZone; },
+    async saveTimeZone(value) { timeZone = value; },
+  });
   const server = createApp({
-    auth, secureCookies: false, backtest: new BacktestHistory(broker, async () => 'private-test-token', () => now),
+    auth, secureCookies: false, displaySettings, backtest: new BacktestHistory(broker, async () => 'private-test-token', () => now),
   }).listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
   const address = server.address();
   assert.ok(address && typeof address === 'object');
-  const request = async (path: string, body?: object, cookie = '') => {
+  const request = async (path: string, body?: object, cookie = '', method = body ? 'POST' : 'GET') => {
     const response = await fetch(`http://127.0.0.1:${address.port}/api/${path}`, {
-      method: body ? 'POST' : 'GET',
+      method,
       headers: { 'Content-Type': 'application/json', 'X-Serfing-Request': '1', cookie },
       body: body && JSON.stringify(body),
     });
@@ -88,7 +95,7 @@ test('only the owner can check a bounded Moscow period independently of the robo
   assert.equal(calls.length, 0);
   const response = await request('backtest/history', form, cookie);
   assert.equal(response.status, 200);
-  assert.deepEqual(response.body.parameters, form);
+  assert.deepEqual(response.body.parameters, { ...form, timeZone: moscow });
   assert.equal(response.body.cutoff, null);
   const firstEma = 100 + 1 / 28;
   assert.deepEqual(response.body.candles, [
@@ -96,6 +103,42 @@ test('only the owner can check a bounded Moscow period independently of the robo
     { ...candle(start + 12 * hour, 103), ema: firstEma + (103 - firstEma) / 28 },
   ]);
   assert.ok(calls.some(([, to]) => to === start + 24 * hour));
+});
+
+for (const [date, from, to] of [
+  ['2026-03-08', '2026-03-08T05:00Z', '2026-03-09T04:00Z'],
+  ['2026-11-01', '2026-11-01T04:00Z', '2026-11-02T05:00Z'],
+]) {
+  test(`the saved New York timezone defines both boundaries of the DST day ${date}`, async t => {
+    const { broker, calls, candles } = data();
+    const start = Date.parse(from);
+    const end = Date.parse(to);
+    candles.splice(0, candles.length, candle(start - hour, 100), candle(start, 101),
+      candle(end - hour, 103), candle(end, 105));
+    const { request, authorize } = await serve(t, broker, end + hour);
+    const cookie = await authorize();
+    const timeZone = 'America/New_York';
+    assert.equal((await request('settings/display', { timeZone }, cookie, 'PUT')).status, 200);
+    const parameters = { ...form, emaPeriod: 1, from: date, to: date };
+    for (const endpoint of ['history', 'run']) {
+      calls.length = 0;
+      const result = await request(`backtest/${endpoint}`, { ...parameters, timeZone: 'UTC' }, cookie);
+      assert.equal(result.status, 200);
+      assert.deepEqual(result.body.parameters, { ...parameters, timeZone });
+      assert.deepEqual(calls[0], [start, end]);
+      assert.deepEqual(result.body.candles.map((row: { time: number }) => row.time), [start, end - hour]);
+    }
+  });
+}
+
+test('the next UTC date is still in the future when it has not started in the saved timezone', async t => {
+  const { broker, calls } = data();
+  const { request, authorize } = await serve(t, broker, Date.parse('2026-11-19T02:00Z'));
+  const cookie = await authorize();
+  await request('settings/display', { timeZone: 'America/New_York' }, cookie, 'PUT');
+  const response = await request('backtest/history', { ...form, to: '2026-11-19' }, cookie);
+  assert.equal(response.status, 400);
+  assert.equal(calls.length, 0);
 });
 
 test('overlapping pages do not duplicate candles or reset the EMA', async t => {
@@ -230,7 +273,7 @@ test('running the backtest reports executions and money without touching the rob
   const response = await request('backtest/run', form, cookie);
   assert.equal(response.status, 200);
   const { body } = response;
-  assert.deepEqual(body.parameters, form);
+  assert.deepEqual(body.parameters, { ...form, timeZone: moscow });
   assert.equal(body.currency, 'rub');
   assert.equal(body.pointValue, 10);
   assert.deepEqual(body.executions, [

@@ -28,7 +28,9 @@ test('sandbox supports the requested historical coverage and exposes futures pri
   for (const timeframe of timeframes) {
     for (const emaPeriod of [5, 55, backtestLimits.maxEmaPeriod]) {
       await t.test(`${timeframe} / EMA ${emaPeriod} / ${from}–${lastDate}`, async sample => {
-        const result = await history.check({ instrumentUid, timeframe, emaPeriod, lots: 1, from, to: lastDate, commission: 0, slippage: 0 });
+        const result = await history.check({
+          instrumentUid, timeframe, emaPeriod, lots: 1, from, to: lastDate, timeZone: 'Europe/Moscow', commission: 0, slippage: 0,
+        });
         assert.equal(result.cutoff, null, 'Use a final date that has already ended in Moscow');
         assert.ok(result.candles.every((bar, index, rows) =>
           bar.complete && Number.isFinite(bar.ema) && (index === 0 || rows[index - 1].time < bar.time)));

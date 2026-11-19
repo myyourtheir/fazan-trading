@@ -8,7 +8,7 @@ const contract = {
 test('the strategy draft opens the backtest without saving and carries unsaved edits', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
   // Pin the clock so the range calendar always opens on the month the scenario picks.
-  await page.clock.install({ time: '2026-11-18T12:00:00Z' });
+  await page.clock.install({ time: '2026-11-19T12:00:00Z' });
   let saved = false;
   let run = 0;
   await page.route('/api/**', route => {
@@ -17,6 +17,8 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
     switch (url.pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
+      case '/api/settings/display':
+        return route.fulfill({ json: { timeZone: 'UTC' } });
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/sandbox':
@@ -42,7 +44,7 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
         });
         run += 1;
         return route.fulfill({ json: {
-          parameters, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
+          parameters: { ...parameters, timeZone: 'UTC' }, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
           candles: [], executions: [], finalSignal: null,
           result: { closed: 0, open: 0, total: 0, position: 0, maxDrawdown: 0 },
           cutoff: null,
@@ -89,6 +91,8 @@ test('direct entry to the backtest restores the last saved parameters', async ({
     switch (url.pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
+      case '/api/settings/display':
+        return route.fulfill({ json: { timeZone: 'UTC' } });
       case '/api/strategy':
         return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
           settings: { instrument: contract, emaPeriod: 34, lots: 3, timeframe: '30m' } } });
@@ -117,6 +121,8 @@ test('a refresh after opening from a draft restores the saved parameters, not th
     switch (url.pathname) {
       case '/api/auth/session':
         return route.fulfill({ json: { authenticated: true, remainingMs: 60_000 } });
+      case '/api/settings/display':
+        return route.fulfill({ json: { timeZone: 'UTC' } });
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/sandbox':
