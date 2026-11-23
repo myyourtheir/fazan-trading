@@ -28,6 +28,9 @@ import {
   type SurfingLiveConfig,
 } from './core/surfing-strategy.js';
 import { TokenCipher } from './infra/token-cipher.js';
+import { startupErrorMessage } from './infra/startup-error.js';
+
+let startupStage = 'configuration';
 
 async function main() {
   const {
@@ -50,10 +53,14 @@ async function main() {
     throw new Error('PORT must be a valid port number.');
   const cipher = new TokenCipher(process.env.SANDBOX_TOKEN_ENCRYPTION_KEY);
 
+  startupStage = 'database connection';
   const { db, close } = connectToPostgres(DATABASE_URL);
   try {
+    startupStage = 'database migrations';
     await migrateDatabase(db);
+    startupStage = 'app_owner initialization';
     const appAccountId = await ensureAppOwner(db);
+    startupStage = 'application initialization';
     const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db), { appAccountId });
     const broker = new InvestSandbox();
     const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, broker);
@@ -137,6 +144,7 @@ async function main() {
         displaySettings: new DisplaySettings(new PostgresDisplaySettings(db)),
       }),
     );
+    startupStage = 'server listen';
     server.listen(port, HOST);
     await once(server, 'listening');
     console.log(`fazan-trading API is listening on ${HOST}:${port}.`);
@@ -149,15 +157,17 @@ async function main() {
     };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);
-  } catch {
-    await close();
-    throw new Error(
-      'Backend startup failed. Check the database connection, migrations, and listening address.',
-    );
+  } catch (error) {
+    try {
+      await close();
+    } catch {
+      // Preserve the startup failure if closing the pool also fails.
+    }
+    throw error;
   }
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : 'Backend startup failed.');
+  console.error(startupErrorMessage(error, startupStage));
   process.exitCode = 1;
 });
