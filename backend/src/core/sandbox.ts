@@ -1,7 +1,12 @@
 export const virtualFundingRubles = 100_000;
 
 type Account = { id: string; name: string };
-export type SavedSandboxConnection = { encryptedToken: string; accountId: string | null };
+export type SavedSandboxConnection = {
+  encryptedToken: string;
+  accountId: string | null;
+  previousAccountId?: string | null;
+  previousEncryptedToken?: string | null;
+};
 
 export type FutureContract = {
   uid: string;
@@ -94,8 +99,11 @@ export class SandboxConnection {
       if (pinnedAccountId !== undefined && accountId !== pinnedAccountId) {
         throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
       }
-      if (saved && saved.accountId !== accountId) await this.requireFlatAccount(saved);
+      // Credential repair must not silently change the selected account.
+      if (saved?.accountId && saved.accountId !== accountId)
+        throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
       await this.store.save({
+        ...saved,
         encryptedToken: this.cipher.encrypt(token),
         accountId,
       });
@@ -109,7 +117,13 @@ export class SandboxConnection {
       await this.requireAccount(token, accountId);
       if (saved.accountId === accountId) return;
       await this.requireFlatAccount(saved);
-      await this.store.save({ ...saved, accountId });
+      await this.requireFlatAccount({ ...saved, accountId });
+      await this.store.save({
+        ...saved,
+        accountId,
+        previousAccountId: saved.accountId,
+        previousEncryptedToken: saved.accountId ? saved.encryptedToken : null,
+      });
     });
   }
 
@@ -126,7 +140,13 @@ export class SandboxConnection {
           ? new SandboxError('SANDBOX_CREATION_UNCERTAIN')
           : failure;
       }
-      await this.store.save({ ...saved, accountId });
+      await this.requireFlatAccount({ ...saved, accountId });
+      await this.store.save({
+        ...saved,
+        accountId,
+        previousAccountId: saved.accountId,
+        previousEncryptedToken: saved.accountId ? saved.encryptedToken : null,
+      });
     });
   }
 
@@ -186,6 +206,29 @@ export class SandboxConnection {
     const { saved, token } = await this.credentials();
     if (!saved.accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     return { token, accountId: saved.accountId };
+  }
+
+  // Fresh starts are different from recovery: both sides of the last switch
+  // must still be clean even if either account changed outside the application.
+  public async verifyFreshStart() {
+    const { saved } = await this.credentials();
+    if (!saved.accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    if (saved.previousAccountId) {
+      if (!saved.previousEncryptedToken) throw new SandboxError('SANDBOX_ACCOUNT_FLAT_UNVERIFIED');
+      await this.requireFlatAccount({
+        accountId: saved.previousAccountId,
+        encryptedToken: saved.previousEncryptedToken,
+      });
+    }
+    await this.requireFlatAccount(saved);
+  }
+
+  public changeStrategySelection(accountId: string, action: () => Promise<void>) {
+    return this.change(async () => {
+      const { saved } = await this.selectedAccountCredentials(accountId);
+      await this.requireFlatAccount(saved);
+      await action();
+    });
   }
 
   public changeStrategyForAccount(

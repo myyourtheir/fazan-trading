@@ -18,7 +18,8 @@ import {
   timeframeLabels,
   timeframes,
   type BacktestDraft,
-  type StrategyConfig,
+  type StrategyProfiles,
+  type StrategyKind,
 } from '@/entities/strategy';
 import { sandboxErrorMessage } from '@/entities/sandbox';
 
@@ -32,24 +33,46 @@ export type StrategyAccountProps = {
 
 export function StrategyForm({
   config,
+  kind,
   accountId,
   disabled,
   refreshSession,
-}: StrategyAccountProps & { config: StrategyConfig }) {
+}: StrategyAccountProps & {
+  config: StrategyProfiles['profiles'][StrategyKind];
+  kind: StrategyKind;
+}) {
   const initialTicker = config.settings?.instrument.ticker ?? config.defaults.ticker;
   const [query, setQuery] = useState(initialTicker);
   const [contractUid, setContractUid] = useState(config.settings?.instrument.uid);
+  const [defaultSelectionAllowed, setDefaultSelectionAllowed] = useState(true);
   const [timeframe, setTimeframe] = useState(
     config.settings?.timeframe ?? config.defaults.timeframe,
   );
   const [emaPeriod, setEmaPeriod] = useState(
-    String(config.settings?.emaPeriod ?? config.defaults.emaPeriod),
+    String(config.settings?.parameters.emaPeriod ?? config.defaults.emaPeriod),
   );
-  const [lots, setLots] = useState(config.settings ? String(config.settings.lots) : '');
+  const [lots, setLots] = useState(
+    config.settings && 'lots' in config.settings.parameters
+      ? String(config.settings.parameters.lots)
+      : '',
+  );
+  const improved =
+    config.settings?.parameters && 'atrPeriod' in config.settings.parameters
+      ? config.settings.parameters
+      : 'atrPeriod' in config.defaults
+        ? config.defaults
+        : undefined;
+  const [atrPeriod, setAtrPeriod] = useState(String(improved?.atrPeriod ?? 20));
+  const [stopAtrMultiplier, setStopAtrMultiplier] = useState(
+    String(improved?.stopAtrMultiplier ?? 2),
+  );
+  const [addStepAtr, setAddStepAtr] = useState(String(improved?.addStepAtr ?? 1));
+  const [maxAddOns, setMaxAddOns] = useState(String(improved?.maxAddOns ?? 3));
+  const [tradeWeekends, setTradeWeekends] = useState(improved?.tradeWeekends ?? false);
   const futures = strategyApi.useSearchFuturesQuery(query, {
     skip: !accountId || !query,
   });
-  const [save, { isLoading, isSuccess, error, reset }] = strategyApi.useSaveStrategyMutation();
+  const [save, { isLoading, isSuccess, error, reset }] = strategyApi.useSaveProfileMutation();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -58,9 +81,23 @@ export function StrategyForm({
 
   const canEdit = Boolean(accountId) && !disabled && !isLoading;
   const results = futures.currentData ?? [];
-  const selectedMatch = results.find((result) => result.uid === contractUid);
+  const exactDefaults = results.filter((result) => result.ticker === config.defaults.ticker);
+  const defaultMatch =
+    kind === 'improved-surfing' &&
+    !config.settings &&
+    defaultSelectionAllowed &&
+    query === config.defaults.ticker &&
+    exactDefaults.length === 1
+      ? exactDefaults[0]
+      : undefined;
+  const selectedMatch = results.find((result) => result.uid === contractUid) ?? defaultMatch;
   const canSave =
-    canEdit && !futures.isFetching && !futures.isError && selectedMatch && emaPeriod && lots;
+    canEdit &&
+    !futures.isFetching &&
+    !futures.isError &&
+    selectedMatch &&
+    emaPeriod &&
+    (kind === 'surfing' ? lots : atrPeriod && stopAtrMultiplier && addStepAtr && maxAddOns !== '');
 
   // The backtest hand-off carries a snapshot of the current draft, including unsaved edits, and does
   // not inherit the save restrictions tied to the robot or account state.
@@ -91,6 +128,7 @@ export function StrategyForm({
         disabled={!canEdit}
         isFetching={futures.isFetching}
         search={(term) => {
+          setDefaultSelectionAllowed(false);
           if (term === query) void futures.refetch();
           else setQuery(term);
         }}
@@ -115,12 +153,23 @@ export function StrategyForm({
         onSubmit={(event) => {
           event.preventDefault();
           if (!canSave || !accountId) return;
+          setContractUid(selectedMatch.uid);
           void save({
             accountId,
             instrumentUid: selectedMatch.uid,
             timeframe,
-            emaPeriod: Number(emaPeriod),
-            lots: Number(lots),
+            kind,
+            parameters:
+              kind === 'surfing'
+                ? { emaPeriod: Number(emaPeriod), lots: Number(lots) }
+                : {
+                    emaPeriod: Number(emaPeriod),
+                    atrPeriod: Number(atrPeriod),
+                    stopAtrMultiplier: Number(stopAtrMultiplier),
+                    addStepAtr: Number(addStepAtr),
+                    maxAddOns: Number(maxAddOns),
+                    tradeWeekends,
+                  },
           });
         }}
       >
@@ -133,6 +182,7 @@ export function StrategyForm({
               value={selectedMatch?.uid ?? ''}
               disabled={!canEdit || futures.isFetching || !results.length || futures.isError}
               onChange={(event) => {
+                setDefaultSelectionAllowed(false);
                 setContractUid(event.target.value);
                 reset();
               }}
@@ -142,7 +192,15 @@ export function StrategyForm({
               </NativeSelectOption>
               {results.map((result) => (
                 <NativeSelectOption key={result.uid} value={result.uid}>
-                  {result.ticker}
+                  {[
+                    result.ticker,
+                    result.name,
+                    result.classCode,
+                    result.exchange,
+                    result.expirationDate?.slice(0, 10) ?? 'Бессрочный',
+                  ]
+                    .filter(Boolean)
+                    .join(' · ')}
                 </NativeSelectOption>
               ))}
             </NativeSelect>
@@ -185,31 +243,77 @@ export function StrategyForm({
                 }}
               />
             </Field>
-            <Field>
-              <FieldLabel htmlFor="strategy-lots">Объём, лотов</FieldLabel>
-              <Input
-                id="strategy-lots"
-                type="number"
-                min={1}
-                max={maxInt}
-                step={1}
-                required
-                disabled={!canEdit}
-                value={lots}
-                onChange={(event) => {
-                  setLots(event.target.value);
-                  reset();
-                }}
-              />
-            </Field>
+            {kind === 'surfing' && (
+              <Field>
+                <FieldLabel htmlFor="strategy-lots">Объём, лотов</FieldLabel>
+                <Input
+                  id="strategy-lots"
+                  type="number"
+                  min={1}
+                  max={maxInt}
+                  step={1}
+                  required
+                  disabled={!canEdit}
+                  value={lots}
+                  onChange={(event) => {
+                    setLots(event.target.value);
+                    reset();
+                  }}
+                />
+              </Field>
+            )}
           </div>
+          {kind === 'improved-surfing' && (
+            <>
+              {(
+                [
+                  ['Период ATR', atrPeriod, setAtrPeriod, 1, 1],
+                  ['Множитель стопа ATR', stopAtrMultiplier, setStopAtrMultiplier, 0.01, 'any'],
+                  ['Шаг добора ATR', addStepAtr, setAddStepAtr, 0.01, 'any'],
+                  ['Лимит доборов', maxAddOns, setMaxAddOns, 0, 1],
+                ] as const
+              ).map(([label, value, setValue, min, step]) => (
+                <Field key={label}>
+                  <FieldLabel>
+                    {label}
+                    <Input
+                      type="number"
+                      min={min}
+                      step={step}
+                      required
+                      disabled={!canEdit}
+                      value={value}
+                      onChange={(event) => {
+                        setValue(event.target.value);
+                        reset();
+                      }}
+                    />
+                  </FieldLabel>
+                </Field>
+              ))}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={tradeWeekends}
+                  disabled={!canEdit}
+                  onChange={(event) => {
+                    setTradeWeekends(event.target.checked);
+                    reset();
+                  }}
+                />{' '}
+                Торговать по выходным
+              </label>
+            </>
+          )}
         </FieldGroup>
         <Button type="submit" disabled={!canSave}>
           {isLoading ? 'Сохраняем…' : 'Сохранить настройки'}
         </Button>
-        <Button type="button" variant="outline" onClick={openBacktest}>
-          Бэктест
-        </Button>
+        {kind === 'surfing' && (
+          <Button type="button" variant="outline" onClick={openBacktest}>
+            Бэктест
+          </Button>
+        )}
         {isSuccess && (
           <p role="status" className="text-sm text-primary">
             Настройки сохранены.

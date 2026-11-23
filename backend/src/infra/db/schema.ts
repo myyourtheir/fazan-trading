@@ -40,6 +40,8 @@ export const sandboxConnection = pgTable(
     id: integer('id').primaryKey(),
     encryptedToken: text('encrypted_token').notNull(),
     accountId: text('account_id'),
+    previousAccountId: text('previous_account_id'),
+    previousEncryptedToken: text('previous_encrypted_token'),
   },
   (table) => [check('sandbox_connection_singleton', sql`${table.id} = 1`)],
 );
@@ -65,6 +67,58 @@ export const strategySettings = pgTable(
       sql`${table.timeframe} in ('5m', '15m', '30m', '1h')`,
     ),
   ],
+);
+
+export const appOwner = pgTable(
+  'app_owner',
+  {
+    id: integer('id').primaryKey(),
+    appAccountId: text('app_account_id').notNull().unique(),
+  },
+  (table) => [check('app_owner_singleton', sql`${table.id} = 1`)],
+);
+
+export const strategyProfiles = pgTable(
+  'strategy_profiles',
+  {
+    appAccountId: text('app_account_id')
+      .notNull()
+      .references(() => appOwner.appAccountId),
+    uid: text('instrument_uid').notNull(),
+    ticker: text('ticker').notNull(),
+    name: text('name').notNull(),
+    classCode: text('class_code').notNull(),
+    exchange: text('exchange').notNull(),
+    expirationDate: text('expiration_date'),
+    kind: text('kind').notNull(),
+    parameters: jsonb('parameters').notNull(),
+    timeframe: text('timeframe').$type<Timeframe>().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.appAccountId, table.kind] }),
+    check(
+      'strategy_profiles_valid_timeframe',
+      sql`${table.timeframe} in ('5m', '15m', '30m', '1h')`,
+    ),
+  ],
+);
+
+export const strategySelection = pgTable('strategy_selection', {
+  appAccountId: text('app_account_id')
+    .primaryKey()
+    .references(() => appOwner.appAccountId),
+  kind: text('kind').notNull().default('surfing'),
+});
+
+export const legacyStrategyClaim = pgTable(
+  'legacy_strategy_claim',
+  {
+    id: integer('id').primaryKey(),
+    appAccountId: text('app_account_id')
+      .notNull()
+      .references(() => appOwner.appAccountId),
+  },
+  (table) => [check('legacy_strategy_claim_singleton', sql`${table.id} = 1`)],
 );
 
 export const tradeOrders = pgTable(

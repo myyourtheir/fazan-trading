@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import type { MarketHistory, MarketUpdate } from './market-data.js';
 import {
   Robot,
+  RobotError,
   type Broker,
   type RecoveredOrder,
   type FindSignal,
@@ -78,6 +79,28 @@ test('unsafe automated reversal size does not prevent manual close', async () =>
 });
 
 const hourMs = timeframeMs['1h'];
+
+test('legacy claim serializes with robot operations without starting trading', async () => {
+  const { robot, submitted } = setup({});
+  const gate = deferred();
+  const claim = robot.claimLegacySettings(() => gate.promise);
+  await assert.rejects(robot.start(), { code: 'ROBOT_BUSY' });
+  await assert.rejects(robot.reconcile(), { code: 'ROBOT_BUSY' });
+  await assert.rejects(
+    robot.changeSettings(async () => {}),
+    { code: 'ROBOT_BUSY' },
+  );
+  gate.resolve();
+  await claim;
+  assert.equal(robot.status().mode, 'stopped');
+  assert.equal(submitted.length, 0);
+  await robot.start();
+  await assert.rejects(
+    robot.claimLegacySettings(async () => {}),
+    { code: 'ROBOT_BUSY' },
+  );
+  robot.stop();
+});
 type Candle = MarketHistory['candles'][number];
 const config: TradingConfig & { lots: number; emaPeriod: number } = {
   token: 'fake',
@@ -89,6 +112,28 @@ const config: TradingConfig & { lots: number; emaPeriod: number } = {
   timeframe: '1h',
 };
 const opening = Date.UTC(2026, 10, 18, 12);
+
+test('unavailable strategy blocks trading but permits an explicit manual close', async () => {
+  const { robot, submitted, isSubscribed, setAccount } = setup({
+    loadTradingConfig: async () => false,
+    verifyFreshStart: async () => {
+      throw new RobotError('ROBOT_STRATEGY_UNAVAILABLE');
+    },
+    loadCloseConfig: async () => config,
+  });
+  setAccount(2);
+  await assert.rejects(robot.start(), { code: 'ROBOT_STRATEGY_UNAVAILABLE' });
+  assert.equal(isSubscribed(), false);
+  assert.equal(submitted.length, 0);
+  await assert.rejects(robot.closePosition({ accountId: 'stale', instrumentUid: 'future' }), {
+    code: 'ROBOT_SELECTION_CHANGED',
+  });
+  await robot.closePosition({ accountId: 'account', instrumentUid: 'future' });
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].action, 'manual-close');
+  assert.equal(robot.status().position, 0);
+  assert.equal(isSubscribed(), false);
+});
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => {
@@ -120,11 +165,17 @@ function setup({
   timeframe = config.timeframe,
   findSignal = (history, options, config) => surfingStrategy.live(history, options, config),
   lots = config.lots,
+  verifyFreshStart = async () => {},
+  loadTradingConfig = async () => true,
+  loadCloseConfig,
 }: {
   autoConnect?: boolean;
   timeframe?: Timeframe;
   findSignal?: FindSignal<TradingConfig & { lots: number; emaPeriod: number }>;
   lots?: number;
+  verifyFreshStart?: () => Promise<void>;
+  loadTradingConfig?: () => Promise<boolean>;
+  loadCloseConfig?: () => Promise<TradingConfig>;
 } = {}) {
   const tradingConfig = { ...config, timeframe, lots };
   const selection = { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, timeframe };
@@ -233,6 +284,7 @@ function setup({
       },
     },
     async () => {
+      if (!(await loadTradingConfig())) throw new RobotError('ROBOT_STRATEGY_UNAVAILABLE');
       if (!settingsValid) throw new Error('Invalid saved strategy settings');
       return tradingConfig;
     },
@@ -242,6 +294,8 @@ function setup({
     (value) => {
       if (!canTradeSurfing(value)) throw new Error('ROBOT_SETTINGS_INVALID');
     },
+    verifyFreshStart,
+    loadCloseConfig,
   );
   async function historyFor(timeframe: Timeframe, ...candles: Candle[]) {
     const recoveredAt = reconnecting ? now : undefined;
@@ -696,6 +750,19 @@ test('unknown initial side and closes on the same side make no order', async () 
   assert.equal(submitted.length, 0);
 });
 
+test('fresh start fails closed if whole-account verification fails', async () => {
+  let checks = 0;
+  const { robot } = setup({
+    verifyFreshStart: async () => {
+      checks++;
+      throw new Error('account not verified');
+    },
+  });
+  await assert.rejects(robot.start(), /account not verified/);
+  assert.equal(checks, 1);
+  assert.equal(robot.status().mode, 'stopped');
+});
+
 test('rejects non-flat and active-order starts and checks again before sending', async () => {
   const { robot, history, setNow, setAccount, submitted } = setup();
   setAccount(-2);
@@ -792,6 +859,35 @@ test('a rejected order is reconciled without a resend and waits for explicit res
   await history(candle(-1, 99), candle(0, 101));
   assert.equal(robot.status().mode, 'running');
   assert.equal(submitted.length, 1);
+});
+
+test('resume cannot subscribe or submit when the selected strategy is unavailable', async () => {
+  let available = true;
+  const { robot, broker, history, setNow, setAccount, submitted, isSubscribed } = setup({
+    loadTradingConfig: async () => available,
+  });
+  const submit = broker.submit;
+  broker.submit = async (...args) => {
+    await submit(...args);
+    setAccount(0);
+    return { brokerOrderId: 'broker-order', brokerStatus: 'rejected', executedLots: 0 };
+  };
+  broker.orderState = async () => ({
+    brokerOrderId: 'broker-order',
+    brokerStatus: 'rejected',
+    executedLots: 0,
+    executions: [],
+  });
+  await robot.start();
+  setNow(1);
+  await history(candle(-1, 99), candle(0, 101));
+  await robot.reconcile();
+  assert.equal(robot.status().recovery?.ready, true);
+  available = false;
+  await assert.rejects(robot.resume(), { code: 'ROBOT_STRATEGY_UNAVAILABLE' });
+  assert.equal(isSubscribed(), false);
+  assert.equal(submitted.length, 1);
+  assert.equal(robot.status().recovery?.ready, true);
 });
 
 test('a definitive rejection before order creation still requires the original lookup and matching account state', async () => {

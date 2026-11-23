@@ -1,11 +1,20 @@
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { and, desc, eq, gt, inArray, lte, sql } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import type { SessionStore } from '../core/auth.js';
 import type { DisplaySettingsStore } from '../core/display-settings.js';
 import type { SandboxStore, SavedSandboxConnection } from '../core/sandbox.js';
-import type { SavedStrategy, StrategyStore } from '../core/strategy-settings.js';
+import {
+  StrategySettingsError,
+  type SavedStrategy,
+  type StrategyStore,
+  type SavedImprovedStrategy,
+  type StrategyKind,
+  validImproved,
+  isStrategyKind,
+} from '../core/strategy-settings.js';
 import { surfingStrategy } from '../core/surfing-strategy.js';
 import { isTimeframe } from '../core/timeframe.js';
 import type { OrderIntent, OrderResult, RecoveredOrder, TradingStore } from '../core/robot.js';
@@ -18,6 +27,10 @@ const {
   displaySettings,
   sandboxConnection,
   strategySettings,
+  appOwner,
+  strategyProfiles,
+  legacyStrategyClaim,
+  strategySelection,
   tradeOrders,
   tradeExecutions,
 } = schema;
@@ -31,6 +44,17 @@ export function connectToPostgres(connectionString: string | undefined) {
 
 export function migrateDatabase(db: Database) {
   return migrate(db, { migrationsFolder });
+}
+
+export async function ensureAppOwner(db: Database) {
+  await db.insert(appOwner).values({ id: 1, appAccountId: randomUUID() }).onConflictDoNothing();
+  const [owner] = await db.select().from(appOwner).where(eq(appOwner.id, 1));
+  if (!owner) throw new Error('Application owner unavailable');
+  await db
+    .insert(strategySelection)
+    .values({ appAccountId: owner.appAccountId })
+    .onConflictDoNothing();
+  return owner.appAccountId;
 }
 
 export class PostgresSessions implements SessionStore {
@@ -79,9 +103,10 @@ export class PostgresSandboxConnection implements SandboxStore {
   constructor(private readonly db: Database) {}
 
   public async load() {
-    const { encryptedToken, accountId } = sandboxConnection;
+    const { encryptedToken, accountId, previousAccountId, previousEncryptedToken } =
+      sandboxConnection;
     const [saved] = await this.db
-      .select({ encryptedToken, accountId })
+      .select({ encryptedToken, accountId, previousAccountId, previousEncryptedToken })
       .from(sandboxConnection)
       .where(eq(sandboxConnection.id, 1));
     return saved ?? null;
@@ -96,10 +121,21 @@ export class PostgresSandboxConnection implements SandboxStore {
 }
 
 export class PostgresStrategySettings implements StrategyStore {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly appAccountId: string,
+  ) {}
 
   public async load() {
-    const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
+    const [saved] = await this.db
+      .select()
+      .from(strategyProfiles)
+      .where(
+        and(
+          eq(strategyProfiles.appAccountId, this.appAccountId),
+          eq(strategyProfiles.kind, 'surfing'),
+        ),
+      );
     if (!saved) return null;
     const { uid, ticker, name, classCode, exchange, expirationDate, kind, parameters, timeframe } =
       saved;
@@ -126,10 +162,115 @@ export class PostgresStrategySettings implements StrategyStore {
     )
       throw new Error('Invalid strategy settings');
     const values = { ...instrument, kind: surfingStrategy.kind, parameters, timeframe };
+    await this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(1936028243)`);
+      const [legacy] = await tx.select().from(strategySettings).where(eq(strategySettings.id, 1));
+      const [claim] = await tx
+        .select()
+        .from(legacyStrategyClaim)
+        .where(eq(legacyStrategyClaim.id, 1));
+      if (legacy && !claim) throw new StrategySettingsError('STRATEGY_LEGACY_CLAIM_REQUIRED');
+      await tx
+        .insert(strategyProfiles)
+        .values({ appAccountId: this.appAccountId, ...values })
+        .onConflictDoUpdate({
+          target: [strategyProfiles.appAccountId, strategyProfiles.kind],
+          set: values,
+        });
+    });
+  }
+
+  public async loadImproved(): Promise<SavedImprovedStrategy | null> {
+    const [saved] = await this.db
+      .select()
+      .from(strategyProfiles)
+      .where(
+        and(
+          eq(strategyProfiles.appAccountId, this.appAccountId),
+          eq(strategyProfiles.kind, 'improved-surfing'),
+        ),
+      );
+    if (!saved) return null;
+    const { uid, ticker, name, classCode, exchange, expirationDate, parameters, timeframe } = saved;
+    if (!validImproved(parameters) || !isTimeframe(timeframe))
+      throw new Error('Invalid saved strategy settings');
+    return {
+      instrument: { uid, ticker, name, classCode, exchange, expirationDate },
+      kind: 'improved-surfing',
+      parameters,
+      timeframe,
+    };
+  }
+
+  public async saveImproved({ instrument, kind, parameters, timeframe }: SavedImprovedStrategy) {
+    if (kind !== 'improved-surfing' || !validImproved(parameters) || !isTimeframe(timeframe))
+      throw new Error('Invalid strategy settings');
+    const values = { ...instrument, kind, parameters, timeframe };
     await this.db
-      .insert(strategySettings)
-      .values({ id: 1, ...values })
-      .onConflictDoUpdate({ target: strategySettings.id, set: values });
+      .insert(strategyProfiles)
+      .values({ appAccountId: this.appAccountId, ...values })
+      .onConflictDoUpdate({
+        target: [strategyProfiles.appAccountId, strategyProfiles.kind],
+        set: values,
+      });
+  }
+
+  public async selected(): Promise<StrategyKind> {
+    const [row] = await this.db
+      .select()
+      .from(strategySelection)
+      .where(eq(strategySelection.appAccountId, this.appAccountId));
+    if (!row) return 'surfing';
+    if (!isStrategyKind(row.kind)) throw new Error('Invalid strategy selection');
+    return row.kind;
+  }
+
+  public async select(kind: StrategyKind) {
+    if (!isStrategyKind(kind)) throw new Error('Invalid strategy selection');
+    await this.db
+      .insert(strategySelection)
+      .values({ appAccountId: this.appAccountId, kind })
+      .onConflictDoUpdate({ target: strategySelection.appAccountId, set: { kind } });
+  }
+
+  public async legacyClaimAvailable() {
+    const [legacy] = await this.db
+      .select()
+      .from(strategySettings)
+      .where(eq(strategySettings.id, 1));
+    const [claim] = await this.db
+      .select()
+      .from(legacyStrategyClaim)
+      .where(eq(legacyStrategyClaim.id, 1));
+    const profile = await this.load();
+    return Boolean(legacy && !claim && !profile);
+  }
+
+  public async claimLegacy() {
+    await this.db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(1936028243)`);
+      const [legacy] = await tx.select().from(strategySettings).where(eq(strategySettings.id, 1));
+      const [claimed] = await tx
+        .select()
+        .from(legacyStrategyClaim)
+        .where(eq(legacyStrategyClaim.id, 1));
+      if (claimed?.appAccountId === this.appAccountId) return;
+      if (!legacy || claimed) throw new StrategySettingsError('STRATEGY_LEGACY_NOT_PENDING');
+      if (
+        legacy.kind !== surfingStrategy.kind ||
+        !surfingStrategy.validate(legacy.parameters) ||
+        !isTimeframe(legacy.timeframe)
+      )
+        throw new Error('Invalid legacy strategy settings');
+      const { id: _id, ...values } = legacy;
+      const inserted = await tx
+        .insert(strategyProfiles)
+        .values({ ...values, appAccountId: this.appAccountId })
+        .onConflictDoNothing()
+        .returning({ kind: strategyProfiles.kind });
+      if (!inserted.length) throw new StrategySettingsError('STRATEGY_PROFILE_EXISTS');
+      await tx.insert(legacyStrategyClaim).values({ id: 1, appAccountId: this.appAccountId });
+    });
   }
 }
 

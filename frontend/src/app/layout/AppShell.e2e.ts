@@ -65,6 +65,17 @@ test('the owner can enter and leave the protected dashboard', async ({ page }) =
       }
       if (!signedIn) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
       if (path === '/api/robot/history') return route.fulfill({ json: [] });
+      if (path === '/api/strategy/profiles')
+        return route.fulfill({
+          json: {
+            selected: 'surfing',
+            legacyClaimAvailable: false,
+            profiles: {
+              surfing: emptyStrategy,
+              'improved-surfing': { defaults: {}, settings: null },
+            },
+          },
+        });
       if (path.endsWith('/sandbox'))
         return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
       if (path === '/api/strategy') return route.fulfill({ json: emptyStrategy });
@@ -122,6 +133,17 @@ test('the protected panel closes when a session expires in a focused tab', async
     if (expired) return route.fulfill({ status: 401, json: { code: 'UNAUTHENTICATED' } });
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/robot/history') return route.fulfill({ json: [] });
+    if (path === '/api/strategy/profiles')
+      return route.fulfill({
+        json: {
+          selected: 'surfing',
+          legacyClaimAvailable: false,
+          profiles: {
+            surfing: emptyStrategy,
+            'improved-surfing': { defaults: {}, settings: null },
+          },
+        },
+      });
     if (path.endsWith('/sandbox')) {
       return route.fulfill({ json: { status: 'unconfigured', accountId: null, accounts: [] } });
     }

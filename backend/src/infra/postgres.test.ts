@@ -12,6 +12,7 @@ import { StrategySettings } from '../core/strategy-settings.js';
 import { timeframeMs } from '../core/timeframe.js';
 import {
   connectToPostgres,
+  ensureAppOwner,
   migrateDatabase,
   PostgresDisplaySettings,
   PostgresSandboxConnection,
@@ -69,9 +70,13 @@ test(
       broker,
     );
     let expected;
+    let expectedImproved;
     try {
       await migrateDatabase(first.db);
-      const service = new StrategySettings(new PostgresStrategySettings(first.db), sandbox);
+      const service = new StrategySettings(
+        new PostgresStrategySettings(first.db, await ensureAppOwner(first.db)),
+        sandbox,
+      );
       await service.search('IMOEXF');
       await service.save({
         accountId: 'existing',
@@ -92,15 +97,32 @@ test(
       assert.equal(expected.settings?.parameters.emaPeriod, 34);
       assert.equal(expected.settings?.parameters.lots, 7);
       assert.equal(expected.settings?.timeframe, '30m');
-      assert.equal((await first.db.$client.query('SELECT * FROM strategy_settings')).rowCount, 1);
+      await service.saveImproved('existing', 'contract-a', '5m', {
+        emaPeriod: 21,
+        atrPeriod: 14,
+        stopAtrMultiplier: 2,
+        addStepAtr: 1,
+        maxAddOns: 3,
+        tradeWeekends: false,
+      });
+      await service.select('existing', 'improved-surfing');
+      expectedImproved = await service.selectedProfile();
+      assert.equal(expectedImproved?.instrument.uid, 'contract-a');
+      assert.deepEqual(await service.get(), expected);
+      assert.equal((await first.db.$client.query('SELECT * FROM strategy_profiles')).rowCount, 2);
     } finally {
       await first.close();
     }
     goOffline();
     const restarted = connectToPostgres(testDatabase);
     try {
-      const service = new StrategySettings(new PostgresStrategySettings(restarted.db), sandbox);
+      const service = new StrategySettings(
+        new PostgresStrategySettings(restarted.db, await ensureAppOwner(restarted.db)),
+        sandbox,
+      );
       assert.deepEqual(await service.get(), expected);
+      assert.equal(await service.selectedKind(), 'improved-surfing');
+      assert.deepEqual(await service.selectedProfile(), expectedImproved);
     } finally {
       await restarted.close();
     }
@@ -275,7 +297,10 @@ test(
       );
       await sandbox.connect(token);
       await sandbox.selectAccount('existing');
-      const strategy = new StrategySettings(new PostgresStrategySettings(first.db), sandbox);
+      const strategy = new StrategySettings(
+        new PostgresStrategySettings(first.db, await ensureAppOwner(first.db)),
+        sandbox,
+      );
       await strategy.search('IMOEXF');
       await strategy.save({
         accountId: 'existing',
@@ -315,7 +340,10 @@ test(
       cipher,
       sandboxBroker,
     );
-    const strategy = new StrategySettings(new PostgresStrategySettings(second.db), sandbox);
+    const strategy = new StrategySettings(
+      new PostgresStrategySettings(second.db, await ensureAppOwner(second.db)),
+      sandbox,
+    );
     const store = new PostgresTradingStore(second.db, surfingJournalProjection);
     let listener: ((update: MarketUpdate) => void) | undefined;
     let position = -2;
@@ -490,17 +518,17 @@ test('unknown or corrupt stored strategy cannot be loaded', { skip: !testDatabas
   const connection = connectToPostgres(testDatabase);
   try {
     await migrateDatabase(connection.db);
-    const store = new PostgresStrategySettings(connection.db);
+    const store = new PostgresStrategySettings(connection.db, await ensureAppOwner(connection.db));
     await connection.db.$client.query(
-      `INSERT INTO strategy_settings (id, instrument_uid, ticker, name, class_code, exchange, kind, parameters, timeframe) VALUES (1, 'uid', 'T', 'name', 'class', 'exchange', 'unknown', '{"emaPeriod":55,"lots":1}', '1h') ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, parameters = EXCLUDED.parameters`,
+      `INSERT INTO strategy_profiles (app_account_id, instrument_uid, ticker, name, class_code, exchange, kind, parameters, timeframe) VALUES ((SELECT app_account_id FROM app_owner WHERE id = 1), 'uid', 'T', 'name', 'class', 'exchange', 'surfing', '{"emaPeriod":0,"lots":1}', '1h') ON CONFLICT (app_account_id, kind) DO UPDATE SET kind = EXCLUDED.kind, parameters = EXCLUDED.parameters`,
     );
     await assert.rejects(store.load(), /Invalid saved strategy/);
     await connection.db.$client.query(
-      `UPDATE strategy_settings SET kind = 'surfing', parameters = '{"emaPeriod":55,"lots":0}' WHERE id = 1`,
+      `UPDATE strategy_profiles SET kind = 'surfing', parameters = '{"emaPeriod":55,"lots":0}' WHERE kind = 'surfing'`,
     );
     await assert.rejects(store.load(), /Invalid saved strategy/);
     await connection.db.$client.query(
-      `UPDATE strategy_settings SET parameters = '{"emaPeriod":55,"lots":1,"instrument":{"uid":"attacker"},"kind":"unknown"}' WHERE id = 1`,
+      `UPDATE strategy_profiles SET parameters = '{"emaPeriod":55,"lots":1,"instrument":{"uid":"attacker"},"kind":"unknown"}' WHERE kind = 'surfing'`,
     );
     await assert.rejects(store.load(), /Invalid saved strategy/);
     let touched = false;
@@ -549,7 +577,7 @@ test('unknown or corrupt stored strategy cannot be loaded', { skip: !testDatabas
     await assert.rejects(robot.start(), /Invalid saved strategy/);
     assert.equal(touched, false);
   } finally {
-    await connection.db.$client.query('DELETE FROM strategy_settings');
+    await connection.db.$client.query('DELETE FROM strategy_profiles');
     await connection.close();
   }
 });
@@ -574,7 +602,13 @@ test(
       const connection = connectToPostgres(url.toString());
       try {
         await migrateDatabase(connection.db);
-        assert.equal(await new PostgresStrategySettings(connection.db).load(), null);
+        assert.equal(
+          await new PostgresStrategySettings(
+            connection.db,
+            await ensureAppOwner(connection.db),
+          ).load(),
+          null,
+        );
         assert.deepEqual(
           await new PostgresTradingStore(connection.db, surfingJournalProjection).history(),
           [],
@@ -582,7 +616,7 @@ test(
         const migrations = await connection.db.$client.query(
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         );
-        assert.equal(migrations.rows[0].count, 9);
+        assert.equal(migrations.rows[0].count, 11);
       } finally {
         await connection.close();
       }
@@ -634,14 +668,169 @@ test(
           `INSERT INTO trade_orders (id, account_id, instrument_uid, ticker, candle_time_ms, signal_time_ms, signal_price, ema, direction, lots, from_position, target_position, status, broker_status, timeframe) VALUES ('original-id', 'account', 'uid', 'T', 1000, 2000, 101, 100, 'buy', 7, 0, 7, 'reserved', 'unknown', '30m')`,
         );
         await migrateDatabase(connection.db);
-        const saved = await new PostgresStrategySettings(connection.db).load();
+        const upgradedStore = new PostgresStrategySettings(
+          connection.db,
+          await ensureAppOwner(connection.db),
+        );
+        assert.equal(await upgradedStore.load(), null);
+        const trading = new PostgresTradingStore(connection.db, surfingJournalProjection);
+        let submissions = 0;
+        let lookups = 0;
+        const robot = new Robot(
+          {
+            async verifySelection() {},
+            async accountState() {
+              return { position: 0, activeOrders: false };
+            },
+            async submit() {
+              submissions++;
+              throw new Error('unexpected submission');
+            },
+            async orderState() {
+              lookups++;
+              throw new Error('unavailable');
+            },
+          },
+          trading,
+          {
+            async subscribe() {
+              assert.fail('Unexpected automatic run');
+            },
+          },
+          async () => {
+            const saved = await upgradedStore.load();
+            if (!saved) throw new Error('missing settings');
+            return {
+              accountId: 'account',
+              token: 'token',
+              instrumentUid: saved.instrument.uid,
+              ticker: saved.instrument.ticker,
+              timeframe: saved.timeframe,
+            };
+          },
+          Date.now,
+          () => undefined,
+          async (order) => ({
+            accountId: order.accountId,
+            token: 'token',
+            instrumentUid: order.instrumentUid,
+          }),
+        );
+        await robot.restore();
+        assert.equal(robot.status().recovery?.orderId, 'original-id');
+        const profile = {
+          instrument: {
+            uid: 'other',
+            ticker: 'O',
+            name: 'other',
+            classCode: 'class',
+            exchange: 'exchange',
+            expirationDate: null,
+          },
+          kind: 'surfing' as const,
+          parameters: { emaPeriod: 55, lots: 1 },
+          timeframe: '1h' as const,
+        };
+        await assert.rejects(upgradedStore.save(profile), /STRATEGY_LEGACY_CLAIM_REQUIRED/);
+        await connection.db.$client.query(
+          `INSERT INTO strategy_profiles (app_account_id, instrument_uid, ticker, name, class_code, exchange, kind, parameters, timeframe)
+           SELECT app_account_id, 'other', 'O', 'other', 'class', 'exchange', 'surfing', '{"emaPeriod":55,"lots":1}', '1h' FROM app_owner`,
+        );
+        await assert.rejects(upgradedStore.claimLegacy(), /STRATEGY_PROFILE_EXISTS/);
+        assert.equal((await upgradedStore.load())?.instrument.uid, 'other');
+        assert.equal(
+          (await connection.db.$client.query('SELECT * FROM legacy_strategy_claim')).rowCount,
+          0,
+        );
+        await connection.db.$client.query('DELETE FROM strategy_profiles');
+        const originalLegacy = (
+          await connection.db.$client.query('SELECT * FROM strategy_settings')
+        ).rows;
+        for (const [kind, parameters] of [
+          ['unknown', '{"emaPeriod":34,"lots":7}'],
+          ['surfing', '{"emaPeriod":0,"lots":7}'],
+          ['surfing', '{"emaPeriod":34,"lots":"7"}'],
+        ]) {
+          await connection.db.$client.query(
+            'UPDATE strategy_settings SET kind = $1, parameters = $2::jsonb',
+            [kind, parameters],
+          );
+          const invalidLegacy = (
+            await connection.db.$client.query('SELECT * FROM strategy_settings')
+          ).rows;
+          await assert.rejects(upgradedStore.claimLegacy(), /Invalid legacy strategy settings/);
+          assert.deepEqual(
+            (await connection.db.$client.query('SELECT * FROM strategy_settings')).rows,
+            invalidLegacy,
+          );
+          assert.equal(
+            (await connection.db.$client.query('SELECT * FROM strategy_profiles')).rowCount,
+            0,
+          );
+          assert.equal(
+            (await connection.db.$client.query('SELECT * FROM legacy_strategy_claim')).rowCount,
+            0,
+          );
+        }
+        await connection.db.$client.query(
+          `UPDATE strategy_settings SET kind = 'surfing', parameters = '{"emaPeriod":34,"lots":7}'`,
+        );
+        await connection.db.$client.query(`
+          CREATE FUNCTION fail_legacy_marker() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM strategy_profiles WHERE app_account_id = NEW.app_account_id) THEN
+              RAISE EXCEPTION 'marker insertion failed after profile insertion';
+            END IF;
+            RETURN NEW;
+          END $$;
+          CREATE TRIGGER fail_legacy_marker BEFORE INSERT ON legacy_strategy_claim
+          FOR EACH ROW EXECUTE FUNCTION fail_legacy_marker();
+        `);
+        await assert.rejects(upgradedStore.claimLegacy());
+        assert.equal(
+          (await connection.db.$client.query('SELECT * FROM strategy_profiles')).rowCount,
+          0,
+        );
+        assert.equal(
+          (await connection.db.$client.query('SELECT * FROM legacy_strategy_claim')).rowCount,
+          0,
+        );
+        assert.deepEqual(
+          (await connection.db.$client.query('SELECT * FROM strategy_settings')).rows,
+          originalLegacy,
+        );
+        await connection.db.$client.query(`
+          DROP TRIGGER fail_legacy_marker ON legacy_strategy_claim;
+          DROP FUNCTION fail_legacy_marker();
+        `);
+        const claims = await Promise.allSettled([
+          robot.claimLegacySettings(() => upgradedStore.claimLegacy()),
+          upgradedStore.claimLegacy(),
+        ]);
+        assert.equal(claims.filter((result) => result.status === 'fulfilled').length, 2);
+        assert.equal(
+          (await connection.db.$client.query('SELECT * FROM strategy_settings')).rowCount,
+          1,
+        );
+        assert.equal(robot.status().recovery?.orderId, 'original-id');
+        const initialLookups = lookups;
+        await robot.reconcile();
+        assert.equal(lookups, initialLookups + 1);
+        assert.equal(submissions, 0);
+        const saved = await upgradedStore.load();
         assert.deepEqual(saved?.parameters, { emaPeriod: 34, lots: 7 });
         assert.equal(saved?.instrument.uid, 'uid');
         assert.equal(saved?.timeframe, '30m');
-        const trading = new PostgresTradingStore(connection.db, surfingJournalProjection);
+        await upgradedStore.save(profile);
+        await upgradedStore.claimLegacy();
+        assert.deepEqual(await upgradedStore.load(), profile);
+        await assert.rejects(
+          new PostgresStrategySettings(connection.db, 'different-owner').claimLegacy(),
+          /STRATEGY_LEGACY_NOT_PENDING/,
+        );
         const reserved = await trading.unresolved();
         assert.equal(reserved?.id, 'original-id');
-        assert.equal(reserved?.status, 'reserved');
+        assert.equal(reserved?.status, 'unconfirmed');
         const entries = await trading.history('account');
         assert.equal(entries.length, 1);
         assert.equal(entries[0].id, 'original-id');
@@ -654,7 +843,7 @@ test(
         const journalRows = await connection.db.$client.query(
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         );
-        assert.equal(journalRows.rows[0].count, 9);
+        assert.equal(journalRows.rows[0].count, 11);
       } finally {
         await connection.close();
       }

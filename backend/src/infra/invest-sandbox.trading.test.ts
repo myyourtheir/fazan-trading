@@ -204,8 +204,9 @@ test('SDK reads RUB cash without adding blocked balances or treating missing dat
   assert.equal(await balance(), null);
 });
 
-test('SDK checks the entire current account for positions and active orders before switching', async (t) => {
+test('SDK checks the entire account for positions, active orders and stops before switching', async (t) => {
   let orders: object[] = [];
+  let stopOrders: object[] = [];
   let futures: { balance: number; blocked: number }[] = [];
   let limitsLoadingInProgress = false;
   t.mock.method(
@@ -216,6 +217,9 @@ test('SDK checks the entire current account for positions and active orders befo
         sandbox: {
           async getSandboxOrders() {
             return { orders };
+          },
+          async getSandboxStopOrders() {
+            return { stopOrders };
           },
           async getSandboxPositions() {
             return { limitsLoadingInProgress, futures, securities: [], options: [] };
@@ -229,6 +233,9 @@ test('SDK checks the entire current account for positions and active orders befo
   orders = [{}];
   assert.equal(await flat(), false);
   orders = [];
+  stopOrders = [{}];
+  assert.equal(await flat(), false);
+  stopOrders = [];
   limitsLoadingInProgress = true;
   assert.equal(await flat(), null);
   limitsLoadingInProgress = false;

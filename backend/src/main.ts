@@ -11,6 +11,7 @@ import { MarketData } from './core/market-data.js';
 import { attachMarketSocket } from './api/market-socket.js';
 import {
   connectToPostgres,
+  ensureAppOwner,
   migrateDatabase,
   PostgresDisplaySettings,
   PostgresSandboxConnection,
@@ -52,7 +53,8 @@ async function main() {
   const { db, close } = connectToPostgres(DATABASE_URL);
   try {
     await migrateDatabase(db);
-    const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
+    const appAccountId = await ensureAppOwner(db);
+    const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db), { appAccountId });
     const broker = new InvestSandbox();
     const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, broker);
     const backtest = new BacktestHistory(
@@ -61,9 +63,12 @@ async function main() {
       Date.now,
       surfingStrategy.backtest,
     );
-    const strategy = new StrategySettings(new PostgresStrategySettings(db), sandbox);
+    const strategy = new StrategySettings(
+      new PostgresStrategySettings(db, auth.appAccountId!),
+      sandbox,
+    );
     const market = new MarketData(broker, async () => {
-      const { settings } = await strategy.get();
+      const settings = await strategy.selectedProfile();
       return (
         settings && {
           instrumentUid: settings.instrument.uid,
@@ -78,6 +83,8 @@ async function main() {
       new PostgresTradingStore(db, surfingJournalProjection),
       surfingFeed(market),
       async () => {
+        if ((await strategy.selectedKind()) !== 'surfing')
+          throw new RobotError('ROBOT_STRATEGY_UNAVAILABLE');
         const { settings } = await strategy.get();
         if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
         return {
@@ -97,6 +104,21 @@ async function main() {
       }),
       (config) => {
         if (!canTradeSurfing(config)) throw new RobotError('ROBOT_SETTINGS_INVALID');
+      },
+      async () => {
+        if ((await strategy.selectedKind()) !== 'surfing')
+          throw new RobotError('ROBOT_STRATEGY_UNAVAILABLE');
+        await sandbox.verifyFreshStart();
+      },
+      async () => {
+        const settings = await strategy.selectedProfile();
+        if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
+        return {
+          ...(await sandbox.tradingCredentials()),
+          instrumentUid: settings.instrument.uid,
+          ticker: settings.instrument.ticker,
+          timeframe: settings.timeframe,
+        };
       },
     );
     await robot.restore();

@@ -7,7 +7,7 @@ import { SandboxError, type SandboxConnection } from '../core/sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
-import type { StrategySettings } from '../core/strategy-settings.js';
+import { StrategySettingsError, type StrategySettings } from '../core/strategy-settings.js';
 import type { BacktestHistory } from '../core/backtest-history.js';
 import { backtestRoutes } from './backtest-routes.js';
 import { defaultTimeZone, type DisplaySettings } from '../core/display-settings.js';
@@ -134,7 +134,16 @@ export function createApp({
       sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload),
     );
     if (strategy)
-      api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
+      api.use(
+        '/strategy',
+        strategyRoutes(
+          strategy,
+          requireOwner,
+          change,
+          robot ? robot.claimLegacySettings.bind(robot) : change,
+          marketSocket?.reload,
+        ),
+      );
   }
   if (backtest)
     api.use(
@@ -190,7 +199,11 @@ export function createApp({
 
   const onError: ErrorRequestHandler = (error: unknown, _req, res, next) => {
     if (res.headersSent) return next(error);
-    if (error instanceof SandboxError || error instanceof RobotError) {
+    if (
+      error instanceof SandboxError ||
+      error instanceof RobotError ||
+      error instanceof StrategySettingsError
+    ) {
       res.status(error.status).json({ code: error.code });
       return;
     }

@@ -64,6 +64,20 @@
       "when": 1795444472547,
       "tag": "0008_mighty_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795455152287,
+      "tag": "0009_dazzling_eternity",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795455928566,
+      "tag": "0010_confused_viper",
+      "breakpoints": true
     }
   ]
 }

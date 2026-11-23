@@ -13,6 +13,7 @@ import { robotApi, type Dashboard } from '../api/robot-api';
 import { sandboxErrorMessage, sandboxMessageFor } from '@/entities/sandbox';
 import { ClosePositionDialog, type CloseTarget } from './ClosePositionDialog';
 import { OrderRecovery } from './OrderRecovery';
+import type { StrategyKind } from '@/entities/strategy';
 
 const modes: Record<Dashboard['mode'], string> = {
   stopped: 'Робот остановлен',
@@ -26,10 +27,12 @@ export function RobotControls({
   dashboard,
   closeTarget,
   accountId,
+  selectedKind,
 }: {
   dashboard: Dashboard;
   closeTarget?: CloseTarget;
   accountId: string | null;
+  selectedKind?: StrategyKind;
 }) {
   const [command, { isLoading, error }] = robotApi.useRobotCommandMutation();
   const stopped = dashboard.mode === 'stopped';
@@ -45,7 +48,10 @@ export function RobotControls({
       <CardContent className="grid justify-items-start gap-3">
         {(!stopped || !recovery || recovery.ready) && (
           <Button
-            disabled={isLoading && dashboard.mode !== 'starting'}
+            disabled={
+              (isLoading && dashboard.mode !== 'starting') ||
+              (stopped && !recovery && selectedKind !== 'surfing')
+            }
             onClick={() => void command(stopped && !recovery ? 'start' : 'stop')}
           >
             {stopped
@@ -54,6 +60,12 @@ export function RobotControls({
                 : 'Запустить робота'
               : 'Остановить робота'}
           </Button>
+        )}
+        {stopped && !recovery && selectedKind === 'improved-surfing' && (
+          <p className="text-sm text-muted-foreground">
+            Запуск Улучшенного серфинга недоступен до подтверждения безопасной работы защитных
+            стопов в песочнице.
+          </p>
         )}
         {stopped && !recovery && closeTarget && (
           <ClosePositionDialog

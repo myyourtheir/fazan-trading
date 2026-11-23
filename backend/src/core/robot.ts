@@ -150,6 +150,8 @@ export class Robot<
     private readonly loadRecoveryAccount: (order: OrderIntent) => Promise<RecoveryAccount> = () =>
       this.loadConfig(),
     private readonly validateTradingConfig: (config: C) => void = () => {},
+    private readonly verifyFreshStart: () => Promise<void> = async () => {},
+    private readonly loadCloseConfig: () => Promise<TradingConfig> = () => this.loadConfig(),
   ) {}
 
   public status() {
@@ -184,6 +186,23 @@ export class Robot<
     });
   }
 
+  public async claimLegacySettings(action: () => Promise<void>) {
+    if (
+      (this.mode !== 'stopped' && this.mode !== 'paused') ||
+      this.starting ||
+      this.pending ||
+      this.changing ||
+      this.run
+    )
+      throw new RobotError('ROBOT_BUSY');
+    this.changing = true;
+    try {
+      await action();
+    } finally {
+      this.changing = false;
+    }
+  }
+
   public async replaceCredentials(action: (accountId?: string) => Promise<void>) {
     await this.withSettingsLock(async () => {
       const order = this.recovery?.order ?? (await this.store.unresolved());
@@ -204,6 +223,7 @@ export class Robot<
     this.requireStopped();
     await this.beginTradingRun(async () => {
       await this.requireNoUnresolved();
+      await this.verifyFreshStart();
       const config = await this.loadConfig();
       this.validateTradingConfig(config);
       await this.broker.verifySelection(config);
@@ -437,7 +457,7 @@ export class Robot<
 
   private async close(selection: Selection) {
     await this.requireNoUnresolved();
-    const config = await this.loadConfig();
+    const config = await this.loadCloseConfig();
     const { accountId, instrumentUid, ticker, timeframe } = config;
     if (!sameSelection(config, selection)) {
       throw new RobotError('ROBOT_SELECTION_CHANGED');

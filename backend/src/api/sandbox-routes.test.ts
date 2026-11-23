@@ -54,11 +54,17 @@ async function serve(
   assert.ok(address && typeof address === 'object');
   let cookie = '';
   return {
-    async request(path: string, method = 'GET', body?: object, withSession = true) {
+    async request(
+      path: string,
+      method = 'GET',
+      body?: object,
+      withSession = true,
+      withCsrf = true,
+    ) {
       const response = await fetch(`http://127.0.0.1:${address.port}/api/${path}`, {
         method,
         headers: {
-          'X-Serfing-Request': '1',
+          ...(withCsrf && { 'X-Serfing-Request': '1' }),
           'Content-Type': 'application/json',
           cookie: withSession ? cookie : '',
         },
@@ -71,6 +77,56 @@ async function serve(
     },
   };
 }
+
+test('legacy claim requires an authenticated owner and explicit confirmation', async (t) => {
+  const { broker } = fakeBroker();
+  const sandbox = new SandboxConnection(
+    {
+      async load() {
+        return null;
+      },
+      async save() {},
+    },
+    cipher,
+    broker,
+  );
+  let claims = 0;
+  const strategy = new StrategySettings(
+    {
+      async load() {
+        return null;
+      },
+      async save() {},
+      async loadImproved() {
+        return null;
+      },
+      async saveImproved() {},
+      async selected() {
+        return 'surfing' as const;
+      },
+      async select() {},
+      async legacyClaimAvailable() {
+        return false;
+      },
+      async claimLegacy() {
+        claims++;
+      },
+    },
+    sandbox,
+  );
+  const { request } = await serve(t, sandbox, strategy);
+  assert.equal((await request('strategy/legacy-claim', 'POST', { confirmed: true })).status, 401);
+  await request('auth/login', 'POST', { password });
+  assert.equal(
+    (await request('strategy/legacy-claim', 'POST', { confirmed: true }, true, false)).status,
+    403,
+  );
+  assert.equal((await request('strategy/legacy-claim', 'POST', {})).status, 400);
+  assert.equal((await request('strategy/legacy-claim', 'POST', { confirmed: 'true' })).status, 400);
+  assert.equal(claims, 0);
+  assert.equal((await request('strategy/legacy-claim', 'POST', { confirmed: true })).status, 204);
+  assert.equal(claims, 1);
+});
 
 test('the owner can connect, select, create, and fund sandbox accounts without exposing the token', async (t) => {
   let saved: Awaited<ReturnType<SandboxStore['load']>> = null;
@@ -183,9 +239,22 @@ test('the server rejects trading settings changes until stopped and broker-confi
       async save(value) {
         settings = value;
       },
+      async loadImproved() {
+        return null;
+      },
+      async saveImproved() {},
+      async selected() {
+        return 'surfing' as const;
+      },
+      async select() {},
+      async legacyClaimAvailable() {
+        return false;
+      },
+      async claimLegacy() {},
     },
     sandbox,
   );
+  let unresolved = false;
   const robot = new Robot(
     {
       async verifySelection() {},
@@ -201,7 +270,7 @@ test('the server rejects trading settings changes until stopped and broker-confi
     },
     {
       async hasUnresolved() {
-        return false;
+        return unresolved;
       },
       async unresolved() {
         return null;
@@ -259,11 +328,19 @@ test('the server rejects trading settings changes until stopped and broker-confi
       timeframe: '15m',
     });
   const create = () => request('sandbox/accounts', 'POST');
+  const select = () =>
+    request('strategy/selection', 'PUT', { accountId: 'existing', kind: 'improved-surfing' });
+  const beforeSelection = (await request('strategy/profiles')).body;
   assert.equal((await request('robot/start', 'POST')).status, 204);
-  for (const attempt of [save, create, () => close({ ...selection, confirmed: true })]) {
+  for (const attempt of [save, create, select, () => close({ ...selection, confirmed: true })]) {
     assert.deepEqual(await attempt(), { status: 409, body: { code: 'ROBOT_BUSY' } });
   }
+  assert.deepEqual((await request('strategy/profiles')).body, beforeSelection);
   await request('robot/stop', 'POST');
+  unresolved = true;
+  assert.deepEqual(await select(), { status: 409, body: { code: 'ROBOT_ORDER_UNRESOLVED' } });
+  assert.deepEqual((await request('strategy/profiles')).body, beforeSelection);
+  unresolved = false;
   for (const [actual, code] of [
     [2, 'SANDBOX_ACCOUNT_NOT_FLAT'],
     [null, 'SANDBOX_ACCOUNT_FLAT_UNVERIFIED'],
@@ -419,7 +496,7 @@ test('changing the selected account requires a flat broker account, even when cr
     'accountIsFlat',
     async (candidate: string, accountId: string) => {
       assert.equal(candidate, token, 'flatness must be checked using the existing credentials');
-      assert.equal(accountId, saved?.accountId);
+      assert.ok(accountId === saved?.accountId || accountId === 'other');
       return flat;
     },
   );
@@ -431,13 +508,17 @@ test('changing the selected account requires a flat broker account, even when cr
   const create = () => request('sandbox/accounts', 'POST');
   const replace = () => request('sandbox/connection', 'PUT', { token: replacementToken });
   const original = saved;
-  for (const operation of [select, create, replace]) {
+  for (const operation of [select, create]) {
     assert.deepEqual(await operation(), {
       status: 409,
       body: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' },
     });
   }
-  assert.equal(flatCheck.mock.callCount(), 3);
+  assert.deepEqual(await replace(), {
+    status: 422,
+    body: { code: 'SANDBOX_ACCOUNT_UNAVAILABLE' },
+  });
+  assert.equal(flatCheck.mock.callCount(), 2);
   assert.equal(openAccount.mock.callCount(), 0);
   assert.deepEqual(saved, original);
 
@@ -493,6 +574,8 @@ test('strategy saving uses offered contracts without fetching the broker catalog
     },
   };
   let settings: Awaited<ReturnType<StrategyStore['load']>> = null;
+  let improved: Awaited<ReturnType<StrategyStore['loadImproved']>> = null;
+  let selected: 'surfing' | 'improved-surfing' = 'surfing';
   const strategyStore: StrategyStore = {
     async load() {
       return settings;
@@ -500,8 +583,26 @@ test('strategy saving uses offered contracts without fetching the broker catalog
     async save(record) {
       settings = record;
     },
+    async loadImproved() {
+      return improved;
+    },
+    async saveImproved(value) {
+      improved = value;
+    },
+    async selected() {
+      return selected;
+    },
+    async select(value) {
+      selected = value;
+    },
+    async legacyClaimAvailable() {
+      return false;
+    },
+    async claimLegacy() {},
   };
   const { broker } = fakeBroker();
+  let flat: boolean | null = true;
+  broker.accountIsFlat = async () => flat;
   const listFutures = broker.futures;
   let catalogueAvailable = true;
   const catalogue = t.mock.method(broker, 'futures', async (candidate: string) => {
@@ -573,6 +674,83 @@ test('strategy saving uses offered contracts without fetching the broker catalog
     204,
   );
   assert.equal(catalogue.mock.callCount(), 3);
+  const parameters = {
+    emaPeriod: 55,
+    atrPeriod: 20,
+    stopAtrMultiplier: 2,
+    addStepAtr: 1,
+    maxAddOns: 0,
+    tradeWeekends: false,
+  };
+  const improvedRequest = {
+    accountId: 'existing',
+    instrumentUid: 'contract-b',
+    timeframe: '1h',
+    kind: 'improved-surfing',
+    parameters,
+  };
+  for (const [field, value] of Object.entries({
+    emaPeriod: 0,
+    atrPeriod: 0,
+    stopAtrMultiplier: 0,
+    addStepAtr: -1,
+    maxAddOns: -1,
+    tradeWeekends: 'false',
+  })) {
+    assert.equal(
+      (await put({ ...improvedRequest, parameters: { ...parameters, [field]: value } })).status,
+      400,
+    );
+  }
+  assert.equal((await put({ ...improvedRequest, instrumentUid: 'unknown' })).status, 422);
+  assert.equal((await put(improvedRequest)).status, 204);
+  assert.equal((await request('strategy/profiles')).body.selected, 'surfing');
+  assert.deepEqual(
+    (await request('strategy/profiles')).body.profiles['improved-surfing'].settings.parameters,
+    parameters,
+  );
+  flat = false;
+  const select = (accountId: string) =>
+    request('strategy/selection', 'PUT', { accountId, kind: 'improved-surfing' });
+  const before = (await request('strategy/profiles')).body;
+  assert.deepEqual(await select('existing'), {
+    status: 409,
+    body: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' },
+  });
+  assert.deepEqual((await request('strategy/profiles')).body, before);
+  flat = null;
+  assert.deepEqual(await select('existing'), {
+    status: 409,
+    body: { code: 'SANDBOX_ACCOUNT_FLAT_UNVERIFIED' },
+  });
+  assert.deepEqual((await request('strategy/profiles')).body, before);
+  assert.deepEqual(await select('stale'), {
+    status: 422,
+    body: { code: 'SANDBOX_ACCOUNT_UNAVAILABLE' },
+  });
+  assert.deepEqual((await request('strategy/profiles')).body, before);
+  flat = true;
+  assert.equal(
+    (
+      await request('strategy/selection', 'PUT', {
+        accountId: 'existing',
+        kind: 'improved-surfing',
+      })
+    ).status,
+    204,
+  );
+  assert.equal((await request('strategy/profiles')).body.selected, 'improved-surfing');
+  assert.deepEqual((await strategy.selectedProfile())?.parameters, parameters);
+  improved = null;
+  assert.equal(
+    await strategy.selectedProfile(),
+    null,
+    'Missing selected profile must not fall back',
+  );
+  improved = { instrument: matches[1], kind: 'improved-surfing', parameters, timeframe: '1h' };
+  assert.equal((await request('strategy')).body.settings.lots, 3);
+  assert.equal(catalogue.mock.callCount(), 3);
+
   assert.equal((await put({ ...config, lots: 0 })).status, 400);
   assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 204);
   assert.deepEqual(await put(config), { status: 409, body: { code: 'FUTURE_SELECTION_EXPIRED' } });

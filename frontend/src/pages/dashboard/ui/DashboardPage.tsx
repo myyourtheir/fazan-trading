@@ -21,10 +21,11 @@ export function DashboardPage({
     refetchOnReconnect: true,
   });
   const sandbox = sandboxApi.useSandboxQuery();
-  const strategy = strategyApi.useStrategyQuery();
+  const strategy = strategyApi.useProfilesQuery();
   const accountId =
     selectedSandboxAccount(sandbox.isError ? undefined : sandbox.currentData)?.id ?? null;
-  const instrument = strategy.isError ? undefined : strategy.currentData?.settings?.instrument;
+  const profiles = strategy.isError ? undefined : strategy.currentData;
+  const instrument = profiles?.profiles[profiles.selected].settings?.instrument;
   const closeTarget =
     accountId && instrument && !sandbox.isFetching && !strategy.isFetching
       ? { accountId, instrumentUid: instrument.uid, ticker: instrument.ticker }
@@ -69,11 +70,17 @@ export function DashboardPage({
       <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[17rem_minmax(0,1fr)_19rem]">
         <div className="grid min-w-0 gap-4">
           {robot && (
-            <RobotControls dashboard={robot} closeTarget={closeTarget} accountId={accountId} />
+            <RobotControls
+              dashboard={robot}
+              closeTarget={closeTarget}
+              accountId={accountId}
+              selectedKind={profiles?.selected}
+            />
           )}
           <StrategySettings
             accountId={accountId}
             disabled={sandbox.isFetching || Boolean(settingsLock)}
+            claimDisabled={!robot || (robot.mode !== 'stopped' && robot.mode !== 'paused')}
             settingsHint={settingsHint}
             refreshSession={refreshSession}
           />

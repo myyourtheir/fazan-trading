@@ -8,6 +8,14 @@ const contract = {
   exchange: 'MOEX',
   expirationDate: null,
 };
+const profiles = (settings: unknown) => ({
+  selected: 'surfing',
+  legacyClaimAvailable: false,
+  profiles: {
+    surfing: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings },
+    'improved-surfing': { defaults: {}, settings: null },
+  },
+});
 
 test('the strategy draft opens the backtest without saving and carries unsaved edits', async ({
   page,
@@ -38,6 +46,8 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
         });
       case '/api/market':
         return route.fulfill({ json: null });
+      case '/api/strategy/profiles':
+        return route.fulfill({ json: profiles(null) });
       case '/api/strategy':
         if (request.method() === 'GET') {
           return route.fulfill({
@@ -180,6 +190,15 @@ test('a refresh after opening from a draft restores the saved parameters, not th
         });
       case '/api/market':
         return route.fulfill({ json: null });
+      case '/api/strategy/profiles':
+        return route.fulfill({
+          json: profiles({
+            instrument: contract,
+            kind: 'surfing',
+            parameters: { emaPeriod: 34, lots: 3 },
+            timeframe: '30m',
+          }),
+        });
       case '/api/strategy':
         return route.fulfill({
           json: {

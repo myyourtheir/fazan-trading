@@ -29,12 +29,13 @@ export class OwnerAuth {
     private readonly sessions: SessionStore,
     private readonly now: () => number,
     private readonly ttlMs: number,
+    public readonly appAccountId: string | undefined,
   ) {}
 
   public static async create(
     password: string,
     sessions: SessionStore,
-    options: { now?: () => number; ttlMs?: number } = {},
+    options: { now?: () => number; ttlMs?: number; appAccountId?: string } = {},
   ) {
     const salt = randomBytes(32);
     const expected = (await derive(password, salt, 64)) as Buffer;
@@ -44,6 +45,7 @@ export class OwnerAuth {
       sessions,
       options.now ?? Date.now,
       options.ttlMs ?? 12 * 60 * 60_000,
+      options.appAccountId,
     );
   }
 

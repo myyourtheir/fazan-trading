@@ -70,6 +70,25 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
               }
             : null,
         });
+      case '/api/strategy/profiles':
+        return route.fulfill({
+          json: {
+            selected: 'surfing',
+            legacyClaimAvailable: false,
+            profiles: {
+              surfing: {
+                defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+                settings: saved && {
+                  instrument: saved.instrument,
+                  timeframe: saved.timeframe,
+                  kind: 'surfing',
+                  parameters: { emaPeriod: saved.emaPeriod, lots: saved.lots },
+                },
+              },
+              'improved-surfing': { defaults: {}, settings: null },
+            },
+          },
+        });
       case '/api/strategy':
         if (request.method() === 'GET') {
           return route.fulfill({
@@ -82,8 +101,8 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
         expect(request.postDataJSON()).toEqual({
           accountId: 'sandbox-1',
           instrumentUid: 'quarterly-uid',
-          emaPeriod: 34,
-          lots: 3,
+          kind: 'surfing',
+          parameters: { emaPeriod: 34, lots: 3 },
           timeframe: '15m',
         });
         saved = { instrument: contracts[1], emaPeriod: 34, lots: 3, timeframe: '15m' };
@@ -112,7 +131,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await expect(timeframe).toHaveValue('1h');
   await expect(lots).toHaveValue('');
   await expect(select.getByRole('option')).toHaveCount(3);
-  await expect(select.getByRole('option', { name: 'IMOEXF', exact: true })).toHaveCount(2);
+  await expect(select.getByRole('option', { name: /IMOEXF · Индекс Мосбиржи/ })).toHaveCount(2);
   await lots.fill('3');
   await expect(save).toBeDisabled();
   await search.fill('Мосбиржи');
@@ -122,7 +141,7 @@ test('strategy starts with IMOEXF and EMA55, requires an explicit contract, and 
   await search.press('Enter');
   await searchRequest;
   await expect(select.getByRole('option')).toHaveCount(3);
-  await select.selectOption('quarterly-uid');
+  await select.selectOption({ label: 'IMOEXF · Индекс Мосбиржи · SPBFUT · MOEX · 2027-03-18' });
   await period.fill('34');
   await timeframe.selectOption('15m');
   await save.click();

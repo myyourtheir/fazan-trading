@@ -24,6 +24,7 @@ import {
   TimeInForceType,
 } from '@ttech-pub/grpc-node-client/compiled/orders.js';
 import { AccountStatus } from '@ttech-pub/grpc-node-client/compiled/users.js';
+import { StopOrderStatusOption } from '@ttech-pub/grpc-node-client/compiled/stoporders.js';
 import { Status } from 'nice-grpc';
 import { SandboxError, virtualFundingRubles, type SandboxBroker } from '../core/sandbox.js';
 import type { MarketCandle, MarketBroker } from '../core/market-data.js';
@@ -161,6 +162,11 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     return this.call(token, async ({ sandbox }) => {
       const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
       if (orders.length > 0) return false;
+      const { stopOrders } = await sandbox.getSandboxStopOrders(
+        { accountId, status: StopOrderStatusOption.STOP_ORDER_STATUS_ACTIVE },
+        requestOptions(),
+      );
+      if (stopOrders.length > 0) return false;
       const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
       if (positions.limitsLoadingInProgress) return null;
       return ![...positions.futures, ...positions.securities, ...positions.options].some(

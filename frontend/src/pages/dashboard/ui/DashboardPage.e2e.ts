@@ -145,6 +145,25 @@ async function mockMarket(
             settings: { instrument, emaPeriod: 3, lots: 1, timeframe: selection.timeframe },
           },
         });
+      case '/api/strategy/profiles':
+        return route.fulfill({
+          json: {
+            selected: 'surfing',
+            legacyClaimAvailable: false,
+            profiles: {
+              surfing: {
+                defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+                settings: {
+                  instrument,
+                  kind: 'surfing',
+                  parameters: { emaPeriod: 3, lots: 1 },
+                  timeframe: selection.timeframe,
+                },
+              },
+              'improved-surfing': { defaults: {}, settings: null },
+            },
+          },
+        });
       case '/api/strategy/futures':
         return route.fulfill({ json: [instrument] });
       case '/api/market':

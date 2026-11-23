@@ -33,13 +33,13 @@ export function MarketChart({
   dark: boolean;
   refreshSession: () => void;
 }) {
-  const config = strategyApi.useStrategyQuery();
-  const settings = !config.isError && config.data?.settings;
+  const config = strategyApi.useProfilesQuery();
+  const settings = !config.isError && config.data?.profiles[config.data.selected].settings;
   const market = marketApi.useMarketQuery(
     settings
       ? {
           instrumentUid: settings.instrument.uid,
-          emaPeriod: settings.emaPeriod,
+          emaPeriod: settings.parameters.emaPeriod,
           timeframe: settings.timeframe,
         }
       : skipToken,
@@ -60,7 +60,7 @@ export function MarketChart({
         </CardTitle>
         <CardDescription>
           {settings
-            ? `${settings.instrument.ticker} · ${timeframeLabels[settings.timeframe]} · EMA ${settings.emaPeriod}`
+            ? `${settings.instrument.ticker} · ${timeframeLabels[settings.timeframe]} · EMA ${settings.parameters.emaPeriod}`
             : 'Сохраните настройки стратегии, чтобы увидеть график.'}
         </CardDescription>
       </CardHeader>
