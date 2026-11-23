@@ -31,7 +31,7 @@ export class OwnerAuth {
     private readonly ttlMs: number,
   ) {}
 
-  static async create(
+  public static async create(
     password: string,
     sessions: SessionStore,
     options: { now?: () => number; ttlMs?: number } = {},
@@ -47,7 +47,7 @@ export class OwnerAuth {
     );
   }
 
-  async login(password: string): Promise<LoginResult> {
+  public async login(password: string): Promise<LoginResult> {
     const now = this.now();
     if (now - this.windowStart >= attemptWindowMs) {
       this.windowStart = now;
@@ -69,13 +69,13 @@ export class OwnerAuth {
     return { kind: 'granted', token, ttlMs: this.ttlMs };
   }
 
-  async remainingMs(token: string | undefined) {
+  public async remainingMs(token: string | undefined) {
     if (!token || !sessionToken.test(token)) return 0;
     const until = await this.sessions.activeUntil(digest(token), new Date(this.now()));
     return until ? Math.max(0, until.getTime() - this.now()) : 0;
   }
 
-  async logout(token: string | undefined) {
+  public async logout(token: string | undefined) {
     if (token && sessionToken.test(token)) await this.sessions.revoke(digest(token));
   }
 }

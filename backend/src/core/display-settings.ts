@@ -8,11 +8,11 @@ export interface DisplaySettingsStore {
 export class DisplaySettings {
   constructor(private readonly store: DisplaySettingsStore) {}
 
-  async get() {
+  public async get() {
     return { timeZone: (await this.store.loadTimeZone()) ?? defaultTimeZone };
   }
 
-  async setTimeZone(timeZone: unknown) {
+  public async setTimeZone(timeZone: unknown) {
     // Accept named IANA zones, not fixed numeric offsets.
     if (
       typeof timeZone !== 'string' ||

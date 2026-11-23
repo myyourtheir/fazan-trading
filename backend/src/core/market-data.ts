@@ -81,17 +81,17 @@ class MarketSeries {
 
   constructor(private readonly selection: MarketSelection) {}
 
-  resetStream() {
+  public resetStream() {
     this.liveTimes.clear();
   }
 
-  tick(candle: MarketCandle) {
+  public tick(candle: MarketCandle) {
     if (this.candles.get(candle.time)?.complete) return;
     this.candles.set(candle.time, { ...candle, complete: false });
     this.liveTimes.add(candle.time);
   }
 
-  merge(candles: MarketCandle[], ema: { time: number; value: number }[]) {
+  public merge(candles: MarketCandle[], ema: { time: number; value: number }[]) {
     for (const candle of candles) {
       if (
         candle.complete ||
@@ -105,7 +105,7 @@ class MarketSeries {
     }
   }
 
-  history(now: number): MarketHistory {
+  public history(now: number): MarketHistory {
     for (const time of this.candles.keys()) {
       if (time >= now - historyMs) continue;
       this.candles.delete(time);
@@ -139,11 +139,11 @@ class MarketFeed {
 
   constructor(readonly config: MarketConfig) {}
 
-  matches(config: MarketConfig) {
+  public matches(config: MarketConfig) {
     return this.config.token === config.token && sameMarketSelection(this.config, config);
   }
 
-  publish(update: MarketUpdate) {
+  public publish(update: MarketUpdate) {
     if (update.stream === this.state && !update.history && !update.tick) return;
     this.state = update.stream;
     if (update.history) this.history = update.history;
@@ -167,7 +167,7 @@ export class MarketData {
     this.retryMs = options.retryMs ?? 5_000;
   }
 
-  async history() {
+  public async history() {
     const config = await this.loadConfig();
     if (!config) return null;
     const series = new MarketSeries(config);
@@ -175,7 +175,7 @@ export class MarketData {
     return series.history(this.now());
   }
 
-  async subscribe(listener: MarketListener, pinnedConfig?: MarketConfig) {
+  public async subscribe(listener: MarketListener, pinnedConfig?: MarketConfig) {
     const config = pinnedConfig ?? (await this.loadConfig());
     if (!config) {
       listener({ stream: 'unconfigured' });

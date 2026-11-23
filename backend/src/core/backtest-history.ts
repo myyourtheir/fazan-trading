@@ -86,12 +86,12 @@ export class BacktestHistory {
     private readonly now = Date.now,
   ) {}
 
-  async check(parameters: BacktestParameters) {
+  public async check(parameters: BacktestParameters) {
     const { parameters: selected, candles, cutoff } = await this.gather(parameters);
     return { parameters: selected, candles, cutoff };
   }
 
-  async run(parameters: BacktestParameters): Promise<BacktestReport> {
+  public async run(parameters: BacktestParameters): Promise<BacktestReport> {
     const dataset = await this.gather(parameters);
     const { priceStep, priceStepAmount, lot, currency } = dataset.contract;
     if (

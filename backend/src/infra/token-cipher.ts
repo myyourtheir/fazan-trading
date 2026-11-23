@@ -12,14 +12,14 @@ export class TokenCipher {
     this.key = Buffer.from(hexKey, 'hex');
   }
 
-  encrypt(token: string) {
+  public encrypt(token: string) {
     const nonce = randomBytes(12);
     const cipher = createCipheriv('aes-256-gcm', this.key, nonce);
     const ciphertext = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
     return Buffer.concat([nonce, cipher.getAuthTag(), ciphertext]).toString('base64url');
   }
 
-  decrypt(encryptedToken: string) {
+  public decrypt(encryptedToken: string) {
     const data = Buffer.from(encryptedToken, 'base64url');
     const decipher = createDecipheriv('aes-256-gcm', this.key, data.subarray(0, 12), {
       authTagLength: 16,

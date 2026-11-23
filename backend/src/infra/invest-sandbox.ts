@@ -107,33 +107,7 @@ const brokerStatuses: Partial<Record<ReportStatus, BrokerOrder['brokerStatus']>>
 export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, BacktestBroker {
   private current?: { token: string; client: NodeApiClient };
 
-  private async call<T>(token: string, operation: (client: NodeApiClient) => Promise<T>) {
-    try {
-      const existing = this.current;
-      const client =
-        existing?.token === token
-          ? existing.client
-          : await NodeApiClient.create({
-              token,
-              url: sandboxUrl,
-              telemetry: 'disabled',
-              useMincifryCertificate: true,
-            });
-      const result = await operation(client);
-      this.current = { token, client };
-      return result;
-    } catch (error) {
-      const code = grpcCode(error);
-      if (code === Status.UNAUTHENTICATED || code === Status.PERMISSION_DENIED) {
-        throw new SandboxError('SANDBOX_TOKEN_REJECTED');
-      }
-      throw new SandboxError(
-        definiteRejections.has(code) ? 'SANDBOX_OPERATION_REJECTED' : 'SANDBOX_UNREACHABLE',
-      );
-    }
-  }
-
-  accounts(token: string) {
+  public accounts(token: string) {
     return this.call(token, async ({ sandbox }) => {
       const { accounts } = await sandbox.getSandboxAccounts(
         { status: AccountStatus.ACCOUNT_STATUS_OPEN },
@@ -145,7 +119,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  openAccount(token: string) {
+  public openAccount(token: string) {
     return this.call(token, async ({ sandbox }) => {
       const { accountId } = await sandbox.openSandboxAccount(
         { name: 'fazan-trading' },
@@ -156,7 +130,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  async fundAccount(token: string, accountId: string) {
+  public async fundAccount(token: string, accountId: string) {
     await this.call(token, ({ sandbox }) =>
       sandbox.sandboxPayIn(
         {
@@ -168,7 +142,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     );
   }
 
-  balanceRubles(token: string, accountId: string) {
+  public balanceRubles(token: string, accountId: string) {
     return this.call(token, async ({ sandbox }) => {
       const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
       if (positions.limitsLoadingInProgress) return null;
@@ -177,7 +151,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  accountIsFlat(token: string, accountId: string) {
+  public accountIsFlat(token: string, accountId: string) {
     return this.call(token, async ({ sandbox }) => {
       const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
       if (orders.length > 0) return false;
@@ -189,7 +163,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  futures(token: string) {
+  public futures(token: string) {
     return this.call(token, async ({ instruments }) => {
       // The full catalogue includes inactive contracts, which the strategy cannot use.
       const { instruments: contracts } = await instruments.futures(
@@ -210,7 +184,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  backtestFuture(token: string, uid: string) {
+  public backtestFuture(token: string, uid: string) {
     return this.call(token, async ({ instruments }) => {
       const { instrument } = await instruments.futureBy(
         {
@@ -241,7 +215,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  async verifySelection({ token, accountId, instrumentUid }: TradingConfig) {
+  public async verifySelection({ token, accountId, instrumentUid }: TradingConfig) {
     const [accounts, contracts] = await Promise.all([this.accounts(token), this.futures(token)]);
     if (!accounts.some((account) => account.id === accountId))
       throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
@@ -254,7 +228,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     }
   }
 
-  accountState({ token, accountId, instrumentUid }: TradingConfig) {
+  public accountState({ token, accountId, instrumentUid }: TradingConfig) {
     return this.call(token, async ({ sandbox }) => {
       const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
       const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());
@@ -272,7 +246,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  submit(token: string, order: OrderIntent) {
+  public submit(token: string, order: OrderIntent) {
     return this.call(token, async ({ sandbox }) => {
       const reply = await sandbox
         .postSandboxOrder(
@@ -305,7 +279,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  orderState(
+  public orderState(
     token: string,
     order: OrderIntent,
     brokerOrderId: string | null,
@@ -345,7 +319,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  candles(
+  public candles(
     token: string,
     instrumentId: string,
     timeframe: Timeframe,
@@ -369,7 +343,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  ema(
+  public ema(
     token: string,
     instrumentUid: string,
     timeframe: Timeframe,
@@ -398,7 +372,12 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     });
   }
 
-  async *stream(token: string, instrumentId: string, timeframe: Timeframe, signal: AbortSignal) {
+  public async *stream(
+    token: string,
+    instrumentId: string,
+    timeframe: Timeframe,
+    signal: AbortSignal,
+  ) {
     const interval = intervals[timeframe].stream;
     const silence = new AbortController();
     const watchdog = setTimeout(() => silence.abort(), 45_000);
@@ -436,6 +415,32 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
       }
     } finally {
       clearTimeout(watchdog);
+    }
+  }
+
+  private async call<T>(token: string, operation: (client: NodeApiClient) => Promise<T>) {
+    try {
+      const existing = this.current;
+      const client =
+        existing?.token === token
+          ? existing.client
+          : await NodeApiClient.create({
+              token,
+              url: sandboxUrl,
+              telemetry: 'disabled',
+              useMincifryCertificate: true,
+            });
+      const result = await operation(client);
+      this.current = { token, client };
+      return result;
+    } catch (error) {
+      const code = grpcCode(error);
+      if (code === Status.UNAUTHENTICATED || code === Status.PERMISSION_DENIED) {
+        throw new SandboxError('SANDBOX_TOKEN_REJECTED');
+      }
+      throw new SandboxError(
+        definiteRejections.has(code) ? 'SANDBOX_OPERATION_REJECTED' : 'SANDBOX_UNREACHABLE',
+      );
     }
   }
 }

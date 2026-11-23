@@ -51,7 +51,7 @@ export class SandboxError extends Error {
   constructor(readonly code: keyof typeof errorStatus) {
     super(code);
   }
-  get status() {
+  public get status() {
     return errorStatus[this.code];
   }
 }
@@ -70,7 +70,7 @@ export class SandboxConnection {
     private readonly broker: SandboxBroker,
   ) {}
 
-  async status() {
+  public async status() {
     const saved = await this.store.load();
     if (!saved) return { status: 'unconfigured', accountId: null, accounts: [] };
     try {
@@ -86,7 +86,7 @@ export class SandboxConnection {
     }
   }
 
-  connect(token: string, pinnedAccountId?: string) {
+  public connect(token: string, pinnedAccountId?: string) {
     return this.change(async () => {
       const accounts = await this.listAccounts(token);
       const saved = await this.store.load();
@@ -103,7 +103,7 @@ export class SandboxConnection {
     });
   }
 
-  selectAccount(accountId: string) {
+  public selectAccount(accountId: string) {
     return this.change(async () => {
       const { saved, token } = await this.credentials();
       await this.requireAccount(token, accountId);
@@ -113,7 +113,7 @@ export class SandboxConnection {
     });
   }
 
-  createAccount() {
+  public createAccount() {
     return this.change(async () => {
       const { saved, token } = await this.credentials();
       await this.requireFlatAccount(saved);
@@ -130,7 +130,7 @@ export class SandboxConnection {
     });
   }
 
-  fundAccount(accountId: string) {
+  public fundAccount(accountId: string) {
     return this.change(async () => {
       const { token } = await this.selectedAccountCredentials(accountId);
       try {
@@ -144,7 +144,7 @@ export class SandboxConnection {
     });
   }
 
-  async balance(accountId: string) {
+  public async balance(accountId: string) {
     const { saved, token } = await this.credentials();
     if (saved.accountId !== accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     try {
@@ -154,7 +154,7 @@ export class SandboxConnection {
     }
   }
 
-  async searchFutures(query: string): Promise<FutureContract[]> {
+  public async searchFutures(query: string): Promise<FutureContract[]> {
     const {
       saved: { encryptedToken },
       token,
@@ -177,18 +177,18 @@ export class SandboxConnection {
     return matches;
   }
 
-  async marketDataToken() {
+  public async marketDataToken() {
     const { token } = await this.credentials();
     return token;
   }
 
-  async tradingCredentials() {
+  public async tradingCredentials() {
     const { saved, token } = await this.credentials();
     if (!saved.accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     return { token, accountId: saved.accountId };
   }
 
-  changeStrategyForAccount(
+  public changeStrategyForAccount(
     accountId: string,
     instrumentUid: string,
     action: (contract: FutureContract) => Promise<void>,

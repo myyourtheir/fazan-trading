@@ -33,14 +33,14 @@ export function migrateDatabase(db: Database) {
 export class PostgresSessions implements SessionStore {
   constructor(private readonly db: Database) {}
 
-  async create(digest: string, expiresAt: Date) {
+  public async create(digest: string, expiresAt: Date) {
     await this.db.transaction(async (tx) => {
       await tx.delete(ownerSessions).where(lte(ownerSessions.expiresAt, new Date()));
       await tx.insert(ownerSessions).values({ tokenDigest: digest, expiresAt });
     });
   }
 
-  async activeUntil(digest: string, at: Date) {
+  public async activeUntil(digest: string, at: Date) {
     const [session] = await this.db
       .select({ expiresAt: ownerSessions.expiresAt })
       .from(ownerSessions)
@@ -48,7 +48,7 @@ export class PostgresSessions implements SessionStore {
     return session?.expiresAt ?? null;
   }
 
-  async revoke(digest: string) {
+  public async revoke(digest: string) {
     await this.db.delete(ownerSessions).where(eq(ownerSessions.tokenDigest, digest));
   }
 }
@@ -56,7 +56,7 @@ export class PostgresSessions implements SessionStore {
 export class PostgresDisplaySettings implements DisplaySettingsStore {
   constructor(private readonly db: Database) {}
 
-  async loadTimeZone() {
+  public async loadTimeZone() {
     const [saved] = await this.db
       .select({ timeZone: displaySettings.timeZone })
       .from(displaySettings)
@@ -64,7 +64,7 @@ export class PostgresDisplaySettings implements DisplaySettingsStore {
     return saved?.timeZone ?? null;
   }
 
-  async saveTimeZone(timeZone: string) {
+  public async saveTimeZone(timeZone: string) {
     await this.db
       .insert(displaySettings)
       .values({ id: 1, timeZone })
@@ -75,7 +75,7 @@ export class PostgresDisplaySettings implements DisplaySettingsStore {
 export class PostgresSandboxConnection implements SandboxStore {
   constructor(private readonly db: Database) {}
 
-  async load() {
+  public async load() {
     const { encryptedToken, accountId } = sandboxConnection;
     const [saved] = await this.db
       .select({ encryptedToken, accountId })
@@ -84,7 +84,7 @@ export class PostgresSandboxConnection implements SandboxStore {
     return saved ?? null;
   }
 
-  async save(connection: SavedSandboxConnection) {
+  public async save(connection: SavedSandboxConnection) {
     await this.db
       .insert(sandboxConnection)
       .values({ id: 1, ...connection })
@@ -95,7 +95,7 @@ export class PostgresSandboxConnection implements SandboxStore {
 export class PostgresStrategySettings implements StrategyStore {
   constructor(private readonly db: Database) {}
 
-  async load() {
+  public async load() {
     const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
     if (!saved) return null;
     const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots, timeframe } =
@@ -108,7 +108,7 @@ export class PostgresStrategySettings implements StrategyStore {
     };
   }
 
-  async save({ instrument, emaPeriod, lots, timeframe }: SavedStrategy) {
+  public async save({ instrument, emaPeriod, lots, timeframe }: SavedStrategy) {
     const values = { ...instrument, emaPeriod, lots, timeframe };
     await this.db
       .insert(strategySettings)
@@ -122,7 +122,7 @@ const unresolvedOrders = () => inArray(tradeOrders.status, ['reserved', 'unconfi
 export class PostgresTradingStore implements TradingStore {
   constructor(private readonly db: Database) {}
 
-  async reserve(order: OrderIntent) {
+  public async reserve(order: OrderIntent) {
     const rows = await this.db
       .insert(tradeOrders)
       .values({ ...order, status: 'reserved', brokerStatus: 'unknown' })
@@ -131,7 +131,7 @@ export class PostgresTradingStore implements TradingStore {
     return rows.length === 1;
   }
 
-  async record(id: string, { executions, ...result }: OrderResult) {
+  public async record(id: string, { executions, ...result }: OrderResult) {
     await this.db.transaction(async (tx) => {
       await tx.update(tradeOrders).set(result).where(eq(tradeOrders.id, id));
       await tx.delete(tradeExecutions).where(eq(tradeExecutions.orderId, id));
@@ -145,7 +145,7 @@ export class PostgresTradingStore implements TradingStore {
     });
   }
 
-  async hasUnresolved() {
+  public async hasUnresolved() {
     const rows = await this.db
       .select({ id: tradeOrders.id })
       .from(tradeOrders)
@@ -154,13 +154,13 @@ export class PostgresTradingStore implements TradingStore {
     return rows.length > 0;
   }
 
-  async unresolved() {
+  public async unresolved() {
     // The partial unique index allows at most one unresolved intent.
     const [order] = await this.readJournal(unresolvedOrders());
     return order ?? null;
   }
 
-  history(accountId?: string) {
+  public history(accountId?: string) {
     return this.readJournal(
       accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId),
     );

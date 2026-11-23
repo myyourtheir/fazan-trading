@@ -21,15 +21,15 @@ export class StrategySettings {
     private readonly sandbox: SandboxConnection,
   ) {}
 
-  async get() {
+  public async get() {
     return { defaults, settings: await this.store.load() };
   }
 
-  search(query: string) {
+  public search(query: string) {
     return this.sandbox.searchFutures(query);
   }
 
-  save({
+  public save({
     accountId,
     instrumentUid,
     emaPeriod,

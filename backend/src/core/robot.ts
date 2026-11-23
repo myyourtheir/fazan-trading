@@ -130,7 +130,7 @@ export class Robot {
     private readonly now = Date.now,
   ) {}
 
-  status() {
+  public status() {
     const recovery = this.recovery;
     return {
       mode: this.mode,
@@ -142,15 +142,111 @@ export class Robot {
     };
   }
 
-  history(accountId?: string) {
+  public history(accountId?: string) {
     return this.store.history(accountId);
   }
 
-  subscribe(listener: () => void) {
+  public subscribe(listener: () => void) {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  public async changeSettings(action: () => Promise<void>) {
+    await this.withSettingsLock(async () => {
+      await this.requireNoUnresolved();
+      await action();
+      this.position = null;
+      this.reason = null;
+    });
+  }
+
+  public async replaceCredentials(action: (accountId?: string) => Promise<void>) {
+    await this.withSettingsLock(async () => {
+      const order = this.recovery?.order ?? (await this.store.unresolved());
+      await action(order?.accountId);
+      if (!order) {
+        this.position = null;
+        this.reason = null;
+      }
+    });
+  }
+
+  public async restore() {
+    this.requireStopped();
+    await this.runMaintenance(this.restoreStopped());
+  }
+
+  public async start() {
+    this.requireStopped();
+    await this.beginTradingRun(async () => {
+      await this.requireNoUnresolved();
+      const config = await this.loadConfig();
+      await this.broker.verifySelection(config);
+      await this.readPosition(config, true);
+      return { config, hasConfirmedEntry: false };
+    });
+  }
+
+  public async resume() {
+    const recovery = this.requireRecovery();
+    const expected = recovery.verifiedPosition;
+    if (expected === null) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
+    await this.beginTradingRun(async () => {
+      const config = await this.recoveryConfig(recovery);
+      await this.broker.verifySelection(config);
+      const reason = await this.recheckPosition(config, expected);
+      if (reason) {
+        if (this.recovery === recovery) {
+          recovery.verifiedPosition = null;
+          this.reason = reason;
+          try {
+            await this.store.record(recovery.order.id, {
+              ...recovery.state,
+              status: 'unconfirmed',
+              position: this.position,
+            });
+          } finally {
+            this.publish();
+          }
+        }
+        throw new RobotError(reason);
+      }
+      return { config, hasConfirmedEntry: expected !== 0 };
+    }, recovery);
+  }
+
+  public stop() {
+    if (!this.starting && !this.pending && this.recovery?.verifiedPosition != null)
+      this.recovery = undefined;
+    else if (this.mode === 'stopped') return;
+    if (this.run) this.run.stopped = true;
+    this.clearRun();
+    this.mode = 'stopped';
+    if (!this.recovery) this.reason = null;
+    this.publish();
+  }
+
+  public async shutdown() {
+    this.stop();
+    await this.pending;
+  }
+
+  public async reconcile() {
+    const recovery = this.requireRecovery();
+    await this.runMaintenance(this.reconcileOrder(recovery));
+  }
+
+  public async closePosition(selection: Selection) {
+    this.requireStopped();
+    await this.runMaintenance(
+      this.close(selection).catch((error) => {
+        if (!this.recovery)
+          this.reason = error instanceof RobotError ? error.code : 'ROBOT_CLOSE_FAILED';
+        throw error;
+      }),
+    );
   }
 
   private publish() {
@@ -167,26 +263,6 @@ export class Robot {
       throw new RobotError('ROBOT_ORDER_UNRESOLVED');
   }
 
-  async changeSettings(action: () => Promise<void>) {
-    await this.withSettingsLock(async () => {
-      await this.requireNoUnresolved();
-      await action();
-      this.position = null;
-      this.reason = null;
-    });
-  }
-
-  async replaceCredentials(action: (accountId?: string) => Promise<void>) {
-    await this.withSettingsLock(async () => {
-      const order = this.recovery?.order ?? (await this.store.unresolved());
-      await action(order?.accountId);
-      if (!order) {
-        this.position = null;
-        this.reason = null;
-      }
-    });
-  }
-
   private async withSettingsLock(action: () => Promise<void>) {
     this.requireStopped();
     this.changing = true;
@@ -196,11 +272,6 @@ export class Robot {
     } finally {
       this.changing = false;
     }
-  }
-
-  async restore() {
-    this.requireStopped();
-    await this.runMaintenance(this.restoreStopped());
   }
 
   private async restoreStopped() {
@@ -232,45 +303,6 @@ export class Robot {
         (error) => (error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED'),
       );
     }
-  }
-
-  async start() {
-    this.requireStopped();
-    await this.beginTradingRun(async () => {
-      await this.requireNoUnresolved();
-      const config = await this.loadConfig();
-      await this.broker.verifySelection(config);
-      await this.readPosition(config, true);
-      return { config, hasConfirmedEntry: false };
-    });
-  }
-
-  async resume() {
-    const recovery = this.requireRecovery();
-    const expected = recovery.verifiedPosition;
-    if (expected === null) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
-    await this.beginTradingRun(async () => {
-      const config = await this.recoveryConfig(recovery);
-      await this.broker.verifySelection(config);
-      const reason = await this.recheckPosition(config, expected);
-      if (reason) {
-        if (this.recovery === recovery) {
-          recovery.verifiedPosition = null;
-          this.reason = reason;
-          try {
-            await this.store.record(recovery.order.id, {
-              ...recovery.state,
-              status: 'unconfirmed',
-              position: this.position,
-            });
-          } finally {
-            this.publish();
-          }
-        }
-        throw new RobotError(reason);
-      }
-      return { config, hasConfirmedEntry: expected !== 0 };
-    }, recovery);
   }
 
   private async beginTradingRun(
@@ -314,25 +346,9 @@ export class Robot {
     }
   }
 
-  stop() {
-    if (!this.starting && !this.pending && this.recovery?.verifiedPosition != null)
-      this.recovery = undefined;
-    else if (this.mode === 'stopped') return;
-    if (this.run) this.run.stopped = true;
-    this.clearRun();
-    this.mode = 'stopped';
-    if (!this.recovery) this.reason = null;
-    this.publish();
-  }
-
   private clearRun() {
     this.run?.unsubscribe?.();
     this.run = undefined;
-  }
-
-  async shutdown() {
-    this.stop();
-    await this.pending;
   }
 
   private requireRecovery() {
@@ -354,11 +370,6 @@ export class Robot {
       throw new RobotError('ROBOT_SELECTION_CHANGED');
     }
     return config;
-  }
-
-  async reconcile() {
-    const recovery = this.requireRecovery();
-    await this.runMaintenance(this.reconcileOrder(recovery));
   }
 
   private async reconcileOrder(recovery: Recovery, restoredConfig?: TradingConfig) {
@@ -387,17 +398,6 @@ export class Robot {
     });
     this.reason = reason;
     if (!reason) recovery.verifiedPosition = position;
-  }
-
-  async closePosition(selection: Selection) {
-    this.requireStopped();
-    await this.runMaintenance(
-      this.close(selection).catch((error) => {
-        if (!this.recovery)
-          this.reason = error instanceof RobotError ? error.code : 'ROBOT_CLOSE_FAILED';
-        throw error;
-      }),
-    );
   }
 
   private async runMaintenance(operation: Promise<void>) {
