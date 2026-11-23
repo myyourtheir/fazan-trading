@@ -1,5 +1,7 @@
+import { surfingJournalProjection } from './infra/surfing-journal.js';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { surfingFeed } from './core/surfing-feed.js';
 import { createApp } from './api/app.js';
 import { OwnerAuth } from './core/auth.js';
 import { BacktestHistory } from './core/backtest-history.js';
@@ -19,6 +21,11 @@ import {
 import { Robot, RobotError } from './core/robot.js';
 import { SandboxConnection } from './core/sandbox.js';
 import { StrategySettings } from './core/strategy-settings.js';
+import {
+  canTradeSurfing,
+  surfingStrategy,
+  type SurfingLiveConfig,
+} from './core/surfing-strategy.js';
 import { TokenCipher } from './infra/token-cipher.js';
 
 async function main() {
@@ -48,31 +55,50 @@ async function main() {
     const auth = await OwnerAuth.create(OWNER_PASSWORD, new PostgresSessions(db));
     const broker = new InvestSandbox();
     const sandbox = new SandboxConnection(new PostgresSandboxConnection(db), cipher, broker);
-    const backtest = new BacktestHistory(broker, () => sandbox.marketDataToken());
+    const backtest = new BacktestHistory(
+      broker,
+      () => sandbox.marketDataToken(),
+      Date.now,
+      surfingStrategy.backtest,
+    );
     const strategy = new StrategySettings(new PostgresStrategySettings(db), sandbox);
     const market = new MarketData(broker, async () => {
       const { settings } = await strategy.get();
       return (
         settings && {
           instrumentUid: settings.instrument.uid,
-          emaPeriod: settings.emaPeriod,
+          emaPeriod: settings.parameters.emaPeriod,
           timeframe: settings.timeframe,
           token: await sandbox.marketDataToken(),
         }
       );
     });
-    const robot = new Robot(broker, new PostgresTradingStore(db), market, async () => {
-      const { settings } = await strategy.get();
-      if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
-      return {
+    const robot = new Robot<SurfingLiveConfig>(
+      broker,
+      new PostgresTradingStore(db, surfingJournalProjection),
+      surfingFeed(market),
+      async () => {
+        const { settings } = await strategy.get();
+        if (!settings) throw new RobotError('ROBOT_SETTINGS_REQUIRED');
+        return {
+          ...(await sandbox.tradingCredentials()),
+          instrumentUid: settings.instrument.uid,
+          ticker: settings.instrument.ticker,
+          emaPeriod: settings.parameters.emaPeriod,
+          lots: settings.parameters.lots,
+          timeframe: settings.timeframe,
+        };
+      },
+      Date.now,
+      (history, options, config) => surfingStrategy.live(history, options, config),
+      async (order) => ({
         ...(await sandbox.tradingCredentials()),
-        instrumentUid: settings.instrument.uid,
-        ticker: settings.instrument.ticker,
-        emaPeriod: settings.emaPeriod,
-        lots: settings.lots,
-        timeframe: settings.timeframe,
-      };
-    });
+        instrumentUid: order.instrumentUid,
+      }),
+      (config) => {
+        if (!canTradeSurfing(config)) throw new RobotError('ROBOT_SETTINGS_INVALID');
+      },
+    );
     await robot.restore();
     const server = createServer();
     const marketSocket = attachMarketSocket(server, auth, market, robot);

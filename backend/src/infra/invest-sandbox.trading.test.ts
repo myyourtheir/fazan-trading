@@ -1,3 +1,5 @@
+import { surfingJournalProjection } from './surfing-journal.js';
+import { surfingStrategy } from '../core/surfing-strategy.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -21,6 +23,12 @@ const intent = {
   accountId: 'test-account',
   instrumentUid: 'test-future',
   ticker: 'TEST',
+  context: {
+    type: 'signal',
+    candleTime: Date.UTC(2026, 10, 18, 12),
+    signalTime: Date.UTC(2026, 10, 18, 13),
+    strategy: { kind: 'surfing', signalPrice: 101, ema: 100 },
+  },
   candleTime: Date.UTC(2026, 10, 18, 12),
   signalTime: Date.UTC(2026, 10, 18, 13),
   timeframe: '1h',
@@ -32,7 +40,7 @@ const intent = {
   lots: 1,
   fromPosition: 0,
   targetPosition: -1,
-} satisfies OrderIntent;
+} satisfies OrderIntent & Record<string, unknown>;
 
 test('SDK posts a sandbox market order with the saved client ID and maps actual fill data', async (t) => {
   const fillTime = new Date(intent.signalTime + 3_000);
@@ -147,7 +155,7 @@ test('SDK position check does not mistake a blocked or unidentified balance for 
   );
   const broker = new InvestSandbox();
   const { accountId, instrumentUid, ticker, lots } = intent;
-  const config: TradingConfig = {
+  const config: TradingConfig & { lots: number; emaPeriod: number } = {
     accountId,
     instrumentUid,
     ticker,
@@ -259,7 +267,7 @@ test(
     const hourMs = timeframeMs['1h'];
     const opening = Math.floor(Date.now() / hourMs) * hourMs;
     let now = opening + hourMs / 2;
-    const config: TradingConfig = {
+    const config: TradingConfig & { lots: number; emaPeriod: number } = {
       token,
       accountId,
       instrumentUid,
@@ -268,7 +276,7 @@ test(
       lots: 1,
       timeframe: '1h',
     };
-    const store = new PostgresTradingStore(db);
+    const store = new PostgresTradingStore(db, surfingJournalProjection);
     const robot = new Robot(
       broker,
       store,
@@ -282,6 +290,7 @@ test(
       },
       async () => config,
       () => now,
+      (history, options, config) => surfingStrategy.live(history, options, config),
     );
     try {
       await migrateDatabase(db);

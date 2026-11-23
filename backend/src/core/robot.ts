@@ -1,32 +1,31 @@
 import { randomUUID } from 'node:crypto';
-import { findLiveCrossing, positionDelta } from './crossing.js';
-import {
-  sameMarketSelection,
-  type MarketData,
-  type MarketHistory,
-  type MarketSelection,
-  type MarketUpdate,
-} from './market-data.js';
+import { journalPositionDelta } from './position.js';
+import type { MarketHistory } from './market-data.js';
 import type { Timeframe } from './timeframe.js';
 
-export type TradingConfig = MarketSelection & {
+export type TradingConfig = {
+  instrumentUid: string;
+  timeframe: Timeframe;
   token: string;
   accountId: string;
   ticker: string;
-  lots: number;
 };
+export type RecoveryAccount = Pick<TradingConfig, 'token' | 'accountId' | 'instrumentUid'>;
+export type OrderContext =
+  | {
+      type: 'signal';
+      candleTime: number;
+      signalTime: number;
+      strategy: { kind: string; [key: string]: unknown };
+    }
+  | { type: 'manual-close'; time: number };
 export type OrderIntent = {
   id: string;
   accountId: string;
   instrumentUid: string;
   ticker: string;
   timeframe: Timeframe;
-  action: 'ema-crossing' | 'manual-close';
-  candleTime: number | null;
-  signalTime: number | null;
-  signalPrice: number | null;
-  ema: number | null;
-  manualCloseTime: number | null;
+  context: OrderContext;
   direction: 'buy' | 'sell';
   lots: number;
   fromPosition: number;
@@ -54,23 +53,45 @@ export type OrderResult = BrokerOrder & {
     | 'account-check-failed-before-send';
   position: number | null;
 };
-export type JournalEntry = OrderIntent &
+export type RecoveredOrder = OrderIntent &
   Omit<OrderResult, 'status'> & { status: OrderResult['status'] | 'reserved' };
+export type LiveSignal = {
+  candleTime: number;
+  signalTime: number;
+  targetPosition: number;
+  strategy: { kind: string; [key: string]: unknown };
+};
+export type FeedHistory = { instrumentUid: string; timeframe: Timeframe };
+export type FeedUpdate<H> = {
+  stream: 'unconfigured' | 'connecting' | 'live' | 'disconnected';
+  history?: H;
+  recoveredAt?: number;
+};
+export interface TradingFeed<C, H> {
+  subscribe(listener: (update: FeedUpdate<H>) => void, config: C): Promise<() => void>;
+}
+export type FindSignal<C extends TradingConfig = TradingConfig, H = MarketHistory> = (
+  history: H,
+  options: { since: number; now: number; lastAttempted: number },
+  config: C,
+) => LiveSignal | undefined;
 
 export interface Broker {
   verifySelection(config: TradingConfig): Promise<void>;
-  accountState(config: TradingConfig): Promise<{ position: number | null; activeOrders: boolean }>;
+  accountState(
+    config: RecoveryAccount,
+  ): Promise<{ position: number | null; activeOrders: boolean }>;
   // A definite rejection before creating an order is rejected, with no broker ID and zero lots. Ambiguous failures throw.
   submit(token: string, order: OrderIntent): Promise<Omit<BrokerOrder, 'executions'>>;
   orderState(token: string, order: OrderIntent, brokerOrderId: string | null): Promise<BrokerOrder>;
 }
 
-export interface TradingStore {
+export interface TradingStore<HistoryEntry = unknown> {
   reserve(order: OrderIntent): Promise<boolean>;
   record(id: string, result: OrderResult): Promise<void>;
   hasUnresolved(): Promise<boolean>;
-  unresolved(): Promise<JournalEntry | null>;
-  history(accountId?: string): Promise<JournalEntry[]>;
+  unresolved(): Promise<RecoveredOrder | null>;
+  history(accountId?: string): Promise<HistoryEntry[]>;
 }
 
 export class RobotError extends Error {
@@ -80,21 +101,14 @@ export class RobotError extends Error {
   }
 }
 
-type LiveSession = { since: number; queued?: MarketHistory };
-type Run = {
-  config: TradingConfig;
-  session?: LiveSession;
+type LiveSession<H> = { since: number; queued?: H };
+type Run<C extends TradingConfig, H> = {
+  config: C;
+  session?: LiveSession<H>;
   lastAttemptedCandleOpenMs: number;
   hasConfirmedEntry: boolean;
   stopped?: boolean;
   unsubscribe?: () => void;
-};
-type Signal = {
-  candleTime: number;
-  signalTime: number;
-  signalPrice: number;
-  ema: number;
-  targetPosition: number;
 };
 type Selection = Pick<TradingConfig, 'accountId' | 'instrumentUid'>;
 type Recovery = {
@@ -111,11 +125,15 @@ const unknownOrder: BrokerOrder = {
   executions: [],
 };
 
-export class Robot {
+export class Robot<
+  C extends TradingConfig = TradingConfig,
+  HistoryEntry = unknown,
+  H extends FeedHistory = MarketHistory,
+> {
   private mode: 'stopped' | 'starting' | 'running' | 'reconnecting' | 'paused' = 'stopped';
   private reason: string | null = null;
   private position: number | null = null;
-  private run?: Run;
+  private run?: Run<C, H>;
   private recovery?: Recovery;
   private pending?: Promise<void>;
   private starting = false;
@@ -124,10 +142,14 @@ export class Robot {
 
   constructor(
     private readonly broker: Broker,
-    private readonly store: TradingStore,
-    private readonly market: Pick<MarketData, 'subscribe'>,
-    private readonly loadConfig: () => Promise<TradingConfig>,
-    private readonly now = Date.now,
+    private readonly store: TradingStore<HistoryEntry>,
+    private readonly market: TradingFeed<C, H>,
+    private readonly loadConfig: () => Promise<C>,
+    private readonly now: () => number,
+    private readonly findSignal: FindSignal<C, H>,
+    private readonly loadRecoveryAccount: (order: OrderIntent) => Promise<RecoveryAccount> = () =>
+      this.loadConfig(),
+    private readonly validateTradingConfig: (config: C) => void = () => {},
   ) {}
 
   public status() {
@@ -183,6 +205,7 @@ export class Robot {
     await this.beginTradingRun(async () => {
       await this.requireNoUnresolved();
       const config = await this.loadConfig();
+      this.validateTradingConfig(config);
       await this.broker.verifySelection(config);
       await this.readPosition(config, true);
       return { config, hasConfirmedEntry: false };
@@ -195,6 +218,7 @@ export class Robot {
     if (expected === null) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
     await this.beginTradingRun(async () => {
       const config = await this.recoveryConfig(recovery);
+      this.validateTradingConfig(config);
       await this.broker.verifySelection(config);
       const reason = await this.recheckPosition(config, expected);
       if (reason) {
@@ -289,15 +313,17 @@ export class Robot {
     }
     this.position = null;
     // A fresh installation (or an unreadable credential) must still allow owner login.
-    const config = await this.loadConfig().catch(() => null);
-    if (!config) return;
     if (this.recovery) {
+      const config = await this.loadRecoveryAccount(this.recovery.order).catch(() => null);
+      if (!config) return;
       if (!sameSelection(config, this.recovery.order)) {
         this.reason = 'ROBOT_SELECTION_CHANGED';
         return;
       }
       await this.reconcileOrder(this.recovery, config);
     } else {
+      const config = await this.loadConfig().catch(() => null);
+      if (!config) return;
       this.reason = await this.readPosition(config, false).then(
         () => null,
         (error) => (error instanceof RobotError ? error.code : 'ROBOT_POSITION_UNVERIFIED'),
@@ -306,11 +332,11 @@ export class Robot {
   }
 
   private async beginTradingRun(
-    prepare: () => Promise<{ config: TradingConfig; hasConfirmedEntry: boolean }>,
+    prepare: () => Promise<{ config: C; hasConfirmedEntry: boolean }>,
     recovery?: Recovery,
   ) {
     const previousMode = this.mode;
-    let run: Run | undefined;
+    let run: Run<C, H> | undefined;
     this.mode = 'starting';
     this.starting = true;
     this.position = null;
@@ -321,7 +347,7 @@ export class Robot {
         this.publish();
         return;
       }
-      const next: Run = { config, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry };
+      const next: Run<C, H> = { config, lastAttemptedCandleOpenMs: -Infinity, hasConfirmedEntry };
       this.run = run = next;
       this.reason = null;
       const unsubscribe = await this.market.subscribe(
@@ -372,11 +398,12 @@ export class Robot {
     return config;
   }
 
-  private async reconcileOrder(recovery: Recovery, restoredConfig?: TradingConfig) {
+  private async reconcileOrder(recovery: Recovery, restoredConfig?: RecoveryAccount) {
     recovery.verifiedPosition = null;
     this.position = null;
     this.reason = 'ROBOT_ORDER_UNRESOLVED';
-    const config = restoredConfig ?? (await this.recoveryConfig(recovery));
+    const config = restoredConfig ?? (await this.loadRecoveryAccount(recovery.order));
+    if (!sameSelection(config, recovery.order)) throw new RobotError('ROBOT_SELECTION_CHANGED');
     const { order } = recovery;
     // Always ask with the original saved request ID, not a new order or a guessed exchange ID.
     const { state: lookup, account } = await this.readOrderAndAccount(config, order, null);
@@ -417,7 +444,7 @@ export class Robot {
     }
     const fromPosition = await this.readPosition(config, false);
     this.reason = null;
-    const delta = positionDelta(fromPosition, 0);
+    const delta = journalPositionDelta(fromPosition, 0);
     if (!delta) return;
     const intent: OrderIntent = {
       id: randomUUID(),
@@ -428,12 +455,7 @@ export class Robot {
       fromPosition,
       targetPosition: 0,
       ...delta,
-      action: 'manual-close',
-      manualCloseTime: this.now(),
-      candleTime: null,
-      signalTime: null,
-      signalPrice: null,
-      ema: null,
+      context: { type: 'manual-close', time: this.now() },
     };
     if (!(await this.store.reserve(intent))) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
     this.publish();
@@ -446,7 +468,7 @@ export class Robot {
       throw new RobotError('ROBOT_ORDER_UNRESOLVED');
   }
 
-  private pause(run: Run, reason: string) {
+  private pause(run: Run<C, H>, reason: string) {
     if (this.run !== run) return;
     this.clearRun();
     this.mode = 'paused';
@@ -464,7 +486,7 @@ export class Robot {
     return position;
   }
 
-  private onMarket(run: Run, { stream, history, recoveredAt }: MarketUpdate) {
+  private onMarket(run: Run<C, H>, { stream, history, recoveredAt }: FeedUpdate<H>) {
     if (this.run !== run) return;
     if (stream === 'unconfigured') return this.pause(run, 'ROBOT_FEED_LOST');
     if (stream === 'disconnected' || (stream === 'connecting' && run.session)) {
@@ -475,7 +497,12 @@ export class Robot {
       return;
     }
     if (stream !== 'live') return;
-    if (history && !sameMarketSelection(history, run.config)) return;
+    if (
+      history &&
+      (history.instrumentUid !== run.config.instrumentUid ||
+        history.timeframe !== run.config.timeframe)
+    )
+      return;
     const reconnecting = this.mode === 'reconnecting';
     const since = reconnecting ? recoveredAt : (run.session?.since ?? this.now());
     if (since === undefined || (reconnecting && !history)) return;
@@ -492,18 +519,18 @@ export class Robot {
       return;
     }
     session.queued = undefined;
-    const crossing = findLiveCrossing(history, {
-      since: session.since,
-      now: this.now(),
-      lastAttempted: run.lastAttemptedCandleOpenMs,
-    });
+    const crossing = this.findSignal(
+      history,
+      {
+        since: session.since,
+        now: this.now(),
+        lastAttempted: run.lastAttemptedCandleOpenMs,
+      },
+      run.config,
+    );
     if (!crossing) return;
-    const { direction, ...signal } = crossing;
-    run.lastAttemptedCandleOpenMs = signal.candleTime;
-    this.pending = this.trade(run, session, {
-      ...signal,
-      targetPosition: direction * run.config.lots,
-    })
+    run.lastAttemptedCandleOpenMs = crossing.candleTime;
+    this.pending = this.trade(run, session, crossing)
       .catch((error) => {
         this.pause(run, error instanceof RobotError ? error.code : 'ROBOT_TRADE_FAILED');
       })
@@ -514,7 +541,7 @@ export class Robot {
       });
   }
 
-  private async trade(run: Run, session: LiveSession, signal: Signal) {
+  private async trade(run: Run<C, H>, session: LiveSession<H>, signal: LiveSignal) {
     const stillLive = () => this.run === run && run.session === session;
     const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry).catch(
       (error) => {
@@ -523,14 +550,20 @@ export class Robot {
       },
     );
     if (fromPosition === null || !stillLive()) return;
-    const delta = positionDelta(fromPosition, signal.targetPosition);
+    const delta = journalPositionDelta(fromPosition, signal.targetPosition);
     if (!delta) {
       this.publish();
       return;
     }
     const { accountId, instrumentUid, ticker, timeframe } = run.config;
     const intent: OrderIntent = {
-      ...signal,
+      targetPosition: signal.targetPosition,
+      context: {
+        type: 'signal',
+        candleTime: signal.candleTime,
+        signalTime: signal.signalTime,
+        strategy: signal.strategy,
+      },
       id: randomUUID(),
       accountId,
       instrumentUid,
@@ -538,8 +571,6 @@ export class Robot {
       timeframe,
       fromPosition,
       ...delta,
-      action: 'ema-crossing',
-      manualCloseTime: null,
     };
     if (!(await this.store.reserve(intent))) {
       if (await this.store.hasUnresolved()) this.pause(run, 'ROBOT_ORDER_UNRESOLVED');
@@ -579,7 +610,7 @@ export class Robot {
   }
 
   private async readOrderAndAccount(
-    config: TradingConfig,
+    config: RecoveryAccount,
     order: OrderIntent,
     brokerOrderId: string | null,
   ) {
@@ -644,7 +675,7 @@ export class Robot {
   ) {
     this.clearRun();
     this.recovery = { order, state, rejectedBeforeAcceptance, verifiedPosition: null };
-    if (this.mode !== 'stopped' || order.action === 'manual-close') this.mode = 'paused';
+    if (this.mode !== 'stopped' || order.context.type === 'manual-close') this.mode = 'paused';
     this.reason = reason;
     this.publish();
   }
@@ -678,3 +709,5 @@ function orderProblem(
   const expected = order.fromPosition + (order.direction === 'buy' ? executedLots : -executedLots);
   return account.position === expected ? null : 'ROBOT_ORDER_POSITION_MISMATCH';
 }
+
+export type RobotService = Pick<Robot, keyof Robot>;

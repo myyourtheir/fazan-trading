@@ -1,5 +1,6 @@
 import type { MarketCandle, MarketSelection } from './market-data.js';
-import { crossing, positionDelta, type Side } from './crossing.js';
+import type { Side } from './crossing.js';
+import { positionDelta } from './position.js';
 
 export type BacktestParameters = MarketSelection & {
   lots: number;
@@ -28,11 +29,23 @@ export type ResolvedBacktestContract = {
 
 export type BacktestCandle = MarketCandle & { ema: number };
 
-export type BacktestDataset = {
-  parameters: BacktestParameters;
-  candles: BacktestCandle[];
+export type BacktestBaseParameters = Omit<MarketSelection, 'emaPeriod'> & {
+  from: string;
+  to: string;
+  timeZone: string;
+  commission: number;
+  slippage: number;
+};
+
+export type BacktestDataset<
+  P = BacktestParameters,
+  C extends MarketCandle = BacktestCandle,
+  S = Side | null,
+> = {
+  parameters: P;
+  candles: C[];
   contract: ResolvedBacktestContract;
-  initialSide: Side | null;
+  initialState: S;
   cutoff: number | null;
 };
 
@@ -50,14 +63,14 @@ export type BacktestSignal = {
   targetPosition: number;
 };
 
-export type BacktestReport = {
-  parameters: BacktestParameters;
+export type BacktestReport<P = BacktestParameters, C extends MarketCandle = BacktestCandle> = {
+  parameters: P;
   currency: string;
   pointValue: number;
   priceStep: number;
   priceStepAmount: number;
   lot: number;
-  candles: BacktestCandle[];
+  candles: C[];
   executions: BacktestExecution[];
   finalSignal: BacktestSignal | null;
   result: { closed: number; open: number; total: number; position: number; maxDrawdown: number };
@@ -66,20 +79,21 @@ export type BacktestReport = {
 
 // The dataset's contract is already resolved: a missing or non-positive price step would otherwise
 // yield an infinite or zero conversion coefficient and a meaningless money result.
-export function runBacktest({
-  parameters,
-  candles,
-  contract,
-  initialSide,
-  cutoff,
-}: BacktestDataset): BacktestReport {
+export function runBacktest<P extends BacktestBaseParameters, C extends MarketCandle, S>(
+  { parameters, candles, contract, initialState, cutoff }: BacktestDataset<P, C, S>,
+  decide: (
+    state: S,
+    candle: C,
+    parameters: P,
+  ) => { state: S; signal: { targetPosition: number } | null } | undefined,
+): BacktestReport<P, C> {
   const { priceStep, priceStepAmount, lot, currency } = contract;
   // Money per quote point per lot: the money value of one price step over the step size, times the lot.
   const pointValue = (priceStepAmount / priceStep) * lot;
   const slippageRate = parameters.slippage / 100;
   const commissionRate = parameters.commission / 100;
 
-  let side = initialSide;
+  let state = initialState;
   let position = 0;
   let entryPrice = 0;
   let entryCommission = 0;
@@ -98,7 +112,7 @@ export function runBacktest({
 
   // A reversal closes the old side and opens the new side at the same execution price. Its fee is
   // charged on the full executed volume and attributed to the closed and opened halves by volume.
-  const apply = (candle: BacktestCandle, direction: 'buy' | 'sell', lots: number) => {
+  const apply = (candle: MarketCandle, direction: 'buy' | 'sell', lots: number) => {
     const price = executionPrice(candle.open, direction);
     const commission = price * lots * pointValue * commissionRate;
     const previous = position;
@@ -128,10 +142,17 @@ export function runBacktest({
       pending = null;
     }
 
-    const next = crossing(side, candle.close, candle.ema);
-    side = next.side;
-    if (next.direction !== null) {
-      const targetPosition = next.direction * parameters.lots;
+    const next = decide(state, candle, parameters);
+    if (next) state = next.state;
+    if (next?.signal) {
+      const { targetPosition } = next.signal;
+      if (
+        position !== 0 &&
+        targetPosition !== 0 &&
+        Math.sign(position) === Math.sign(targetPosition) &&
+        position !== targetPosition
+      )
+        throw new Error('Backtest does not support same-side position resizing');
       const delta = positionDelta(position, targetPosition);
       if (delta) {
         if (index + 1 < candles.length) pending = delta;

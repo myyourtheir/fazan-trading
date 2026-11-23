@@ -1,3 +1,5 @@
+import { surfingJournalProjection } from './surfing-journal.js';
+import { surfingStrategy } from '../core/surfing-strategy.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
@@ -87,8 +89,8 @@ test(
       });
       expected = await service.get();
       assert.equal(expected.settings?.instrument.uid, 'contract-b');
-      assert.equal(expected.settings?.emaPeriod, 34);
-      assert.equal(expected.settings?.lots, 7);
+      assert.equal(expected.settings?.parameters.emaPeriod, 34);
+      assert.equal(expected.settings?.parameters.lots, 7);
       assert.equal(expected.settings?.timeframe, '30m');
       assert.equal((await first.db.$client.query('SELECT * FROM strategy_settings')).rowCount, 1);
     } finally {
@@ -155,6 +157,12 @@ test(
       accountId: `test-${randomUUID()}`,
       instrumentUid: 'test-future',
       ticker: 'TEST',
+      context: {
+        type: 'signal',
+        candleTime: Date.UTC(2026, 10, 18, 12),
+        signalTime: Date.UTC(2026, 10, 18, 13),
+        strategy: { kind: 'surfing', signalPrice: 101, ema: 100 },
+      },
       candleTime: Date.UTC(2026, 10, 18, 12),
       signalTime: Date.UTC(2026, 10, 18, 13),
       timeframe: '1h',
@@ -166,26 +174,28 @@ test(
       lots: 1,
       fromPosition: 0,
       targetPosition: -1,
-    } satisfies OrderIntent;
+    } satisfies OrderIntent & Record<string, unknown>;
     const shorter = {
       ...order,
       id: randomUUID(),
       timeframe: '15m',
       signalTime: order.candleTime + timeframeMs['15m'],
-    } satisfies OrderIntent;
+      context: { ...order.context, signalTime: order.candleTime + timeframeMs['15m'] },
+    } satisfies OrderIntent & Record<string, unknown>;
     const close = {
       ...order,
       id: randomUUID(),
       direction: 'buy',
       fromPosition: -1,
       targetPosition: 0,
+      context: { type: 'manual-close', time: order.signalTime + 4_000 },
       action: 'manual-close',
       candleTime: null,
       signalTime: null,
       signalPrice: null,
       ema: null,
       manualCloseTime: order.signalTime + 4_000,
-    } satisfies OrderIntent;
+    } satisfies OrderIntent & Record<string, unknown>;
     const result = {
       status: 'confirmed',
       brokerOrderId: 'exchange-id',
@@ -197,11 +207,15 @@ test(
     const first = connectToPostgres(testDatabase);
     try {
       await migrateDatabase(first.db);
-      const store = new PostgresTradingStore(first.db);
+      const store = new PostgresTradingStore(first.db, surfingJournalProjection);
       assert.equal(await store.reserve(order), true);
       assert.equal(await store.hasUnresolved(), true);
       assert.equal(
-        await store.reserve({ ...order, id: randomUUID(), candleTime: order.candleTime + hourMs }),
+        await store.reserve({
+          ...order,
+          id: randomUUID(),
+          context: { ...order.context, candleTime: order.candleTime + hourMs },
+        }),
         false,
       );
       await store.record(order.id, { ...result, executions: [...result.executions] });
@@ -224,14 +238,17 @@ test(
     }
     const second = connectToPostgres(testDatabase);
     try {
-      const store = new PostgresTradingStore(second.db);
+      const store = new PostgresTradingStore(second.db, surfingJournalProjection);
       const journal = await store.history(order.accountId);
       assert.equal(journal.length, 4);
-      assert.deepEqual(journal[2], { ...order, ...result });
-      assert.deepEqual(journal[3], { ...shorter, ...result, executions: [] });
+      const { context: _orderContext, ...journalOrder } = order;
+      const { context: _shorterContext, ...journalShorter } = shorter;
+      const { context: _closeContext, ...journalClose } = close;
+      assert.deepEqual(journal[2], { ...journalOrder, ...result });
+      assert.deepEqual(journal[3], { ...journalShorter, ...result, executions: [] });
       assert.deepEqual(
         journal.find((row) => row.id === close.id),
-        { ...close, ...result, position: 0, executions: [] },
+        { ...journalClose, ...result, position: 0, executions: [] },
       );
       assert.deepEqual(await store.history(`test-${randomUUID()}`), []);
     } finally {
@@ -272,19 +289,22 @@ test(
         accountId: 'existing',
         instrumentUid: 'contract-a',
         ticker: 'IMOEXF',
-        action: 'ema-crossing',
-        candleTime,
-        signalTime,
-        signalPrice: 99,
-        ema: 100,
-        manualCloseTime: null,
+        context: {
+          type: 'signal',
+          candleTime,
+          signalTime,
+          strategy: { kind: 'surfing', signalPrice: 99, ema: 100 },
+        },
         timeframe: '1h',
         direction: 'sell',
         fromPosition: 0,
         targetPosition: -2,
         lots: 2,
       };
-      assert.equal(await new PostgresTradingStore(first.db).reserve(original), true);
+      assert.equal(
+        await new PostgresTradingStore(first.db, surfingJournalProjection).reserve(original),
+        true,
+      );
     } finally {
       await first.close();
     }
@@ -296,7 +316,7 @@ test(
       sandboxBroker,
     );
     const strategy = new StrategySettings(new PostgresStrategySettings(second.db), sandbox);
-    const store = new PostgresTradingStore(second.db);
+    const store = new PostgresTradingStore(second.db, surfingJournalProjection);
     let listener: ((update: MarketUpdate) => void) | undefined;
     let position = -2;
     let now = signalTime - 1; // Exercise the database guard even if a clock correction makes a replay look fresh.
@@ -348,12 +368,13 @@ test(
           ...(await sandbox.tradingCredentials()),
           instrumentUid: settings.instrument.uid,
           ticker: settings.instrument.ticker,
-          emaPeriod: settings.emaPeriod,
-          lots: settings.lots,
+          emaPeriod: settings.parameters.emaPeriod,
+          lots: settings.parameters.lots,
           timeframe: settings.timeframe,
         };
       },
       () => now,
+      (history, options, config) => surfingStrategy.live(history, options, config),
     );
     const replay = (...closes: number[]) =>
       listener?.({
@@ -389,7 +410,7 @@ test(
       assert.equal(restored.id, original.id);
       assert.equal(restored.status, 'confirmed');
       assert.equal(restored.executions[0].price, 98.5);
-      assert.equal((await strategy.get()).settings?.lots, 2);
+      assert.equal((await strategy.get()).settings?.parameters.lots, 2);
       assert.equal(await store.reserve({ ...original, id: randomUUID() }), false);
 
       await robot.resume();
@@ -403,6 +424,244 @@ test(
     } finally {
       await robot.shutdown();
       await second.close();
+    }
+  },
+);
+
+test(
+  'strategy migrations preserve legacy values and permit an empty installation',
+  { skip: !testDatabase },
+  async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { Client } = await import('pg');
+    const client = new Client({ connectionString: testDatabase });
+    await client.connect();
+    try {
+      for (const scenario of ['empty', 'legacy', 'interrupted', 'partial'] as const) {
+        const name = `migration_${randomUUID().replaceAll('-', '')}`;
+        await client.query(`CREATE SCHEMA "${name}"`);
+        try {
+          await client.query(`SET search_path TO "${name}"`);
+          const old = await readFile(
+            new URL('../../migrations/0002_strategy_settings.sql', import.meta.url),
+            'utf8',
+          );
+          await client.query(old);
+          await client.query(
+            `ALTER TABLE strategy_settings ADD COLUMN timeframe text NOT NULL DEFAULT '1h'`,
+          );
+          if (scenario !== 'empty')
+            await client.query(
+              `INSERT INTO strategy_settings (id, instrument_uid, ticker, name, class_code, exchange, expiration_date, ema_period, lots, timeframe) VALUES (1, 'uid', 'T', 'name', 'class', 'exchange', '2030-01-01', 34, 7, '30m')`,
+            );
+          for (const file of ['0007_special_leper_queen.sql', '0008_mighty_lester.sql']) {
+            const sql = await readFile(
+              new URL(`../../migrations/${file}`, import.meta.url),
+              'utf8',
+            );
+            for (const statement of sql.split('--> statement-breakpoint'))
+              if (statement.trim()) await client.query(statement);
+            // An earlier deployment may already have applied 0007 before it contained a backfill.
+            if (file.startsWith('0007') && scenario === 'interrupted')
+              await client.query('UPDATE strategy_settings SET kind = NULL, parameters = NULL');
+            if (file.startsWith('0007') && scenario === 'partial')
+              await client.query('UPDATE strategy_settings SET parameters = NULL');
+          }
+          const rows = (await client.query('SELECT * FROM strategy_settings')).rows;
+          if (scenario === 'empty') assert.equal(rows.length, 0);
+          else {
+            assert.equal(rows[0].kind, 'surfing');
+            assert.deepEqual(rows[0].parameters, { emaPeriod: 34, lots: 7 });
+            assert.equal(rows[0].instrument_uid, 'uid');
+            assert.equal(rows[0].timeframe, '30m');
+          }
+        } finally {
+          await client.query('SET search_path TO public');
+          await client.query(`DROP SCHEMA "${name}" CASCADE`);
+        }
+      }
+    } finally {
+      await client.end();
+    }
+  },
+);
+
+test('unknown or corrupt stored strategy cannot be loaded', { skip: !testDatabase }, async () => {
+  const connection = connectToPostgres(testDatabase);
+  try {
+    await migrateDatabase(connection.db);
+    const store = new PostgresStrategySettings(connection.db);
+    await connection.db.$client.query(
+      `INSERT INTO strategy_settings (id, instrument_uid, ticker, name, class_code, exchange, kind, parameters, timeframe) VALUES (1, 'uid', 'T', 'name', 'class', 'exchange', 'unknown', '{"emaPeriod":55,"lots":1}', '1h') ON CONFLICT (id) DO UPDATE SET kind = EXCLUDED.kind, parameters = EXCLUDED.parameters`,
+    );
+    await assert.rejects(store.load(), /Invalid saved strategy/);
+    await connection.db.$client.query(
+      `UPDATE strategy_settings SET kind = 'surfing', parameters = '{"emaPeriod":55,"lots":0}' WHERE id = 1`,
+    );
+    await assert.rejects(store.load(), /Invalid saved strategy/);
+    await connection.db.$client.query(
+      `UPDATE strategy_settings SET parameters = '{"emaPeriod":55,"lots":1,"instrument":{"uid":"attacker"},"kind":"unknown"}' WHERE id = 1`,
+    );
+    await assert.rejects(store.load(), /Invalid saved strategy/);
+    let touched = false;
+    const broker: Broker = {
+      async verifySelection() {
+        touched = true;
+      },
+      async accountState() {
+        touched = true;
+        return { position: 0, activeOrders: false };
+      },
+      async submit() {
+        touched = true;
+        throw new Error('unexpected submit');
+      },
+      async orderState() {
+        touched = true;
+        throw new Error('unexpected lookup');
+      },
+    };
+    const robot = new Robot(
+      broker,
+      new PostgresTradingStore(connection.db, surfingJournalProjection),
+      {
+        async subscribe() {
+          touched = true;
+          return () => {};
+        },
+      },
+      async () => {
+        const saved = await store.load();
+        assert.ok(saved);
+        return {
+          token: 'token',
+          accountId: 'account',
+          instrumentUid: saved.instrument.uid,
+          ticker: saved.instrument.ticker,
+          emaPeriod: saved.parameters.emaPeriod,
+          lots: saved.parameters.lots,
+          timeframe: saved.timeframe,
+        };
+      },
+      Date.now,
+      (history, options, config) => surfingStrategy.live(history, options, config),
+    );
+    await assert.rejects(robot.start(), /Invalid saved strategy/);
+    assert.equal(touched, false);
+  } finally {
+    await connection.db.$client.query('DELETE FROM strategy_settings');
+    await connection.close();
+  }
+});
+
+test(
+  'startup migrator installs the complete schema on an empty database',
+  {
+    skip:
+      !process.env.SERFING_MIGRATION_ADMIN_DATABASE_URL &&
+      'Requires a disposable PostgreSQL admin connection with CREATEDB',
+  },
+  async () => {
+    const { Client } = await import('pg');
+    const adminUrl = process.env.SERFING_MIGRATION_ADMIN_DATABASE_URL!;
+    const admin = new Client({ connectionString: adminUrl });
+    const name = `migration_${randomUUID().replaceAll('-', '')}`;
+    await admin.connect();
+    try {
+      await admin.query(`CREATE DATABASE "${name}"`);
+      const url = new URL(adminUrl);
+      url.pathname = `/${name}`;
+      const connection = connectToPostgres(url.toString());
+      try {
+        await migrateDatabase(connection.db);
+        assert.equal(await new PostgresStrategySettings(connection.db).load(), null);
+        assert.deepEqual(
+          await new PostgresTradingStore(connection.db, surfingJournalProjection).history(),
+          [],
+        );
+        const migrations = await connection.db.$client.query(
+          'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
+        );
+        assert.equal(migrations.rows[0].count, 9);
+      } finally {
+        await connection.close();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
+      await admin.end();
+    }
+  },
+);
+
+test(
+  'startup migrator upgrades a 0006 database with settings and a reserved order',
+  {
+    skip:
+      !process.env.SERFING_MIGRATION_ADMIN_DATABASE_URL &&
+      'Requires a disposable PostgreSQL admin connection with CREATEDB',
+  },
+  async () => {
+    const { mkdtemp, mkdir, readFile, writeFile, copyFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { Client } = await import('pg');
+    const { migrate } = await import('drizzle-orm/node-postgres/migrator');
+    const adminUrl = process.env.SERFING_MIGRATION_ADMIN_DATABASE_URL!;
+    const admin = new Client({ connectionString: adminUrl });
+    const name = `migration_${randomUUID().replaceAll('-', '')}`;
+    const folder = await mkdtemp(join(tmpdir(), 'fazan-migration-'));
+    await admin.connect();
+    try {
+      await admin.query(`CREATE DATABASE "${name}"`);
+      const url = new URL(adminUrl);
+      url.pathname = `/${name}`;
+      const connection = connectToPostgres(url.toString());
+      try {
+        const root = new URL('../../migrations/', import.meta.url);
+        const journal = JSON.parse(await readFile(new URL('meta/_journal.json', root), 'utf8')) as {
+          entries: Array<{ idx: number; tag: string }>;
+        };
+        journal.entries = journal.entries.filter((entry) => entry.idx <= 6);
+        await mkdir(join(folder, 'meta'));
+        await writeFile(join(folder, 'meta/_journal.json'), JSON.stringify(journal));
+        for (const entry of journal.entries)
+          await copyFile(new URL(`${entry.tag}.sql`, root), join(folder, `${entry.tag}.sql`));
+        await migrate(connection.db, { migrationsFolder: folder });
+        await connection.db.$client.query(
+          `INSERT INTO strategy_settings (id, instrument_uid, ticker, name, class_code, exchange, expiration_date, ema_period, lots, timeframe) VALUES (1, 'uid', 'T', 'name', 'class', 'exchange', '2030-01-01', 34, 7, '30m')`,
+        );
+        await connection.db.$client.query(
+          `INSERT INTO trade_orders (id, account_id, instrument_uid, ticker, candle_time_ms, signal_time_ms, signal_price, ema, direction, lots, from_position, target_position, status, broker_status, timeframe) VALUES ('original-id', 'account', 'uid', 'T', 1000, 2000, 101, 100, 'buy', 7, 0, 7, 'reserved', 'unknown', '30m')`,
+        );
+        await migrateDatabase(connection.db);
+        const saved = await new PostgresStrategySettings(connection.db).load();
+        assert.deepEqual(saved?.parameters, { emaPeriod: 34, lots: 7 });
+        assert.equal(saved?.instrument.uid, 'uid');
+        assert.equal(saved?.timeframe, '30m');
+        const trading = new PostgresTradingStore(connection.db, surfingJournalProjection);
+        const reserved = await trading.unresolved();
+        assert.equal(reserved?.id, 'original-id');
+        assert.equal(reserved?.status, 'reserved');
+        const entries = await trading.history('account');
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].id, 'original-id');
+        assert.equal(entries[0].signalPrice, 101);
+        assert.equal(entries[0].ema, 100);
+        assert.equal(
+          reserved && (await trading.reserve({ ...reserved, id: 'different-id' })),
+          false,
+        );
+        const journalRows = await connection.db.$client.query(
+          'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
+        );
+        assert.equal(journalRows.rows[0].count, 9);
+      } finally {
+        await connection.close();
+      }
+    } finally {
+      await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
+      await admin.end();
+      await rm(folder, { recursive: true, force: true });
     }
   },
 );

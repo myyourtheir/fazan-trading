@@ -27,7 +27,13 @@ import { AccountStatus } from '@ttech-pub/grpc-node-client/compiled/users.js';
 import { Status } from 'nice-grpc';
 import { SandboxError, virtualFundingRubles, type SandboxBroker } from '../core/sandbox.js';
 import type { MarketCandle, MarketBroker } from '../core/market-data.js';
-import type { Broker, BrokerOrder, OrderIntent, TradingConfig } from '../core/robot.js';
+import type {
+  Broker,
+  BrokerOrder,
+  OrderIntent,
+  TradingConfig,
+  RecoveryAccount,
+} from '../core/robot.js';
 import type { Timeframe } from '../core/timeframe.js';
 import type { BacktestBroker } from '../core/backtest-history.js';
 
@@ -228,7 +234,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     }
   }
 
-  public accountState({ token, accountId, instrumentUid }: TradingConfig) {
+  public accountState({ token, accountId, instrumentUid }: RecoveryAccount) {
     return this.call(token, async ({ sandbox }) => {
       const { orders } = await sandbox.getSandboxOrders({ accountId }, requestOptions());
       const positions = await sandbox.getSandboxPositions({ accountId }, requestOptions());

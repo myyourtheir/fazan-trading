@@ -1,3 +1,4 @@
+import { surfingBacktest } from '../core/surfing-backtest.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BacktestHistory, backtestLimits } from '../core/backtest-history.js';
@@ -32,7 +33,7 @@ test(
     assert.ok(contract.priceStep && contract.priceStep > 0);
     assert.ok(contract.priceStepAmount && contract.priceStepAmount > 0);
     const timeframes = Object.keys(timeframeMs) as (keyof typeof timeframeMs)[];
-    const history = new BacktestHistory(broker, async () => token);
+    const history = new BacktestHistory(broker, async () => token, Date.now, surfingBacktest);
     for (const timeframe of timeframes) {
       for (const emaPeriod of [5, 55, backtestLimits.maxEmaPeriod]) {
         await t.test(`${timeframe} / EMA ${emaPeriod} / ${from}–${lastDate}`, async (sample) => {

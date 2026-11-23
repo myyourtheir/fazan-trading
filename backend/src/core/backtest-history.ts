@@ -1,15 +1,16 @@
 import { Temporal } from '@js-temporal/polyfill';
 import type { MarketBroker, MarketCandle } from './market-data.js';
+import type { Side } from './crossing.js';
 import { timeframeMs } from './timeframe.js';
 import {
   runBacktest,
   type BacktestContract,
   type BacktestDataset,
+  type BacktestBaseParameters,
   type BacktestParameters,
-  type BacktestReport,
   type BacktestCandle,
+  type BacktestReport,
 } from './backtest.js';
-import { crossing } from './crossing.js';
 
 const dayMs = 86_400_000;
 const maxChunkMs = 6 * dayMs;
@@ -39,7 +40,23 @@ type BacktestErrorCode =
   | 'BACKTEST_HISTORY_CONFLICT'
   | 'BACKTEST_CONTRACT_PARAMS_MISSING';
 
-type RawBacktestDataset = Omit<BacktestDataset, 'contract'> & { contract: BacktestContract };
+export type BacktestAdapter<P extends BacktestBaseParameters, C extends MarketCandle, S> = {
+  warmupCount(parameters: P): number;
+  prepare(
+    parameters: P,
+    selected: MarketCandle[],
+    warmup: MarketCandle[],
+  ): { candles: C[]; initialState: S };
+  decide(
+    state: S,
+    candle: C,
+    parameters: P,
+  ): { state: S; signal: { targetPosition: number } | null } | undefined;
+};
+type RawBacktestDataset<P, C extends MarketCandle, S> = Omit<
+  BacktestDataset<P, C, S>,
+  'contract'
+> & { contract: BacktestContract };
 
 export class BacktestError extends Error {
   constructor(
@@ -79,19 +96,24 @@ function mergeCandle(entries: Map<number, MarketCandle>, candle: MarketCandle) {
 
 const byTime = (a: MarketCandle, b: MarketCandle) => a.time - b.time;
 
-export class BacktestHistory {
+export class BacktestHistory<
+  P extends BacktestBaseParameters = BacktestParameters,
+  C extends MarketCandle = BacktestCandle,
+  S = Side | null,
+> {
   constructor(
     private readonly broker: BacktestBroker,
     private readonly loadToken: () => Promise<string>,
-    private readonly now = Date.now,
+    private readonly now: () => number,
+    private readonly adapter: BacktestAdapter<P, C, S>,
   ) {}
 
-  public async check(parameters: BacktestParameters) {
+  public async check(parameters: P) {
     const { parameters: selected, candles, cutoff } = await this.gather(parameters);
     return { parameters: selected, candles, cutoff };
   }
 
-  public async run(parameters: BacktestParameters): Promise<BacktestReport> {
+  public async run(parameters: P): Promise<BacktestReport<P, C>> {
     const dataset = await this.gather(parameters);
     const { priceStep, priceStepAmount, lot, currency } = dataset.contract;
     if (
@@ -107,10 +129,13 @@ export class BacktestHistory {
     ) {
       throw new BacktestError('BACKTEST_CONTRACT_PARAMS_MISSING');
     }
-    return runBacktest({ ...dataset, contract: { currency, priceStep, priceStepAmount, lot } });
+    return runBacktest(
+      { ...dataset, contract: { currency, priceStep, priceStepAmount, lot } },
+      this.adapter.decide,
+    );
   }
 
-  private async gather(parameters: BacktestParameters): Promise<RawBacktestDataset> {
+  private async gather(parameters: P): Promise<RawBacktestDataset<P, C, S>> {
     const { timeZone } = parameters;
     const fromDay = parseDate(parameters.from);
     const toDay = parseDate(parameters.to);
@@ -128,7 +153,8 @@ export class BacktestHistory {
     const to = startOfDay(toDay.add({ days: 1 }));
     if (from >= to) throw new BacktestError('INVALID_REQUEST');
 
-    const { instrumentUid, timeframe, emaPeriod } = parameters;
+    const { instrumentUid, timeframe } = parameters;
+    const warmupCount = this.adapter.warmupCount(parameters);
     const token = await this.loadToken();
     const contract = await this.broker.backtestFuture(token, instrumentUid);
     const firstTradeDay = contract.firstTrade && localDay(+contract.firstTrade);
@@ -169,7 +195,7 @@ export class BacktestHistory {
       firstTradeDay ? startOfDay(firstTradeDay) : -Infinity,
     );
     const before = new Map<number, MarketCandle>();
-    for (let stop = from; stop > earliest && before.size < emaPeriod; ) {
+    for (let stop = from; stop > earliest && before.size < warmupCount; ) {
       const start = Math.max(stop - maxChunkMs, earliest);
       for (const bar of await readCandles(start, stop)) {
         if (
@@ -185,27 +211,16 @@ export class BacktestHistory {
       if (start === earliest) break;
       stop = start + interval;
     }
-    if (before.size < emaPeriod) {
+    if (before.size < warmupCount) {
       throw new BacktestError('BACKTEST_WARMUP_MISSING', {
-        required: emaPeriod,
+        required: warmupCount,
         available: before.size,
         searchedFrom: localDay(earliest).toString(),
       });
     }
 
-    // Use exactly the nearest N closes, regardless of where the broker's request pages begin.
-    const warmup = [...before.values()].sort(byTime).slice(-emaPeriod);
-    const lastWarmupClose = warmup[warmup.length - 1].close;
-    // Averaging offsets preserves exact equality for a flat warmup, even with decimal prices.
-    let ema =
-      lastWarmupClose +
-      warmup.reduce((sum, bar) => sum + (bar.close - lastWarmupClose), 0) / emaPeriod;
-    const initialSide = crossing(null, lastWarmupClose, ema).side;
-    const alpha = 2 / (emaPeriod + 1);
-    const rows: BacktestCandle[] = selected.map((bar) => {
-      ema = emaPeriod === 1 ? bar.close : ema + (bar.close - ema) * alpha;
-      return { ...bar, ema };
-    });
+    const warmup = warmupCount === 0 ? [] : [...before.values()].sort(byTime).slice(-warmupCount);
+    const { candles: rows, initialState } = this.adapter.prepare(parameters, selected, warmup);
 
     const contractData: BacktestContract = {
       currency: contract.currency,
@@ -217,7 +232,7 @@ export class BacktestHistory {
       parameters,
       candles: rows,
       contract: contractData,
-      initialSide,
+      initialState,
       cutoff: end < to ? end : null,
     };
   }

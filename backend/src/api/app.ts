@@ -2,7 +2,7 @@ import express, { type ErrorRequestHandler, type RequestHandler } from 'express'
 import type { OwnerAuth } from '../core/auth.js';
 import { ownerCookie, ownerSessionToken } from './cookies.js';
 import type { MarketData } from '../core/market-data.js';
-import { RobotError, type Robot } from '../core/robot.js';
+import { RobotError, type RobotService } from '../core/robot.js';
 import { SandboxError, type SandboxConnection } from '../core/sandbox.js';
 import { sandboxRoutes } from './sandbox-routes.js';
 import { strategyRoutes } from './strategy-routes.js';
@@ -31,7 +31,7 @@ export function createApp({
   };
   displaySettings?: DisplaySettings;
   market?: MarketData;
-  robot?: Robot;
+  robot?: RobotService;
   backtest?: BacktestHistory;
   marketSocket?: { revoke(token: string | undefined): void; reload(): void };
 }) {

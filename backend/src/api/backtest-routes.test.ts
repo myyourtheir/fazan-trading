@@ -1,3 +1,4 @@
+import { surfingBacktest } from '../core/surfing-backtest.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
@@ -67,6 +68,7 @@ async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * 
       broker,
       async () => 'private-test-token',
       () => now,
+      surfingBacktest,
     ),
   }).listen(0, '127.0.0.1');
   await once(server, 'listening');

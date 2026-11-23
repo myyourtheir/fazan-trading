@@ -5,13 +5,15 @@ import {
   doublePrecision,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { BrokerOrder, JournalEntry, OrderIntent } from '../../core/robot.js';
+import type { BrokerOrder, OrderIntent } from '../../core/robot.js';
+import type { JournalEntry } from '../../core/journal.js';
 import { defaultTimeframe, type Timeframe } from '../../core/timeframe.js';
 
 export const ownerSessions = pgTable(
@@ -52,14 +54,12 @@ export const strategySettings = pgTable(
     classCode: text('class_code').notNull(),
     exchange: text('exchange').notNull(),
     expirationDate: text('expiration_date'),
-    emaPeriod: integer('ema_period').notNull(),
+    kind: text('kind').notNull(),
+    parameters: jsonb('parameters').notNull(),
     timeframe: text('timeframe').$type<Timeframe>().notNull().default(defaultTimeframe),
-    lots: integer('lots').notNull(),
   },
   (table) => [
     check('strategy_settings_singleton', sql`${table.id} = 1`),
-    check('strategy_settings_positive_ema', sql`${table.emaPeriod} > 0`),
-    check('strategy_settings_positive_lots', sql`${table.lots} > 0`),
     check(
       'strategy_settings_valid_timeframe',
       sql`${table.timeframe} in ('5m', '15m', '30m', '1h')`,
@@ -74,7 +74,7 @@ export const tradeOrders = pgTable(
     accountId: text('account_id').notNull(),
     instrumentUid: text('instrument_uid').notNull(),
     ticker: text('ticker').notNull(),
-    action: text('action').$type<OrderIntent['action']>().notNull().default('ema-crossing'),
+    action: text('action').$type<JournalEntry['action']>().notNull().default('ema-crossing'),
     timeframe: text('timeframe').$type<Timeframe>().notNull().default(defaultTimeframe),
     candleTime: bigint('candle_time_ms', { mode: 'number' }),
     signalTime: bigint('signal_time_ms', { mode: 'number' }),

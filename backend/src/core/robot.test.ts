@@ -5,15 +5,81 @@ import type { MarketHistory, MarketUpdate } from './market-data.js';
 import {
   Robot,
   type Broker,
-  type JournalEntry,
+  type RecoveredOrder,
+  type FindSignal,
   type TradingConfig,
   type TradingStore,
 } from './robot.js';
+import type { JournalEntry } from './journal.js';
 import { timeframeMs, type Timeframe } from './timeframe.js';
+import { runSurfingBacktest } from './surfing-backtest.js';
+import { canTradeSurfing, surfingStrategy } from './surfing-strategy.js';
+
+test('unsafe automated reversal size does not prevent manual close', async () => {
+  const largeConfig = { ...config, lots: 1_073_741_824 };
+  let position = 1;
+  let reserved = false;
+  const robot = new Robot(
+    {
+      async verifySelection() {},
+      async accountState() {
+        return { position, activeOrders: false };
+      },
+      async submit(_token, order) {
+        assert.equal(reserved, true);
+        assert.equal(order.lots, 1);
+        position = 0;
+        return { brokerOrderId: 'close', brokerStatus: 'filled', executedLots: 1 };
+      },
+      async orderState() {
+        return {
+          brokerOrderId: 'close',
+          brokerStatus: 'filled',
+          executedLots: 1,
+          executions: [{ tradeId: 'fill', lots: 1, price: 100, time: 1 }],
+        };
+      },
+    },
+    {
+      async reserve() {
+        reserved = true;
+        return true;
+      },
+      async record() {},
+      async hasUnresolved() {
+        return false;
+      },
+      async unresolved() {
+        return null;
+      },
+      async history() {
+        return [];
+      },
+    },
+    {
+      async subscribe() {
+        return () => {};
+      },
+    },
+    async () => largeConfig,
+    Date.now,
+    (history, options, config) => surfingStrategy.live(history, options, config),
+    async () => largeConfig,
+    (value) => {
+      if (!canTradeSurfing(value)) throw new Error('ROBOT_SETTINGS_INVALID');
+    },
+  );
+  await assert.rejects(robot.start(), /ROBOT_SETTINGS_INVALID/);
+  await robot.closePosition({
+    accountId: largeConfig.accountId,
+    instrumentUid: largeConfig.instrumentUid,
+  });
+  assert.equal(position, 0);
+});
 
 const hourMs = timeframeMs['1h'];
 type Candle = MarketHistory['candles'][number];
-const config: TradingConfig = {
+const config: TradingConfig & { lots: number; emaPeriod: number } = {
   token: 'fake',
   accountId: 'account',
   instrumentUid: 'future',
@@ -52,11 +118,18 @@ function candle(
 function setup({
   autoConnect = true,
   timeframe = config.timeframe,
-}: { autoConnect?: boolean; timeframe?: Timeframe } = {}) {
-  const tradingConfig = { ...config, timeframe };
+  findSignal = (history, options, config) => surfingStrategy.live(history, options, config),
+  lots = config.lots,
+}: {
+  autoConnect?: boolean;
+  timeframe?: Timeframe;
+  findSignal?: FindSignal<TradingConfig & { lots: number; emaPeriod: number }>;
+  lots?: number;
+} = {}) {
+  const tradingConfig = { ...config, timeframe, lots };
   const selection = { instrumentUid: config.instrumentUid, emaPeriod: config.emaPeriod, timeframe };
   const interval = timeframeMs[timeframe];
-  const entries: JournalEntry[] = [];
+  const entries: (JournalEntry & RecoveredOrder)[] = [];
   const submitted: JournalEntry[] = [];
   const lookups: [string, string | null][] = [];
   let listener: ((update: MarketUpdate) => void) | undefined;
@@ -64,18 +137,39 @@ function setup({
   let now = opening + interval / 2;
   let position = 0;
   let activeOrders = false;
-  const store: TradingStore = {
+  let settingsValid = true;
+  const store: TradingStore<JournalEntry> = {
     async reserve(order) {
       if (await store.hasUnresolved()) return false;
       if (
-        order.candleTime !== null &&
+        order.context.type === 'signal' &&
         entries.some(
-          (row) => row.candleTime === order.candleTime && row.timeframe === order.timeframe,
+          (row) =>
+            row.candleTime ===
+              (order.context.type === 'signal' ? order.context.candleTime : null) &&
+            row.timeframe === order.timeframe,
         )
       )
         return false;
       entries.push({
         ...order,
+        ...(order.context.type === 'signal'
+          ? {
+              action: 'ema-crossing' as const,
+              candleTime: order.context.candleTime,
+              signalTime: order.context.signalTime,
+              signalPrice: order.context.strategy.signalPrice as number,
+              ema: order.context.strategy.ema as number,
+              manualCloseTime: null,
+            }
+          : {
+              action: 'manual-close' as const,
+              candleTime: null,
+              signalTime: null,
+              signalPrice: null,
+              ema: null,
+              manualCloseTime: order.context.time,
+            }),
         status: 'reserved',
         brokerStatus: 'unknown',
         brokerOrderId: null,
@@ -138,8 +232,16 @@ function setup({
         };
       },
     },
-    async () => tradingConfig,
+    async () => {
+      if (!settingsValid) throw new Error('Invalid saved strategy settings');
+      return tradingConfig;
+    },
     () => now,
+    findSignal,
+    async () => tradingConfig,
+    (value) => {
+      if (!canTradeSurfing(value)) throw new Error('ROBOT_SETTINGS_INVALID');
+    },
   );
   async function historyFor(timeframe: Timeframe, ...candles: Candle[]) {
     const recoveredAt = reconnecting ? now : undefined;
@@ -153,6 +255,9 @@ function setup({
     store,
     submitted,
     lookups,
+    invalidateSettings: () => {
+      settingsValid = false;
+    },
     isSubscribed: () => listener !== undefined,
     setNow: (offset: number) => {
       now = opening + offset * interval;
@@ -174,6 +279,54 @@ function setup({
     historyFor,
   };
 }
+
+test('configured live and backtest adapters agree on signal candles and targets', async () => {
+  const { robot, submitted, history, setNow } = setup();
+  const bars = [candle(-2, 100), candle(-1, 99), candle(0, 101), candle(1, 100), candle(2, 99)];
+  const run = (count: number) =>
+    runSurfingBacktest({
+      parameters: {
+        instrumentUid: config.instrumentUid,
+        timeframe: '1h',
+        emaPeriod: 55,
+        lots: 3,
+        from: '2026-11-18',
+        to: '2026-11-18',
+        timeZone: 'UTC',
+        commission: 0,
+        slippage: 0,
+      },
+      candles: bars.slice(0, count).map((bar) => ({ ...bar, ema: 100 })),
+      contract: { currency: 'rub', priceStep: 1, priceStepAmount: 1, lot: 1 },
+      initialState: null,
+      cutoff: null,
+    });
+  await robot.start();
+  await history(...bars.slice(0, 2));
+  setNow(1);
+  await history(...bars.slice(0, 3));
+  assert.deepEqual(
+    { candleTime: submitted[0].candleTime, targetPosition: submitted[0].targetPosition },
+    {
+      candleTime: run(3).finalSignal?.candleTime,
+      targetPosition: run(3).finalSignal?.targetPosition,
+    },
+  );
+  setNow(3);
+  await history(...bars);
+  assert.deepEqual(
+    { candleTime: submitted[1].candleTime, targetPosition: submitted[1].targetPosition },
+    {
+      candleTime: run(5).finalSignal?.candleTime,
+      targetPosition: run(5).finalSignal?.targetPosition,
+    },
+  );
+  assert.deepEqual(
+    submitted.map(({ targetPosition }) => targetPosition),
+    [3, -3],
+  );
+  await robot.shutdown();
+});
 
 test('a 15-minute strategy trades at its own close, never on a different timeframe or without confirmed EMA', async () => {
   const { robot, submitted, history, historyFor, setNow } = setup({ timeframe: '15m' });
@@ -944,12 +1097,12 @@ test('startup keeps an unseen reserved request blocked; later reconciliation use
     accountId,
     instrumentUid,
     ticker,
-    action: 'ema-crossing',
-    candleTime: opening - hourMs,
-    signalTime: opening,
-    signalPrice: 101,
-    ema: 100,
-    manualCloseTime: null,
+    context: {
+      type: 'signal',
+      candleTime: opening - hourMs,
+      signalTime: opening,
+      strategy: { kind: 'surfing', signalPrice: 101, ema: 100 },
+    },
     timeframe: '1h',
     direction: 'buy',
     lots: 3,
@@ -976,6 +1129,113 @@ test('startup keeps an unseen reserved request blocked; later reconciliation use
   ]);
   assert.equal((await robot.history())[0].status, 'confirmed');
   assert.equal(robot.status().mode, 'stopped');
+  assert.equal(isSubscribed(), false);
+  assert.equal(submitted.length, 0);
+});
+
+test('invalid settings do not prevent reconciliation of the original reserved order', async () => {
+  const { robot, store, submitted, lookups, setAccount, invalidateSettings } = setup();
+  await store.reserve({
+    id: 'original-id',
+    accountId: config.accountId,
+    instrumentUid: config.instrumentUid,
+    ticker: config.ticker,
+    context: {
+      type: 'signal',
+      candleTime: opening - hourMs,
+      signalTime: opening,
+      strategy: { kind: 'surfing', signalPrice: 101, ema: 100 },
+    },
+    timeframe: '1h',
+    direction: 'buy',
+    lots: 3,
+    fromPosition: 0,
+    targetPosition: 3,
+  });
+  setAccount(3);
+  invalidateSettings();
+  await robot.restore();
+  assert.deepEqual(lookups, [['original-id', null]]);
+  assert.equal(robot.status().recovery?.ready, true);
+  await assert.rejects(robot.resume(), /Invalid saved strategy settings/);
+  assert.deepEqual(submitted, []);
+});
+
+test('generic live signal context passes through reservation before submission, including target zero', async () => {
+  let next = 0;
+  const context = { kind: 'non-ema', reason: 'test', nested: { value: 7 } };
+  const { robot, store, broker, history, submitted } = setup({
+    findSignal: () => {
+      const index = next++;
+      return index < 2
+        ? {
+            candleTime: opening + index * hourMs,
+            signalTime: opening + (index + 1) * hourMs,
+            targetPosition: index === 0 ? 3 : 0,
+            strategy: context,
+          }
+        : undefined;
+    },
+  });
+  const reserve = store.reserve.bind(store);
+  let reserved = false;
+  let reservedIntent: import('./robot.js').OrderIntent | undefined;
+  store.reserve = async (intent) => {
+    reservedIntent = intent;
+    assert.deepEqual(intent.context, {
+      type: 'signal',
+      candleTime: opening + submitted.length * hourMs,
+      signalTime: opening + (submitted.length + 1) * hourMs,
+      strategy: context,
+    });
+    reserved = await reserve(intent);
+    return reserved;
+  };
+  const submit = broker.submit.bind(broker);
+  broker.submit = async (token, intent) => {
+    assert.equal(reserved, true);
+    assert.equal(intent.id, reservedIntent?.id);
+    assert.deepEqual(intent.context, reservedIntent?.context);
+    if (intent.targetPosition === 0) {
+      assert.equal(intent.fromPosition, 3);
+      assert.equal(intent.direction, 'sell');
+      assert.equal(intent.lots, 3);
+    }
+    reserved = false;
+    return submit(token, intent);
+  };
+  await robot.start();
+  await history(candle(0, 100));
+  await history(candle(1, 100));
+  assert.deepEqual(
+    submitted.map((order) => order.targetPosition),
+    [3, 0],
+  );
+});
+
+test('oversized automated configuration rejects recovery-ready resume before subscribing or sending', async () => {
+  const { robot, store, setAccount, submitted, isSubscribed } = setup({ lots: 1_073_741_824 });
+  await store.reserve({
+    id: 'saved',
+    accountId: config.accountId,
+    instrumentUid: config.instrumentUid,
+    ticker: config.ticker,
+    timeframe: config.timeframe,
+    context: {
+      type: 'signal',
+      candleTime: opening - hourMs,
+      signalTime: opening,
+      strategy: { kind: 'surfing', signalPrice: 101, ema: 100 },
+    },
+    direction: 'buy',
+    lots: 3,
+    fromPosition: 0,
+    targetPosition: 3,
+  });
+  setAccount(3);
+  await robot.restore();
+  assert.equal(robot.status().recovery?.ready, true);
+  await assert.rejects(robot.resume(), /ROBOT_SETTINGS_INVALID/);
   assert.equal(isSubscribed(), false);
   assert.equal(submitted.length, 0);
 });

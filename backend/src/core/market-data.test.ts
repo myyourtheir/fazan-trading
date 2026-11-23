@@ -8,6 +8,9 @@ import {
   type MarketUpdate,
 } from './market-data.js';
 import { timeframeMs } from './timeframe.js';
+import { Robot, type Broker, type TradingStore } from './robot.js';
+import { surfingStrategy, type SurfingLiveConfig } from './surfing-strategy.js';
+import { surfingFeed } from './surfing-feed.js';
 
 const interval = timeframeMs['15m'];
 const openTime = Date.UTC(2026, 10, 18, 12);
@@ -31,6 +34,55 @@ async function until(check: () => boolean) {
   for (let attempt = 0; attempt < 100 && !check(); attempt++) await delay(5);
   assert.ok(check(), 'Expected a market update');
 }
+
+test('overlapping EMA requests use their completion snapshot and never replace newer confirmations', async (t) => {
+  const responses: ((value: { time: number; value: number }[]) => void)[] = [];
+  let complete = false;
+  const updates: MarketUpdate[] = [];
+  const market = new MarketData(
+    {
+      async candles() {
+        return [candle(previous, 100, true), candle(openTime, 110, complete)];
+      },
+      async ema() {
+        return new Promise((resolve) => responses.push(resolve));
+      },
+      async *stream(_token, _uid, _timeframe, signal) {
+        yield { kind: 'subscribed' };
+        await new Promise<void>((resolve) =>
+          signal.addEventListener('abort', () => resolve(), { once: true }),
+        );
+      },
+    },
+    async () => config,
+    { now: () => openTime + interval + 1, refreshMs: 5 },
+  );
+  t.after(await market.subscribe((update) => updates.push(update)));
+  await until(() => responses.length >= 1);
+  complete = true;
+  await until(() => responses.length >= 2);
+  responses[0]([{ time: openTime, value: 999 }]);
+  await delay(10);
+  assert.equal(
+    updates.at(-1)?.history?.candles.find((c) => c.time === openTime)?.confirmedEma,
+    null,
+  );
+  responses[1]([
+    { time: previous, value: 20 },
+    { time: openTime, value: 30 },
+  ]);
+  await until(
+    () => updates.at(-1)?.history?.candles.find((c) => c.time === openTime)?.confirmedEma === 30,
+  );
+  await until(() => responses.length >= 4);
+  responses[3]([{ time: previous, value: 40 }]);
+  await until(
+    () => updates.at(-1)?.history?.candles.find((c) => c.time === previous)?.confirmedEma === 40,
+  );
+  responses[2]([{ time: previous, value: 10 }]);
+  await delay(10);
+  assert.equal(updates.at(-1)?.history?.candles.find((c) => c.time === previous)?.confirmedEma, 40);
+});
 
 test('history confirms EMA only on a complete candle with exactly the same opening timestamp', async () => {
   const broker: MarketBroker = {
@@ -145,6 +197,7 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   let reconnectEmaAvailable = false;
   let reconnectCandleComplete = false;
   let matchingEmaAvailable = false;
+  let matchingEma = NaN;
   let reconnectEmaReads = 0;
   let disconnect!: () => void;
   const broker: MarketBroker = {
@@ -162,7 +215,7 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
       }
       return [
         { time: previous, value: 102 },
-        ...(matchingEmaAvailable ? [{ time: openTime, value: 106 }] : []),
+        ...(matchingEmaAvailable ? [{ time: openTime, value: matchingEma }] : []),
       ];
     },
     async *stream(_token, _uid, _timeframe, signal) {
@@ -187,6 +240,50 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
   const second: MarketUpdate[] = [];
   t.after(await market.subscribe((update) => first.push(update)));
   t.after(await market.subscribe((update) => second.push(update)));
+  let submissions = 0;
+  const tradingBroker: Broker = {
+    async verifySelection() {},
+    async accountState() {
+      return { position: 0, activeOrders: false };
+    },
+    async submit() {
+      submissions++;
+      throw new Error('Unexpected stale order');
+    },
+    async orderState() {
+      throw new Error('Unexpected lookup');
+    },
+  };
+  const store: TradingStore = {
+    async reserve() {
+      throw new Error('Unexpected stale reservation');
+    },
+    async record() {},
+    async hasUnresolved() {
+      return false;
+    },
+    async unresolved() {
+      return null;
+    },
+    async history() {
+      return [];
+    },
+  };
+  const robot = new Robot<SurfingLiveConfig>(
+    tradingBroker,
+    store,
+    surfingFeed(market),
+    async () => ({
+      ...config,
+      accountId: 'account',
+      ticker: 'FUT',
+      lots: 3,
+    }),
+    () => now,
+    (history, options, config) => surfingStrategy.live(history, options, config),
+  );
+  t.after(() => robot.shutdown());
+  await robot.start();
   await until(() => second.some((update) => update.history?.candles.at(-1)?.previewEma === 106));
   assert.equal(streams, 1);
   now += interval;
@@ -208,20 +305,20 @@ test('subscribers share a broker stream; reconnect backfills candles missed duri
     'A successful but incomplete backfill is still not tradeable',
   );
   reconnectCandleComplete = true;
+  await until(() => second.at(-1)?.stream === 'live');
+  assert.equal(second.at(-1)?.recoveredAt, now);
+  assert.equal(submissions, 0);
+  assert.equal(robot.status().mode, 'running');
+  matchingEmaAvailable = true;
+  matchingEma = 106;
   await until(
     () =>
       second
         .at(-1)
-        ?.history?.candles.some((candle) => candle.time === openTime && candle.complete) === true,
+        ?.history?.candles.some((bar) => bar.time === openTime && bar.confirmedEma === 106) ===
+      true,
   );
-  assert.equal(
-    second.at(-1)?.stream,
-    'connecting',
-    'A completed candle without its matching EMA cannot restore the baseline',
-  );
-  matchingEmaAvailable = true;
-  await until(() => second.at(-1)?.stream === 'live');
-  assert.equal(second.at(-1)?.recoveredAt, now);
+  assert.equal(submissions, 0, 'late EMA must not trade a backfilled crossing');
   const duringBreak = first
     .find((update) => update.stream === 'disconnected')
     ?.history?.candles.at(-1);
@@ -264,4 +361,40 @@ test('different timeframes use separate broker feeds even for the same instrumen
     second.flatMap(({ tick }) => (tick ? [[tick.timeframe, tick.candle.close]] : [])),
     [['5m', 105]],
   );
+});
+
+test('recovery publishes the candle cutoff while broker EMA is still pending', async (t) => {
+  let now = openTime + 1;
+  let attempts = 0;
+  let disconnect!: () => void;
+  const updates: MarketUpdate[] = [];
+  const market = new MarketData(
+    {
+      async candles() {
+        return [candle(now < openTime + interval ? previous : openTime, 110, true)];
+      },
+      async ema() {
+        return new Promise<never>(() => {});
+      },
+      async *stream(_token, _uid, _timeframe, signal) {
+        attempts++;
+        yield { kind: 'subscribed' };
+        await new Promise<void>((resolve) => {
+          signal.addEventListener('abort', () => resolve(), { once: true });
+          disconnect = resolve;
+        });
+      },
+    },
+    async () => config,
+    { now: () => now, retryMs: 5, refreshMs: 10 },
+  );
+  t.after(await market.subscribe((update) => updates.push(update)));
+  await until(() => updates.some((update) => update.history));
+  now += interval;
+  disconnect();
+  await until(() => updates.some((update) => update.recoveredAt === now));
+  assert.equal(attempts, 2);
+  const recovered = updates.find((update) => update.recoveredAt === now);
+  assert.equal(recovered?.stream, 'live');
+  assert.equal(recovered?.history?.candles.at(-1)?.confirmedEma, null);
 });

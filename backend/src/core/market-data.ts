@@ -60,23 +60,18 @@ export function sameMarketSelection(a: MarketSelection, b: MarketSelection) {
   );
 }
 
-function hasRecoveryBaseline({ candles, ema }: BrokerSnapshot, cutoff: number, intervalMs: number) {
-  const closed = new Map(
-    candles.filter((candle) => candle.complete).map((candle) => [candle.time, candle.close]),
+function hasRecoveryBaseline({ candles }: BrokerSnapshot, cutoff: number, intervalMs: number) {
+  const lastClosed = Math.floor(cutoff / intervalMs) * intervalMs - intervalMs;
+  return candles.some(
+    (candle) => candle.time === lastClosed && candle.complete && Number.isFinite(candle.close),
   );
-  const indicators = new Map(ema?.map(({ time, value }) => [time, value]));
-  // Without a trading calendar a missing interval could be a missing close, not a market break.
-  for (let time = Math.floor(cutoff / intervalMs) * intervalMs - intervalMs; ; time -= intervalMs) {
-    const close = closed.get(time);
-    const value = indicators.get(time);
-    if (close === undefined || value === undefined) return false;
-    if (close !== value) return true;
-  }
 }
 
 class MarketSeries {
   private readonly candles = new Map<number, MarketCandle>();
   private readonly ema = new Map<number, number>();
+  private readonly emaVersions = new Map<number, number>();
+  private emaRequest = 0;
   private readonly liveTimes = new Set<number>();
 
   constructor(private readonly selection: MarketSelection) {}
@@ -91,7 +86,7 @@ class MarketSeries {
     this.liveTimes.add(candle.time);
   }
 
-  public merge(candles: MarketCandle[], ema: { time: number; value: number }[]) {
+  public merge(candles: MarketCandle[]) {
     for (const candle of candles) {
       if (
         candle.complete ||
@@ -100,9 +95,25 @@ class MarketSeries {
         this.candles.set(candle.time, candle);
       }
     }
-    for (const { time, value } of ema) {
-      if (this.candles.get(time)?.complete) this.ema.set(time, value);
-    }
+  }
+
+  public beginEma(candles: MarketCandle[]) {
+    const completed = new Set(
+      candles.filter((candle) => candle.complete).map((candle) => candle.time),
+    );
+    const version = ++this.emaRequest;
+    return (ema: { time: number; value: number }[]) => {
+      for (const { time, value } of ema) {
+        if (
+          completed.has(time) &&
+          this.candles.get(time)?.complete &&
+          version > (this.emaVersions.get(time) ?? 0)
+        ) {
+          this.ema.set(time, value);
+          this.emaVersions.set(time, version);
+        }
+      }
+    };
   }
 
   public history(now: number): MarketHistory {
@@ -110,6 +121,7 @@ class MarketSeries {
       if (time >= now - historyMs) continue;
       this.candles.delete(time);
       this.ema.delete(time);
+      this.emaVersions.delete(time);
       this.liveTimes.delete(time);
     }
     let lastConfirmed: number | null = null;
@@ -202,20 +214,35 @@ export class MarketData {
     series: MarketSeries,
     { token, instrumentUid, emaPeriod, timeframe }: MarketConfig,
     signal?: AbortSignal,
+    onCandles?: (snapshot: BrokerSnapshot) => void,
+    onEma?: () => void,
   ) {
     const now = this.now();
     const from = new Date(now - historyMs);
     const to = new Date(now);
     const candles = await this.broker.candles(token, instrumentUid, timeframe, from, to, signal);
     if (signal?.aborted) return;
+    series.merge(candles);
+    onCandles?.({ candles, ema: null });
     // Read the indicator after observing completion, not in parallel with that check.
-    const ema = candles.some((candle) => candle.complete)
-      ? await this.broker
-          .ema(token, instrumentUid, timeframe, emaPeriod, from, to, signal)
-          .catch(() => null)
-      : [];
-    if (!signal?.aborted) series.merge(candles, ema ?? []);
-    return { candles, ema };
+    const acceptEma = series.beginEma(candles);
+    const loadEma = async () => {
+      const ema = candles.some((candle) => candle.complete)
+        ? await this.broker
+            .ema(token, instrumentUid, timeframe, emaPeriod, from, to, signal)
+            .catch(() => null)
+        : [];
+      if (!signal?.aborted) {
+        acceptEma(ema ?? []);
+        onEma?.();
+      }
+      return { candles, ema };
+    };
+    if (onCandles) {
+      void loadEma();
+      return { candles, ema: null };
+    }
+    return loadEma();
   }
 
   private async run(feed: MarketFeed) {
@@ -230,23 +257,26 @@ export class MarketData {
     };
     const poll = async (signal: AbortSignal) => {
       while (!signal.aborted) {
-        let snapshot: BrokerSnapshot | undefined;
         try {
-          snapshot = await this.refresh(series, config, signal);
+          await this.refresh(
+            series,
+            config,
+            signal,
+            (snapshot) => {
+              const cutoff = this.now();
+              if (
+                recovering &&
+                hasRecoveryBaseline(snapshot, cutoff, timeframeMs[config.timeframe])
+              ) {
+                recovering = false;
+                publishHistory('live', cutoff);
+              } else publishHistory();
+            },
+            () => publishHistory(),
+          );
         } catch {
           /* Keep the last successful snapshot and retry. */
-        }
-        if (!signal.aborted && (snapshot || feed.history)) {
-          const cutoff = this.now();
-          if (
-            recovering &&
-            snapshot &&
-            hasRecoveryBaseline(snapshot, cutoff, timeframeMs[config.timeframe])
-          ) {
-            recovering = false;
-            // A socket acknowledgement alone is not a trading baseline after a gap.
-            publishHistory('live', cutoff);
-          } else publishHistory();
+          if (!signal.aborted && feed.history) publishHistory();
         }
         await delay(this.refreshMs, undefined, { signal }).catch(() => {});
       }

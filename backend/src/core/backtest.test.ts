@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import {
-  runBacktest,
-  type BacktestCandle,
-  type BacktestDataset,
-  type BacktestParameters,
-} from './backtest.js';
+import { type BacktestCandle, type BacktestDataset, type BacktestParameters } from './backtest.js';
+import { runSurfingBacktest as runBacktest } from './surfing-backtest.js';
 import type { Side } from './crossing.js';
 
 const hour = 3_600_000;
@@ -42,7 +38,13 @@ function dataset(
   initialSide: Side,
   overrides: Partial<BacktestParameters> = {},
 ): BacktestDataset {
-  return { parameters: parameters(overrides), candles, contract, initialSide, cutoff: null };
+  return {
+    parameters: parameters(overrides),
+    candles,
+    contract,
+    initialState: initialSide,
+    cutoff: null,
+  };
 }
 
 test('entries both ways, a full reversal, and the money result follow the crossing rule', () => {
@@ -226,4 +228,56 @@ test('drawdown is the deepest fall of the total result from its running peak', (
   // Equity at closes: 0, -847.5, -2002.5, -2062.5, -1972.5; the deepest fall from peak 0 is 2062.5.
   assert.equal(report.result.maxDrawdown, 2062.5);
   assert.equal(report.result.total, report.result.closed + report.result.open);
+});
+
+test('live and backtest agree on targets for identical prepared observations', async () => {
+  const { findLiveCrossing } = await import('./crossing.js');
+  const bars = [100, 101, 100, 99, 100, 101].map((close, index) => candle(index, 100, close, 100));
+  const expected = [null, null, null, -3, null, 3];
+  for (let index = 0; index < bars.length; index++) {
+    const prefix = bars.slice(0, index + 1);
+    const history = {
+      instrumentUid: 'future',
+      emaPeriod: 55,
+      timeframe: '1h' as const,
+      candles: prefix.map((bar) => ({ ...bar, confirmedEma: bar.ema, previewEma: bar.ema })),
+    };
+    const live = findLiveCrossing(history, {
+      since: t0 - 1,
+      now: t0 + (index + 1) * hour,
+      lastAttempted: index === 0 ? -Infinity : bars[index - 1].time,
+      lots: 3,
+    });
+    const backtest = runBacktest({ ...dataset(prefix, -1), initialState: null });
+    assert.equal(live?.targetPosition ?? null, expected[index]);
+    assert.equal(backtest.finalSignal?.targetPosition ?? null, expected[index]);
+  }
+});
+
+test('rejects invalid targets, unpersistable deltas and unsupported same-side resizing', () => {
+  const bars = [candle(0, 100, 101, 100), candle(1, 100, 101, 100), candle(2, 100, 101, 100)];
+  const invalid = () => ({
+    state: { side: 1 as const },
+    signal: { targetPosition: NaN, explanation: { close: 101, ema: 100 } },
+  });
+  assert.throws(() => runBacktest(dataset(bars, -1), invalid), /unpersistable/);
+  let count = 0;
+  const resize = () => ({
+    state: { side: 1 as const },
+    signal: { targetPosition: ++count === 1 ? 1 : 2, explanation: { close: 101, ema: 100 } },
+  });
+  assert.throws(() => runBacktest(dataset(bars, -1), resize), /same-side/);
+});
+
+test('backtest permits a reversal larger than the live journal integer limit', () => {
+  const large = 1_073_741_824;
+  const report = runBacktest(
+    dataset([candle(0, 100, 101, 100), candle(1, 100, 99, 100), candle(2, 100, 99, 100)], -1, {
+      lots: large,
+    }),
+  );
+  assert.deepEqual(
+    report.executions.map((fill) => fill.lots),
+    [large, large * 2],
+  );
 });

@@ -1,8 +1,10 @@
+import { surfingStrategy } from '../core/surfing-strategy.js';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
-import { Robot, type JournalEntry } from '../core/robot.js';
+import { Robot, type RobotService } from '../core/robot.js';
+import type { JournalEntry } from '../core/journal.js';
 import { SandboxConnection, type SandboxStore } from '../core/sandbox.js';
 import { fakeBroker, futures, token } from '../core/sandbox.test-support.js';
 import { StrategySettings, type StrategyStore } from '../core/strategy-settings.js';
@@ -16,7 +18,7 @@ async function serve(
   t: TestContext,
   sandbox: SandboxConnection,
   strategy?: StrategySettings,
-  robot?: Robot,
+  robot?: RobotService,
 ) {
   const sessions = new Map<string, Date>();
   const sessionStore: SessionStore = {
@@ -227,6 +229,8 @@ test('the server rejects trading settings changes until stopped and broker-confi
       lots: 1,
       timeframe: '1h',
     }),
+    Date.now,
+    (history, options, config) => surfingStrategy.live(history, options, config),
   );
   const { request } = await serve(t, sandbox, strategy, robot);
   const selection = { accountId: 'existing', instrumentUid: 'contract-a' };
@@ -345,7 +349,7 @@ test('replacing unusable credentials for a restarted order is allowed only for i
         return order.status === 'reserved';
       },
       async unresolved() {
-        return order;
+        return { ...order, context: { type: 'manual-close', time: 1 } };
       },
       async history() {
         return [order];
@@ -370,6 +374,8 @@ test('replacing unusable credentials for a restarted order is allowed only for i
       lots: 1,
       timeframe: '1h',
     }),
+    Date.now,
+    (history, options, config) => surfingStrategy.live(history, options, config),
   );
   await robot.restore();
   assert.equal(lookups, 0);
@@ -543,6 +549,13 @@ test('strategy saving uses offered contracts without fetching the broker catalog
   for (const timeframe of [undefined, null, 15, '1d', 'constructor']) {
     assert.equal((await put({ ...config, timeframe })).status, 400);
   }
+  assert.equal((await put({ ...config, kind: 'unknown' })).status, 400);
+  assert.equal((await put({ ...config, kind: 'surfing', parameters: { lots: 3 } })).status, 400);
+  assert.equal(
+    (await put({ ...config, kind: 'surfing', parameters: { emaPeriod: 55, lots: 3, extra: 1 } }))
+      .status,
+    400,
+  );
   for (const instrumentUid of ['IMOEXF', 'unknown', 'unavailable']) {
     assert.equal((await put({ ...config, instrumentUid })).status, 422);
   }
@@ -550,6 +563,15 @@ test('strategy saving uses offered contracts without fetching the broker catalog
   assert.equal(settings, null);
   catalogueAvailable = false;
   assert.equal((await put(config)).status, 204);
+  assert.equal(
+    (await put({ ...config, parameters: { emaPeriod: 0, lots: 0 } })).status,
+    204,
+    'Legacy requests use flat values even when an unrelated parameters field is present',
+  );
+  assert.equal(
+    (await put({ ...config, kind: 'surfing', parameters: { emaPeriod: 55, lots: 3 } })).status,
+    204,
+  );
   assert.equal(catalogue.mock.callCount(), 3);
   assert.equal((await put({ ...config, lots: 0 })).status, 400);
   assert.equal((await request('sandbox/connection', 'PUT', { token })).status, 204);
@@ -566,4 +588,11 @@ test('strategy saving uses offered contracts without fetching the broker catalog
     lots: 3,
     timeframe: '15m',
   });
+  const stored = await strategyStore.load();
+  assert.ok(stored);
+  assert.deepEqual(stored.parameters, { emaPeriod: 55, lots: 3 });
+  assert.equal('emaPeriod' in stored, false);
+  assert.equal('lots' in stored, false);
+  settings = { ...stored, parameters: { emaPeriod: 0, lots: 3 } };
+  await assert.rejects(strategy.get(), /Invalid saved strategy settings/);
 });

@@ -6,7 +6,10 @@ import type { SessionStore } from '../core/auth.js';
 import type { DisplaySettingsStore } from '../core/display-settings.js';
 import type { SandboxStore, SavedSandboxConnection } from '../core/sandbox.js';
 import type { SavedStrategy, StrategyStore } from '../core/strategy-settings.js';
-import type { OrderIntent, OrderResult, TradingStore } from '../core/robot.js';
+import { surfingStrategy } from '../core/surfing-strategy.js';
+import { isTimeframe } from '../core/timeframe.js';
+import type { OrderIntent, OrderResult, RecoveredOrder, TradingStore } from '../core/robot.js';
+import type { JournalEntry } from '../core/journal.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../../migrations/', import.meta.url));
@@ -98,18 +101,31 @@ export class PostgresStrategySettings implements StrategyStore {
   public async load() {
     const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
     if (!saved) return null;
-    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots, timeframe } =
+    const { uid, ticker, name, classCode, exchange, expirationDate, kind, parameters, timeframe } =
       saved;
+    if (
+      kind !== surfingStrategy.kind ||
+      !surfingStrategy.validate(parameters) ||
+      !isTimeframe(timeframe)
+    ) {
+      throw new Error('Invalid saved strategy settings');
+    }
     return {
       instrument: { uid, ticker, name, classCode, exchange, expirationDate },
-      emaPeriod,
-      lots,
+      kind,
+      parameters: { emaPeriod: parameters.emaPeriod, lots: parameters.lots },
       timeframe,
     };
   }
 
-  public async save({ instrument, emaPeriod, lots, timeframe }: SavedStrategy) {
-    const values = { ...instrument, emaPeriod, lots, timeframe };
+  public async save({ instrument, kind, parameters, timeframe }: SavedStrategy) {
+    if (
+      kind !== surfingStrategy.kind ||
+      !surfingStrategy.validate(parameters) ||
+      !isTimeframe(timeframe)
+    )
+      throw new Error('Invalid strategy settings');
+    const values = { ...instrument, kind: surfingStrategy.kind, parameters, timeframe };
     await this.db
       .insert(strategySettings)
       .values({ id: 1, ...values })
@@ -119,13 +135,25 @@ export class PostgresStrategySettings implements StrategyStore {
 
 const unresolvedOrders = () => inArray(tradeOrders.status, ['reserved', 'unconfirmed']);
 
-export class PostgresTradingStore implements TradingStore {
-  constructor(private readonly db: Database) {}
+export type JournalProjection = {
+  toJournalIntent(order: OrderIntent): Omit<JournalEntry, keyof OrderResult | 'executions'>;
+  toRecoveredOrder(entry: JournalEntry): RecoveredOrder;
+};
+
+export class PostgresTradingStore implements TradingStore<JournalEntry> {
+  constructor(
+    private readonly db: Database,
+    private readonly projection: JournalProjection,
+  ) {}
 
   public async reserve(order: OrderIntent) {
     const rows = await this.db
       .insert(tradeOrders)
-      .values({ ...order, status: 'reserved', brokerStatus: 'unknown' })
+      .values({
+        ...this.projection.toJournalIntent(order),
+        status: 'reserved',
+        brokerStatus: 'unknown',
+      })
       .onConflictDoNothing()
       .returning({ id: tradeOrders.id });
     return rows.length === 1;
@@ -157,7 +185,7 @@ export class PostgresTradingStore implements TradingStore {
   public async unresolved() {
     // The partial unique index allows at most one unresolved intent.
     const [order] = await this.readJournal(unresolvedOrders());
-    return order ?? null;
+    return order ? this.projection.toRecoveredOrder(order) : null;
   }
 
   public history(accountId?: string) {
@@ -177,9 +205,9 @@ export class PostgresTradingStore implements TradingStore {
         tradeOrders.id,
         tradeExecutions.sequence,
       );
-    const journal = new Map<string, Awaited<ReturnType<TradingStore['history']>>[number]>();
+    const journal = new Map<string, JournalEntry>();
     for (const { trade_orders: order, trade_executions: execution } of rows) {
-      const entry = journal.get(order.id) ?? { ...order, executions: [] };
+      const entry: JournalEntry = journal.get(order.id) ?? { ...order, executions: [] };
       journal.set(order.id, entry);
       if (execution) {
         const { tradeId, lots, price, time } = execution;

@@ -1,11 +1,12 @@
 import type { MarketHistory } from './market-data.js';
 import { timeframeMs } from './timeframe.js';
+import { decideSurfing } from './surfing.js';
 
 export type Side = -1 | 1;
 
 export function crossing(previous: Side | null, close: number, ema: number) {
-  const side = close === ema ? previous : close > ema ? 1 : -1;
-  return { side, direction: previous !== null && side !== previous ? side : null };
+  const result = decideSurfing({ side: previous }, { close, ema }, { lots: 1 });
+  return { side: result.state.side, direction: result.signal ? result.state.side : null };
 }
 
 export function findLiveCrossing(
@@ -14,10 +15,14 @@ export function findLiveCrossing(
     since,
     now,
     lastAttempted,
+    lots,
+    decide = decideSurfing,
   }: {
     since: number;
     now: number;
     lastAttempted: number;
+    lots: number;
+    decide?: typeof decideSurfing;
   },
 ) {
   let side: Side | null = null;
@@ -26,29 +31,29 @@ export function findLiveCrossing(
   for (const candle of candles) {
     const signalTime = candle.time + timeframeMs[timeframe];
     if (signalTime > now) continue;
-    if (!candle.complete || candle.confirmedEma === null) {
+    if (
+      !candle.complete ||
+      candle.confirmedEma === null ||
+      !Number.isFinite(candle.confirmedEma) ||
+      !Number.isFinite(candle.close)
+    ) {
       if (signalTime > since) break;
       historicalEmaPending = true;
       continue;
     }
     if (signalTime > since && historicalEmaPending) break;
-    const next = crossing(side, candle.close, candle.confirmedEma);
-    side = next.side;
+    const next = decide({ side }, { close: candle.close, ema: candle.confirmedEma }, { lots });
+    side = next.state.side;
     if (candle.close !== candle.confirmedEma) historicalEmaPending = false;
-    if (next.direction && signalTime > since && candle.time > lastAttempted) {
+    if (next.signal && signalTime > since && candle.time > lastAttempted) {
       return {
         candleTime: candle.time,
         signalTime,
-        signalPrice: candle.close,
-        ema: candle.confirmedEma,
-        direction: next.direction,
+        strategy: { kind: 'surfing', signalPrice: candle.close, ema: candle.confirmedEma },
+        targetPosition: next.signal.targetPosition,
       };
     }
   }
 }
 
-export function positionDelta(position: number, target: number) {
-  const delta = target - position;
-  if (delta === 0) return null;
-  return { direction: delta > 0 ? ('buy' as const) : ('sell' as const), lots: Math.abs(delta) };
-}
+export { positionDelta } from './position.js';

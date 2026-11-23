@@ -1,7 +1,8 @@
+import type { BacktestCandle, BacktestParameters } from '../core/backtest.js';
+import type { Side } from '../core/crossing.js';
 import { Router, type RequestHandler } from 'express';
 import { BacktestError, backtestLimits, type BacktestHistory } from '../core/backtest-history.js';
 import { isTimeframe } from '../core/timeframe.js';
-import type { BacktestParameters } from '../core/backtest.js';
 import { brokerIdLimit, isPositiveInt32, isPrintableAscii } from './request-validation.js';
 
 function isNonNegativeNumber(value: unknown): value is number {
@@ -10,9 +11,10 @@ function isNonNegativeNumber(value: unknown): value is number {
 
 function readParameters(body: unknown): Omit<BacktestParameters, 'timeZone'> | null {
   if (typeof body !== 'object' || body === null) return null;
-  const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage } =
+  const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage, kind } =
     body as Record<string, unknown>;
   if (
+    (kind !== undefined && kind !== 'surfing') ||
     !isPrintableAscii(instrumentUid, brokerIdLimit) ||
     !isTimeframe(timeframe) ||
     !isPositiveInt32(emaPeriod) ||
@@ -42,7 +44,7 @@ const errorStatus = (error: BacktestError) =>
   error.code === 'INVALID_REQUEST' || error.code === 'BACKTEST_PERIOD_TOO_LONG' ? 400 : 422;
 
 export function backtestRoutes(
-  history: BacktestHistory,
+  history: BacktestHistory<BacktestParameters, BacktestCandle, Side | null>,
   requireOwner: RequestHandler,
   loadTimeZone: () => Promise<string>,
 ) {
