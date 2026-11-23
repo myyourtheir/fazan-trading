@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+migrations/
+package-lock.json
+skills-lock.json
+AGENTS.md
+.env
+.env.*
+!.env.example
+.agents/

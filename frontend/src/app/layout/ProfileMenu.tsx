@@ -2,7 +2,14 @@ import { Link } from '@tanstack/react-router';
 import { CircleUserRound, LogOut, Settings } from 'lucide-react';
 import { sessionApi } from '@/shared/api';
 import {
-  Alert, AlertTitle, Button, DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+  Alert,
+  AlertTitle,
+  Button,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/shared/ui';
 
 export function ProfileMenu() {
@@ -11,7 +18,11 @@ export function ProfileMenu() {
   return (
     <>
       <DropdownMenu>
-        <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="Профиль" disabled={isLoading} />}>
+        <DropdownMenuTrigger
+          render={
+            <Button variant="outline" size="icon" aria-label="Профиль" disabled={isLoading} />
+          }
+        >
           <CircleUserRound aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -24,9 +35,14 @@ export function ProfileMenu() {
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {error && <Alert variant="destructive" className="fixed right-4 bottom-4 z-50 w-auto max-w-[calc(100%-2rem)]">
-        <AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle>
-      </Alert>}
+      {error && (
+        <Alert
+          variant="destructive"
+          className="fixed right-4 bottom-4 z-50 w-auto max-w-[calc(100%-2rem)]"
+        >
+          <AlertTitle>Не удалось завершить сессию. Попробуйте ещё раз.</AlertTitle>
+        </Alert>
+      )}
     </>
   );
 }

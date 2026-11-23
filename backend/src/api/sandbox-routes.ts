@@ -2,10 +2,13 @@ import { Router, type Request, type RequestHandler } from 'express';
 import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import type { SandboxConnection } from '../core/sandbox.js';
 
-export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestHandler,
+export function sandboxRoutes(
+  sandbox: SandboxConnection,
+  requireOwner: RequestHandler,
   changeSettings: (action: () => Promise<void>) => Promise<void>,
   replaceCredentials: (action: (accountId?: string) => Promise<void>) => Promise<void>,
-  onTokenChange?: () => void) {
+  onTokenChange?: () => void,
+) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await sandbox.status()));
@@ -17,21 +20,35 @@ export function sandboxRoutes(sandbox: SandboxConnection, requireOwner: RequestH
     }
     res.json(await sandbox.balance(accountId));
   });
-  router.put('/connection', mutation('token', 2048, async token => {
-    await replaceCredentials(accountId => sandbox.connect(token, accountId));
-    onTokenChange?.();
-  }));
-  router.put('/account', mutation('accountId', brokerIdLimit,
-    accountId => changeSettings(() => sandbox.selectAccount(accountId))));
+  router.put(
+    '/connection',
+    mutation('token', 2048, async (token) => {
+      await replaceCredentials((accountId) => sandbox.connect(token, accountId));
+      onTokenChange?.();
+    }),
+  );
+  router.put(
+    '/account',
+    mutation('accountId', brokerIdLimit, (accountId) =>
+      changeSettings(() => sandbox.selectAccount(accountId)),
+    ),
+  );
   router.post('/accounts', async (_req, res) => {
     await changeSettings(() => sandbox.createAccount());
     res.status(204).end();
   });
-  router.post('/funding', mutation('accountId', brokerIdLimit, accountId => sandbox.fundAccount(accountId)));
+  router.post(
+    '/funding',
+    mutation('accountId', brokerIdLimit, (accountId) => sandbox.fundAccount(accountId)),
+  );
   return router;
 }
 
-function mutation(field: string, limit: number, apply: (value: string) => Promise<void>): RequestHandler {
+function mutation(
+  field: string,
+  limit: number,
+  apply: (value: string) => Promise<void>,
+): RequestHandler {
   return async (req: Request, res) => {
     const value: unknown = req.body?.[field];
     if (!isPrintableAscii(value, limit)) {

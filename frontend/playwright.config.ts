@@ -8,8 +8,10 @@ export default defineConfig({
   testMatch: '**/*.e2e.ts',
   use: { baseURL: target ?? local },
   projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
-  webServer: target ? undefined : {
-    command: 'npm run dev -- --host 127.0.0.1 --port 5179 --strictPort',
-    url: local,
-  },
+  webServer: target
+    ? undefined
+    : {
+        command: 'npm run dev -- --host 127.0.0.1 --port 5179 --strictPort',
+        url: local,
+      },
 });

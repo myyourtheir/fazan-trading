@@ -2,9 +2,14 @@
   "name": "fazan-trading-backend",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24" },
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=.env --watch --import tsx src/main.ts",
+    "lint": "eslint .",
+    "format": "prettier . --write --ignore-path .prettierignore",
+    "format:check": "prettier . --check --ignore-path .prettierignore",
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.build.json",
     "start": "node --env-file-if-exists=.env dist/main.js",
@@ -23,12 +28,17 @@
     "ws": "^8.23.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.3",
     "@types/node": "^24.0.0",
     "@types/pg": "^8.15.5",
     "@types/ws": "^8.18.2",
     "drizzle-kit": "^0.31.11",
+    "eslint": "^10.15.0",
+    "globals": "^17.14.0",
+    "prettier": "3.6.2",
     "tsx": "^4.20.5",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.73.0"
   }
 }

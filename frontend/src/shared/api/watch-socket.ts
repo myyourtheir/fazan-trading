@@ -16,12 +16,14 @@ export async function watchSocket<Message>(
   function connect() {
     handlers.onConnecting?.();
     const reconnecting = socket !== undefined;
-    const ws = socket = new WebSocket(url);
+    const ws = (socket = new WebSocket(url));
     if (reconnecting) ws.onopen = () => handlers.onReconnect?.();
     ws.onmessage = ({ data }) => {
       try {
         handlers.onMessage(JSON.parse(data) as Message);
-      } catch { /* Ignore invalid messages. */ }
+      } catch {
+        /* Ignore invalid messages. */
+      }
     };
     ws.onclose = ({ code }) => {
       handlers.onClose?.(code);

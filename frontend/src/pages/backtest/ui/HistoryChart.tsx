@@ -1,13 +1,33 @@
 import {
-  CandlestickSeries, LineSeries, createChart, createSeriesMarkers,
-  type ISeriesApi, type ISeriesMarkersPluginApi, type Time,
+  CandlestickSeries,
+  LineSeries,
+  createChart,
+  createSeriesMarkers,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type Time,
 } from 'lightweight-charts';
 import { useEffect, useRef } from 'react';
-import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, chartTimeOptions, priceChartTheme } from '@/shared/lib/price-chart';
+import {
+  axisPriceFormatter,
+  candlePoint,
+  candlePricePrecision,
+  chartTime,
+  chartTimeOptions,
+  priceChartTheme,
+} from '@/shared/lib/price-chart';
 import type { BacktestExecution, HistoricalCandle } from '../api/backtest-api';
 
-export default function HistoryChart({ candles, executions, dark, timeZone }: {
-  candles: HistoricalCandle[]; executions: BacktestExecution[]; dark: boolean; timeZone: string;
+export default function HistoryChart({
+  candles,
+  executions,
+  dark,
+  timeZone,
+}: {
+  candles: HistoricalCandle[];
+  executions: BacktestExecution[];
+  dark: boolean;
+  timeZone: string;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
@@ -37,19 +57,27 @@ export default function HistoryChart({ candles, executions, dark, timeZone }: {
   useEffect(() => {
     const precision = candlePricePrecision(candles);
     const seriesPrecision = Math.max(2, precision);
-    barsRef.current?.applyOptions({ priceFormat: { type: 'price', precision: seriesPrecision, minMove: 10 ** -seriesPrecision } });
-    chartRef.current?.applyOptions({ localization: { priceFormatter: axisPriceFormatter(precision) } });
+    barsRef.current?.applyOptions({
+      priceFormat: { type: 'price', precision: seriesPrecision, minMove: 10 ** -seriesPrecision },
+    });
+    chartRef.current?.applyOptions({
+      localization: { priceFormatter: axisPriceFormatter(precision) },
+    });
     barsRef.current?.setData(candles.map(candlePoint));
-    emaRef.current?.setData(candles.map(({ time, ema }) => ({ time: chartTime(time), value: ema })));
+    emaRef.current?.setData(
+      candles.map(({ time, ema }) => ({ time: chartTime(time), value: ema })),
+    );
     chartRef.current?.timeScale().fitContent();
   }, [candles]);
   useEffect(() => {
-    markersRef.current?.setMarkers(executions.map(({ time, direction }) => ({
-      time: chartTime(time),
-      position: direction === 'buy' ? 'belowBar' as const : 'aboveBar' as const,
-      shape: direction === 'buy' ? 'arrowUp' as const : 'arrowDown' as const,
-      color: direction === 'buy' ? '#22c55e' : '#ef4444',
-    })));
+    markersRef.current?.setMarkers(
+      executions.map(({ time, direction }) => ({
+        time: chartTime(time),
+        position: direction === 'buy' ? ('belowBar' as const) : ('aboveBar' as const),
+        shape: direction === 'buy' ? ('arrowUp' as const) : ('arrowDown' as const),
+        color: direction === 'buy' ? '#22c55e' : '#ef4444',
+      })),
+    );
   }, [executions]);
   useEffect(() => {
     if (!container.current) return;
@@ -61,7 +89,12 @@ export default function HistoryChart({ candles, executions, dark, timeZone }: {
 
   return (
     <figure className="min-w-0">
-      <div ref={container} className="h-96 w-full" role="img" aria-label="График исторических свечей и EMA" />
+      <div
+        ref={container}
+        className="h-96 w-full"
+        role="img"
+        aria-label="График исторических свечей и EMA"
+      />
       <figcaption className="text-xs text-muted-foreground">Время: {timeZone}</figcaption>
     </figure>
   );

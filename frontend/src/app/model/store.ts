@@ -6,12 +6,16 @@ import { rootApi } from '@/shared/api';
 const ui = createSlice({
   name: 'ui',
   initialState: { dark: true },
-  reducers: { toggleTheme: state => { state.dark = !state.dark; } },
+  reducers: {
+    toggleTheme: (state) => {
+      state.dark = !state.dark;
+    },
+  },
 });
 
 export const store = configureStore({
   reducer: { ui: ui.reducer, [rootApi.reducerPath]: rootApi.reducer },
-  middleware: getDefaultMiddleware => getDefaultMiddleware().concat(rootApi.middleware),
+  middleware: (getDefaultMiddleware) => getDefaultMiddleware().concat(rootApi.middleware),
   // Login is an RTK Query mutation; never send its arguments to Redux DevTools.
   devTools: false,
 });

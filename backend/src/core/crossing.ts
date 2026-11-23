@@ -8,9 +8,18 @@ export function crossing(previous: Side | null, close: number, ema: number) {
   return { side, direction: previous !== null && side !== previous ? side : null };
 }
 
-export function findLiveCrossing({ candles, timeframe }: MarketHistory, { since, now, lastAttempted }: {
-  since: number; now: number; lastAttempted: number;
-}) {
+export function findLiveCrossing(
+  { candles, timeframe }: MarketHistory,
+  {
+    since,
+    now,
+    lastAttempted,
+  }: {
+    since: number;
+    now: number;
+    lastAttempted: number;
+  },
+) {
   let side: Side | null = null;
   let historicalEmaPending = false;
   // Rebuild from ordered snapshots: late confirmation can change the strict side before an equality.
@@ -27,7 +36,13 @@ export function findLiveCrossing({ candles, timeframe }: MarketHistory, { since,
     side = next.side;
     if (candle.close !== candle.confirmedEma) historicalEmaPending = false;
     if (next.direction && signalTime > since && candle.time > lastAttempted) {
-      return { candleTime: candle.time, signalTime, signalPrice: candle.close, ema: candle.confirmedEma, direction: next.direction };
+      return {
+        candleTime: candle.time,
+        signalTime,
+        signalPrice: candle.close,
+        ema: candle.confirmedEma,
+        direction: next.direction,
+      };
     }
   }
 }
@@ -35,5 +50,5 @@ export function findLiveCrossing({ candles, timeframe }: MarketHistory, { since,
 export function positionDelta(position: number, target: number) {
   const delta = target - position;
   if (delta === 0) return null;
-  return { direction: delta > 0 ? 'buy' as const : 'sell' as const, lots: Math.abs(delta) };
+  return { direction: delta > 0 ? ('buy' as const) : ('sell' as const), lots: Math.abs(delta) };
 }

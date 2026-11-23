@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+src/app/router/routeTree.gen.ts
+package-lock.json
+skills-lock.json
+AGENTS.md
+.env
+.env.*
+!.env.example
+.agents/

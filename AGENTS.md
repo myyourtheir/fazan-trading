@@ -3,6 +3,7 @@
 ## Verification
 
 - Use Node.js 24+. Install dependencies with `npm ci` and run checks in each application directory once its scripts and lockfile exist.
+- After changes, run `npm run lint` and `npm run format:check` in each affected application directory. Format changed files before checking if needed; do not reformat unrelated files.
 - Keep `backend/` and `frontend/` independently installable and runnable, with separate environment configuration. REST handles requests and mutations; authenticated WebSocket handles browser live updates. Use RTK Query for server state and Redux Toolkit for shared client state.
 - Use Drizzle ORM for backend PostgreSQL access and Drizzle Kit for schema migrations. Commit the generated migration and its metadata together; apply migrations at backend startup.
 - Style the frontend with Tailwind CSS via the Vite plugin. Use shadcn/ui components from the frontend's configured registry and shared theme tokens for consistent light and dark styles.

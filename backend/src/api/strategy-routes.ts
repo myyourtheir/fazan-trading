@@ -3,8 +3,12 @@ import { brokerIdLimit, isPositiveInt32, isPrintableAscii } from './request-vali
 import type { StrategySettings } from '../core/strategy-settings.js';
 import { isTimeframe } from '../core/timeframe.js';
 
-export function strategyRoutes(strategy: StrategySettings, requireOwner: RequestHandler,
-  changeSettings: (action: () => Promise<void>) => Promise<void>, onStrategyChange?: () => void) {
+export function strategyRoutes(
+  strategy: StrategySettings,
+  requireOwner: RequestHandler,
+  changeSettings: (action: () => Promise<void>) => Promise<void>,
+  onStrategyChange?: () => void,
+) {
   const router = Router();
   router.use(requireOwner);
   router.get('/', async (_req, res) => res.json(await strategy.get()));
@@ -18,12 +22,19 @@ export function strategyRoutes(strategy: StrategySettings, requireOwner: Request
   });
   router.put('/', async (req, res) => {
     const { accountId, instrumentUid, emaPeriod, lots, timeframe } = req.body ?? {};
-    if (!isPrintableAscii(accountId, brokerIdLimit) || !isPrintableAscii(instrumentUid, brokerIdLimit)
-      || !isPositiveInt32(emaPeriod) || !isPositiveInt32(lots) || !isTimeframe(timeframe)) {
+    if (
+      !isPrintableAscii(accountId, brokerIdLimit) ||
+      !isPrintableAscii(instrumentUid, brokerIdLimit) ||
+      !isPositiveInt32(emaPeriod) ||
+      !isPositiveInt32(lots) ||
+      !isTimeframe(timeframe)
+    ) {
       res.status(400).json({ code: 'INVALID_REQUEST' });
       return;
     }
-    await changeSettings(() => strategy.save({ accountId, instrumentUid, emaPeriod, lots, timeframe }));
+    await changeSettings(() =>
+      strategy.save({ accountId, instrumentUid, emaPeriod, lots, timeframe }),
+    );
     onStrategyChange?.();
     res.status(204).end();
   });

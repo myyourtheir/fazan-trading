@@ -2,9 +2,13 @@ import type { MarketCandle, MarketSelection } from './market-data.js';
 import { crossing, positionDelta, type Side } from './crossing.js';
 
 export type BacktestParameters = MarketSelection & {
-  lots: number; from: string; to: string; timeZone: string;
+  lots: number;
+  from: string;
+  to: string;
+  timeZone: string;
   // Costs in percent, each non-negative and zero by default.
-  commission: number; slippage: number;
+  commission: number;
+  slippage: number;
 };
 
 export type BacktestContract = {
@@ -15,7 +19,12 @@ export type BacktestContract = {
 };
 
 // The contract resolved for a money report: every field the conversion coefficient depends on is non-null.
-export type ResolvedBacktestContract = { currency: string; priceStep: number; priceStepAmount: number; lot: number };
+export type ResolvedBacktestContract = {
+  currency: string;
+  priceStep: number;
+  priceStepAmount: number;
+  lot: number;
+};
 
 export type BacktestCandle = MarketCandle & { ema: number };
 
@@ -35,7 +44,11 @@ export type BacktestExecution = {
   commission: number; // fee charged on the full executed volume
 };
 
-export type BacktestSignal = { candleTime: number; direction: 'buy' | 'sell'; targetPosition: number };
+export type BacktestSignal = {
+  candleTime: number;
+  direction: 'buy' | 'sell';
+  targetPosition: number;
+};
 
 export type BacktestReport = {
   parameters: BacktestParameters;
@@ -53,7 +66,13 @@ export type BacktestReport = {
 
 // The dataset's contract is already resolved: a missing or non-positive price step would otherwise
 // yield an infinite or zero conversion coefficient and a meaningless money result.
-export function runBacktest({ parameters, candles, contract, initialSide, cutoff }: BacktestDataset): BacktestReport {
+export function runBacktest({
+  parameters,
+  candles,
+  contract,
+  initialSide,
+  cutoff,
+}: BacktestDataset): BacktestReport {
   const { priceStep, priceStepAmount, lot, currency } = contract;
   // Money per quote point per lot: the money value of one price step over the step size, times the lot.
   const pointValue = (priceStepAmount / priceStep) * lot;
@@ -129,8 +148,15 @@ export function runBacktest({ parameters, candles, contract, initialSide, cutoff
   const lastClose = candles.at(-1)?.close ?? 0;
   const open = markToMarket(lastClose);
   return {
-    parameters, currency, pointValue, priceStep, priceStepAmount, lot,
-    candles, executions, finalSignal,
+    parameters,
+    currency,
+    pointValue,
+    priceStep,
+    priceStepAmount,
+    lot,
+    candles,
+    executions,
+    finalSignal,
     result: { closed, open, total: closed + open, position, maxDrawdown },
     cutoff,
   };

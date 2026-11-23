@@ -12,9 +12,23 @@ import type { BacktestHistory } from '../core/backtest-history.js';
 import { backtestRoutes } from './backtest-routes.js';
 import { defaultTimeZone, type DisplaySettings } from '../core/display-settings.js';
 
-export function createApp({ auth, secureCookies, settings, displaySettings, market, marketSocket, robot, backtest }: {
-  auth: OwnerAuth; secureCookies: boolean;
-  settings?: { sandbox: SandboxConnection; strategy?: StrategySettings; change: (action: () => Promise<void>) => Promise<void> };
+export function createApp({
+  auth,
+  secureCookies,
+  settings,
+  displaySettings,
+  market,
+  marketSocket,
+  robot,
+  backtest,
+}: {
+  auth: OwnerAuth;
+  secureCookies: boolean;
+  settings?: {
+    sandbox: SandboxConnection;
+    strategy?: StrategySettings;
+    change: (action: () => Promise<void>) => Promise<void>;
+  };
   displaySettings?: DisplaySettings;
   market?: MarketData;
   robot?: Robot;
@@ -24,7 +38,12 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
   const app = express();
   app.disable('x-powered-by');
   const api = express.Router();
-  const cookie = { httpOnly: true, sameSite: 'strict' as const, secure: secureCookies, path: '/api' };
+  const cookie = {
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    secure: secureCookies,
+    path: '/api',
+  };
   api.use((_req, res, next) => {
     res.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff');
     next();
@@ -64,13 +83,18 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
       return;
     }
     if (result.kind === 'throttled') {
-      res.set('Retry-After', String(result.retryAfter)).status(429).json({ code: 'TOO_MANY_ATTEMPTS' });
+      res
+        .set('Retry-After', String(result.retryAfter))
+        .status(429)
+        .json({ code: 'TOO_MANY_ATTEMPTS' });
       return;
     }
     const previous = ownerSessionToken(req.headers.cookie);
     await auth.logout(previous);
     marketSocket?.revoke(previous);
-    res.cookie(ownerCookie, result.token, { ...cookie, maxAge: result.ttlMs }).json({ authenticated: true });
+    res
+      .cookie(ownerCookie, result.token, { ...cookie, maxAge: result.ttlMs })
+      .json({ authenticated: true });
   });
   api.post('/auth/logout', async (req, res) => {
     const token = ownerSessionToken(req.headers.cookie);
@@ -78,11 +102,16 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
     marketSocket?.revoke(token);
     res.clearCookie(ownerCookie, cookie).sendStatus(204);
   });
-  api.get('/auth/session', requireOwner, (_req, res) => res.json({
-    authenticated: true, remainingMs: res.locals.sessionRemainingMs,
-  }));
+  api.get('/auth/session', requireOwner, (_req, res) =>
+    res.json({
+      authenticated: true,
+      remainingMs: res.locals.sessionRemainingMs,
+    }),
+  );
   if (displaySettings) {
-    api.get('/settings/display', requireOwner, async (_req, res) => res.json(await displaySettings.get()));
+    api.get('/settings/display', requireOwner, async (_req, res) =>
+      res.json(await displaySettings.get()),
+    );
     api.put('/settings/display', requireOwner, async (req, res) => {
       const saved = await displaySettings.setTimeZone(req.body?.timeZone);
       if (!saved) {
@@ -92,18 +121,32 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
       res.json(saved);
     });
   }
-  api.get('/dashboard', requireOwner, (_req, res) => res.json(robot?.status() ?? { mode: 'stopped' }));
+  api.get('/dashboard', requireOwner, (_req, res) =>
+    res.json(robot?.status() ?? { mode: 'stopped' }),
+  );
   if (settings) {
     const { sandbox, strategy, change } = settings;
     const replaceCredentials = robot
       ? robot.replaceCredentials.bind(robot)
       : (action: (accountId?: string) => Promise<void>) => change(() => action());
-    api.use('/sandbox', sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload));
-    if (strategy) api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
+    api.use(
+      '/sandbox',
+      sandboxRoutes(sandbox, requireOwner, change, replaceCredentials, marketSocket?.reload),
+    );
+    if (strategy)
+      api.use('/strategy', strategyRoutes(strategy, requireOwner, change, marketSocket?.reload));
   }
-  if (backtest) api.use('/backtest', backtestRoutes(backtest, requireOwner,
-    async () => (await displaySettings?.get())?.timeZone ?? defaultTimeZone));
-  if (market) api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
+  if (backtest)
+    api.use(
+      '/backtest',
+      backtestRoutes(
+        backtest,
+        requireOwner,
+        async () => (await displaySettings?.get())?.timeZone ?? defaultTimeZone,
+      ),
+    );
+  if (market)
+    api.get('/market', requireOwner, async (_req, res) => res.json(await market.history()));
   if (robot) {
     api.get('/robot/history', requireOwner, async (req, res) => {
       const { accountId } = req.query;
@@ -131,7 +174,11 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
     });
     api.post('/robot/close', requireOwner, async (req, res) => {
       const { accountId, instrumentUid, confirmed } = req.body ?? {};
-      if (confirmed !== true || !isPrintableAscii(accountId, brokerIdLimit) || !isPrintableAscii(instrumentUid, brokerIdLimit)) {
+      if (
+        confirmed !== true ||
+        !isPrintableAscii(accountId, brokerIdLimit) ||
+        !isPrintableAscii(instrumentUid, brokerIdLimit)
+      ) {
         res.status(400).json({ code: 'INVALID_REQUEST' });
         return;
       }
@@ -147,7 +194,8 @@ export function createApp({ auth, secureCookies, settings, displaySettings, mark
       res.status(error.status).json({ code: error.code });
       return;
     }
-    const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+    const status =
+      error && typeof error === 'object' && 'status' in error ? error.status : undefined;
     if (status === 400 || status === 413) {
       res.status(status).json({ code: 'INVALID_REQUEST' });
       return;

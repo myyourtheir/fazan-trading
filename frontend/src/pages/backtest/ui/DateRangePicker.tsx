@@ -1,19 +1,13 @@
-import { ru } from "date-fns/locale";
-import { useState } from "react";
-import {
-  Button,
-  Calendar,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/shared/ui";
-import { calendarDay } from "../lib/calendar-day";
+import { ru } from 'date-fns/locale';
+import { useState } from 'react';
+import { Button, Calendar, Popover, PopoverContent, PopoverTrigger } from '@/shared/ui';
+import { calendarDay } from '../lib/calendar-day';
 
 // The grid uses UTC as a neutral representation of date-only labels, not as the backtest range.
 // Only "today" needs an instant-to-date conversion here; the server resolves the actual boundaries.
 const parseDay = (day: string) => new Date(`${day}T00:00:00Z`);
 const toDay = (date: Date) =>
-  `${String(date.getFullYear()).padStart(4, "0")}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  `${String(date.getFullYear()).padStart(4, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 
 export function DateRangePicker({
   id,
@@ -34,16 +28,16 @@ export function DateRangePicker({
   const [month, setMonth] = useState<Date>();
   const today = timeZone
     ? parseDay(
-        new Intl.DateTimeFormat("sv-SE", {
+        new Intl.DateTimeFormat('sv-SE', {
           timeZone,
-          dateStyle: "short",
+          dateStyle: 'short',
         }).format(Date.now()),
       )
     : undefined;
   // react-day-picker completes a single-day range on the first click, so a period is shown once
   // both wire days are set.
   const caption = !from
-    ? "Выберите период"
+    ? 'Выберите период'
     : from === to
       ? calendarDay(from)
       : `${calendarDay(from)} — ${calendarDay(to)}`;
@@ -90,7 +84,7 @@ export function DateRangePicker({
               range?.from && range.to && range.from > range.to
                 ? [range.to, range.from]
                 : [range?.from, range?.to];
-            onChange(start ? toDay(start) : "", end ? toDay(end) : "");
+            onChange(start ? toDay(start) : '', end ? toDay(end) : '');
           }}
         />
       </PopoverContent>

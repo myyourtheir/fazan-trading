@@ -13,4 +13,10 @@ export * from './popover';
 export { RecoveryCard } from './RecoveryCard';
 export * from './separator';
 export * from './spinner';
-export { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from './dropdown-menu';
+export {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from './dropdown-menu';

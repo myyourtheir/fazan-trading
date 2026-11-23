@@ -10,22 +10,42 @@ function isNonNegativeNumber(value: unknown): value is number {
 
 function readParameters(body: unknown): Omit<BacktestParameters, 'timeZone'> | null {
   if (typeof body !== 'object' || body === null) return null;
-  const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage } = body as Record<string, unknown>;
-  if (!isPrintableAscii(instrumentUid, brokerIdLimit) || !isTimeframe(timeframe)
-    || !isPositiveInt32(emaPeriod) || emaPeriod > backtestLimits.maxEmaPeriod
-    || !isPositiveInt32(lots) || typeof from !== 'string' || typeof to !== 'string') {
+  const { instrumentUid, timeframe, emaPeriod, lots, from, to, commission, slippage } =
+    body as Record<string, unknown>;
+  if (
+    !isPrintableAscii(instrumentUid, brokerIdLimit) ||
+    !isTimeframe(timeframe) ||
+    !isPositiveInt32(emaPeriod) ||
+    emaPeriod > backtestLimits.maxEmaPeriod ||
+    !isPositiveInt32(lots) ||
+    typeof from !== 'string' ||
+    typeof to !== 'string'
+  ) {
     return null;
   }
   const commissionValue = commission === undefined ? 0 : commission;
   const slippageValue = slippage === undefined ? 0 : slippage;
   if (!isNonNegativeNumber(commissionValue) || !isNonNegativeNumber(slippageValue)) return null;
-  return { instrumentUid, timeframe, emaPeriod, lots, from, to, commission: commissionValue, slippage: slippageValue };
+  return {
+    instrumentUid,
+    timeframe,
+    emaPeriod,
+    lots,
+    from,
+    to,
+    commission: commissionValue,
+    slippage: slippageValue,
+  };
 }
 
 const errorStatus = (error: BacktestError) =>
   error.code === 'INVALID_REQUEST' || error.code === 'BACKTEST_PERIOD_TOO_LONG' ? 400 : 422;
 
-export function backtestRoutes(history: BacktestHistory, requireOwner: RequestHandler, loadTimeZone: () => Promise<string>) {
+export function backtestRoutes(
+  history: BacktestHistory,
+  requireOwner: RequestHandler,
+  loadTimeZone: () => Promise<string>,
+) {
   const router = Router();
   router.use(requireOwner);
   router.get('/limits', (_req, res) => res.json(backtestLimits));

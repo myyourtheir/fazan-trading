@@ -2,7 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test.use({ timezoneId: 'Asia/Tokyo' });
 
-test('the owner can run a backtest without saving settings or selecting an account', async ({ page }) => {
+test('the owner can run a backtest without saving settings or selecting an account', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
   // December in the browser, but November in the saved New York timezone.
   await page.clock.install({ time: '2026-12-01T02:00:00Z' });
@@ -17,48 +19,101 @@ test('the owner can run a backtest without saving settings or selecting an accou
   });
   let signedIn = false;
   let requests = 0;
-  await page.route('/api/**', route => {
+  await page.route('/api/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
     switch (url.pathname) {
       case '/api/auth/session':
-        return route.fulfill(signedIn
-          ? { json: { authenticated: true, remainingMs: 60_000 } }
-          : { status: 401, json: { code: 'UNAUTHENTICATED' } });
+        return route.fulfill(
+          signedIn
+            ? { json: { authenticated: true, remainingMs: 60_000 } }
+            : { status: 401, json: { code: 'UNAUTHENTICATED' } },
+        );
       case '/api/settings/display':
         return route.fulfill({ json: { timeZone: 'America/New_York' } });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       case '/api/strategy':
         expect(request.method()).toBe('GET');
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null } });
+        return route.fulfill({
+          json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null },
+        });
       case '/api/strategy/futures':
         expect(url.searchParams.get('q')).toBe('IMOEXF');
-        return route.fulfill({ json: [{
-          uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
-          exchange: 'MOEX', expirationDate: null,
-        }] });
+        return route.fulfill({
+          json: [
+            {
+              uid: 'future',
+              ticker: 'IMOEXF',
+              name: 'Индекс Мосбиржи',
+              classCode: 'SPBFUT',
+              exchange: 'MOEX',
+              expirationDate: null,
+            },
+          ],
+        });
       case '/api/backtest/run': {
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
-          instrumentUid: 'future', timeframe: '1h', emaPeriod: 55, lots: 3, from: '2026-10-18', to: '2026-10-19',
-          commission: 0.0123, slippage: 0,
+          instrumentUid: 'future',
+          timeframe: '1h',
+          emaPeriod: 55,
+          lots: 3,
+          from: '2026-10-18',
+          to: '2026-10-19',
+          commission: 0.0123,
+          slippage: 0,
         });
-        if (++requests === 2) return route.fulfill({ status: 422, json: {
-          code: 'BACKTEST_WARMUP_MISSING', details: { required: 55, available: 42, searchedFrom: '2026-10-01' },
-        } });
-        return route.fulfill({ json: {
-          parameters: { ...parameters, timeZone: 'America/New_York' }, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
-          candles: [{
-            time: Date.UTC(2026, 9, 18, 12), open: 101, high: 104, low: 100, close: 103, complete: true, ema: 102,
-          }, {
-            time: Date.UTC(2026, 9, 18, 13), open: 103, high: 106, low: 102, close: 105, complete: true, ema: 102,
-          }],
-          executions: [{ time: Date.UTC(2026, 9, 18, 13), direction: 'buy', lots: 3, price: 103, commission: 0.38007 }],
-          finalSignal: null,
-          result: { closed: 0, open: 59.61993, total: 59.61993, position: 3, maxDrawdown: 0 },
-          cutoff: null,
-        } });
+        if (++requests === 2)
+          return route.fulfill({
+            status: 422,
+            json: {
+              code: 'BACKTEST_WARMUP_MISSING',
+              details: { required: 55, available: 42, searchedFrom: '2026-10-01' },
+            },
+          });
+        return route.fulfill({
+          json: {
+            parameters: { ...parameters, timeZone: 'America/New_York' },
+            currency: 'rub',
+            pointValue: 10,
+            priceStep: 0.5,
+            priceStepAmount: 5,
+            lot: 1,
+            candles: [
+              {
+                time: Date.UTC(2026, 9, 18, 12),
+                open: 101,
+                high: 104,
+                low: 100,
+                close: 103,
+                complete: true,
+                ema: 102,
+              },
+              {
+                time: Date.UTC(2026, 9, 18, 13),
+                open: 103,
+                high: 106,
+                low: 102,
+                close: 105,
+                complete: true,
+                ema: 102,
+              },
+            ],
+            executions: [
+              {
+                time: Date.UTC(2026, 9, 18, 13),
+                direction: 'buy',
+                lots: 3,
+                price: 103,
+                commission: 0.38007,
+              },
+            ],
+            finalSignal: null,
+            result: { closed: 0, open: 59.61993, total: 59.61993, position: 3, maxDrawdown: 0 },
+            cutoff: null,
+          },
+        });
       }
       default:
         throw new Error(`Unexpected request: ${request.method()} ${url.pathname}`);
@@ -70,7 +125,9 @@ test('the owner can run a backtest without saving settings or selecting an accou
   signedIn = true;
   await page.goto('/backtest');
   await expect(page.getByRole('heading', { name: 'Бэктест' })).toBeVisible();
-  await expect(page.getByText(/Обе даты включительно. Часовой пояс — America\/New_York/)).toBeVisible();
+  await expect(
+    page.getByText(/Обе даты включительно. Часовой пояс — America\/New_York/),
+  ).toBeVisible();
   await expect(page.getByText(/Лимит прогона: 30 календарных дней/)).toBeVisible();
   await page.getByLabel('Поиск фьючерса').fill('IMOEXF');
   await page.getByRole('button', { name: 'Найти' }).click();

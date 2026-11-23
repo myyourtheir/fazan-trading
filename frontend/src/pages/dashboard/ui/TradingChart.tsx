@@ -1,28 +1,20 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useDisplayTimeZone } from "@/shared/api";
-import { displayTimeFormatter } from "@/shared/lib/display-time";
-import { Button } from "@/shared/ui";
-import { chartTime } from "@/shared/lib/price-chart";
-import { createPriceChart } from "../lib/create-price-chart";
-import type { ChartCandle } from "../model/market-data";
-import { CandleDetails } from "./CandleDetails";
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDisplayTimeZone } from '@/shared/api';
+import { displayTimeFormatter } from '@/shared/lib/display-time';
+import { Button } from '@/shared/ui';
+import { chartTime } from '@/shared/lib/price-chart';
+import { createPriceChart } from '../lib/create-price-chart';
+import type { ChartCandle } from '../model/market-data';
+import { CandleDetails } from './CandleDetails';
 
-export default function TradingChart({
-  candles,
-  dark,
-}: {
-  candles: ChartCandle[];
-  dark: boolean;
-}) {
+export default function TradingChart({ candles, dark }: { candles: ChartCandle[]; dark: boolean }) {
   const container = useRef<HTMLDivElement>(null);
   const plot = useRef<ReturnType<typeof createPriceChart>>(null);
   const pointerInside = useRef(false);
   const [hoverTime, setHoverTime] = useState<number>();
   const timeZone = useDisplayTimeZone();
   const formatTime = useMemo(() => displayTimeFormatter(timeZone), [timeZone]);
-  const hovered = candles.find(
-    (candle) => chartTime(candle.time) === hoverTime,
-  );
+  const hovered = candles.find((candle) => chartTime(candle.time) === hoverTime);
   const selected = hovered ?? candles.at(-1);
 
   useEffect(() => {
@@ -64,26 +56,22 @@ export default function TradingChart({
         />
       </div>
       {selected && (
-        <CandleDetails candle={selected} hovered={Boolean(hovered)} timeLabel={formatTime(selected.time)} />
+        <CandleDetails
+          candle={selected}
+          hovered={Boolean(hovered)}
+          timeLabel={formatTime(selected.time)}
+        />
       )}
       <figcaption className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>
-          {candles.length} св. · Время: {timeZone} · Сплошная EMA брокера, пунктир —
-          предварительная
+          {candles.length} св. · Время: {timeZone} · Сплошная EMA брокера, пунктир — предварительная
         </span>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => plot.current?.goToLatest()}
-        >
+        <Button size="sm" variant="outline" onClick={() => plot.current?.goToLatest()}>
           К последней свече
         </Button>
         <span className="basis-full">
-          TradingView Lightweight Charts™ · Copyright (с) 2025{" "}
-          <a
-            className="underline underline-offset-2"
-            href="https://www.tradingview.com/"
-          >
+          TradingView Lightweight Charts™ · Copyright (с) 2025{' '}
+          <a className="underline underline-offset-2" href="https://www.tradingview.com/">
             TradingView, Inc.
           </a>
         </span>

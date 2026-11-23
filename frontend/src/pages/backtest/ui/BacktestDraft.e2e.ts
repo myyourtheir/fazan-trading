@@ -1,17 +1,23 @@
-import { expect, test, type WebSocketRoute } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 
 const contract = {
-  uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
-  exchange: 'MOEX', expirationDate: null,
+  uid: 'future',
+  ticker: 'IMOEXF',
+  name: 'Индекс Мосбиржи',
+  classCode: 'SPBFUT',
+  exchange: 'MOEX',
+  expirationDate: null,
 };
 
-test('the strategy draft opens the backtest without saving and carries unsaved edits', async ({ page }) => {
+test('the strategy draft opens the backtest without saving and carries unsaved edits', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
   // Pin the clock so the range calendar always opens on the month the scenario picks.
   await page.clock.install({ time: '2026-11-19T12:00:00Z' });
   let saved = false;
   let run = 0;
-  await page.route('/api/**', route => {
+  await page.route('/api/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
     switch (url.pathname) {
@@ -22,39 +28,69 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/sandbox':
-        return route.fulfill({ json: { status: 'connected', accountId: 'sandbox-1',
-          accounts: [{ id: 'sandbox-1', name: 'Песочница' }], virtualFundingRubles: 100_000 } });
+        return route.fulfill({
+          json: {
+            status: 'connected',
+            accountId: 'sandbox-1',
+            accounts: [{ id: 'sandbox-1', name: 'Песочница' }],
+            virtualFundingRubles: 100_000,
+          },
+        });
       case '/api/market':
         return route.fulfill({ json: null });
       case '/api/strategy':
         if (request.method() === 'GET') {
-          return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' }, settings: null } });
+          return route.fulfill({
+            json: {
+              defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+              settings: null,
+            },
+          });
         }
         saved = true;
         throw new Error('The backtest hand-off must not save the strategy.');
       case '/api/strategy/futures':
-        return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
+        return route.fulfill({
+          json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [],
+        });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       case '/api/backtest/run': {
         const parameters = request.postDataJSON();
         expect(parameters).toEqual({
-          instrumentUid: 'future', timeframe: '15m', emaPeriod: 55, lots: 4, from: '2026-11-18', to: '2026-11-19',
-          commission: 0, slippage: 0,
+          instrumentUid: 'future',
+          timeframe: '15m',
+          emaPeriod: 55,
+          lots: 4,
+          from: '2026-11-18',
+          to: '2026-11-19',
+          commission: 0,
+          slippage: 0,
         });
         run += 1;
-        return route.fulfill({ json: {
-          parameters: { ...parameters, timeZone: 'UTC' }, currency: 'rub', pointValue: 10, priceStep: 0.5, priceStepAmount: 5, lot: 1,
-          candles: [], executions: [], finalSignal: null,
-          result: { closed: 0, open: 0, total: 0, position: 0, maxDrawdown: 0 },
-          cutoff: null,
-        } });
+        return route.fulfill({
+          json: {
+            parameters: { ...parameters, timeZone: 'UTC' },
+            currency: 'rub',
+            pointValue: 10,
+            priceStep: 0.5,
+            priceStepAmount: 5,
+            lot: 1,
+            candles: [],
+            executions: [],
+            finalSignal: null,
+            result: { closed: 0, open: 0, total: 0, position: 0, maxDrawdown: 0 },
+            cutoff: null,
+          },
+        });
       }
       default:
         return route.fulfill({ status: 404 });
     }
   });
-  await page.routeWebSocket('**/api/market/live', socket => socket.send(JSON.stringify({ stream: 'live' })));
+  await page.routeWebSocket('**/api/market/live', (socket) =>
+    socket.send(JSON.stringify({ stream: 'live' })),
+  );
   await page.routeWebSocket('**/api/robot/live', () => {});
 
   await page.goto('/');
@@ -85,7 +121,7 @@ test('the strategy draft opens the backtest without saving and carries unsaved e
 
 test('direct entry to the backtest restores the last saved parameters', async ({ page }) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
-  await page.route('/api/**', route => {
+  await page.route('/api/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
     switch (url.pathname) {
@@ -94,10 +130,16 @@ test('direct entry to the backtest restores the last saved parameters', async ({
       case '/api/settings/display':
         return route.fulfill({ json: { timeZone: 'UTC' } });
       case '/api/strategy':
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
-          settings: { instrument: contract, emaPeriod: 34, lots: 3, timeframe: '30m' } } });
+        return route.fulfill({
+          json: {
+            defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+            settings: { instrument: contract, emaPeriod: 34, lots: 3, timeframe: '30m' },
+          },
+        });
       case '/api/strategy/futures':
-        return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
+        return route.fulfill({
+          json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [],
+        });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       default:
@@ -113,9 +155,11 @@ test('direct entry to the backtest restores the last saved parameters', async ({
   await expect(page.getByLabel('Объём, лотов')).toHaveValue('3');
 });
 
-test('a refresh after opening from a draft restores the saved parameters, not the draft', async ({ page }) => {
+test('a refresh after opening from a draft restores the saved parameters, not the draft', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked backtest run.');
-  await page.route('/api/**', route => {
+  await page.route('/api/**', (route) => {
     const request = route.request();
     const url = new URL(request.url());
     switch (url.pathname) {
@@ -126,22 +170,36 @@ test('a refresh after opening from a draft restores the saved parameters, not th
       case '/api/dashboard':
         return route.fulfill({ json: { mode: 'stopped', reason: null, position: null } });
       case '/api/sandbox':
-        return route.fulfill({ json: { status: 'connected', accountId: 'sandbox-1',
-          accounts: [{ id: 'sandbox-1', name: 'Песочница' }], virtualFundingRubles: 100_000 } });
+        return route.fulfill({
+          json: {
+            status: 'connected',
+            accountId: 'sandbox-1',
+            accounts: [{ id: 'sandbox-1', name: 'Песочница' }],
+            virtualFundingRubles: 100_000,
+          },
+        });
       case '/api/market':
         return route.fulfill({ json: null });
       case '/api/strategy':
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
-          settings: { instrument: contract, emaPeriod: 34, lots: 3, timeframe: '30m' } } });
+        return route.fulfill({
+          json: {
+            defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+            settings: { instrument: contract, emaPeriod: 34, lots: 3, timeframe: '30m' },
+          },
+        });
       case '/api/strategy/futures':
-        return route.fulfill({ json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [] });
+        return route.fulfill({
+          json: ['IMOEXF'].includes(url.searchParams.get('q') ?? '') ? [contract] : [],
+        });
       case '/api/backtest/limits':
         return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
       default:
         return route.fulfill({ status: 404 });
     }
   });
-  await page.routeWebSocket('**/api/market/live', socket => socket.send(JSON.stringify({ stream: 'live' })));
+  await page.routeWebSocket('**/api/market/live', (socket) =>
+    socket.send(JSON.stringify({ stream: 'live' })),
+  );
   await page.routeWebSocket('**/api/robot/live', () => {});
 
   await page.goto('/');

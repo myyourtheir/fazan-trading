@@ -15,7 +15,9 @@ function hasMatchingOriginHost({ headers }: IncomingMessage) {
 }
 
 export function attachMarketSocket(
-  server: Server, auth: OwnerAuth, market: MarketData,
+  server: Server,
+  auth: OwnerAuth,
+  market: MarketData,
   tradingUpdates?: { subscribe(listener: () => void): () => void },
 ) {
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 1024 });
@@ -32,10 +34,10 @@ export function attachMarketSocket(
       if (request.url !== '/api/market/live' && !trading) return reject('404 Not Found');
       if (!hasMatchingOriginHost(request)) return reject('403 Forbidden');
       const token = ownerSessionToken(request.headers.cookie);
-      if (!token || !await auth.remainingMs(token)) return reject('401 Unauthorized');
+      if (!token || !(await auth.remainingMs(token))) return reject('401 Unauthorized');
       if (stopping || socket.destroyed) return socket.destroy();
 
-      sockets.handleUpgrade(request, socket, head, ws => {
+      sockets.handleUpgrade(request, socket, head, (ws) => {
         socket.off('error', onError);
         sessions.set(ws, token);
         let unsubscribe: (() => void) | undefined;
@@ -43,7 +45,9 @@ export function attachMarketSocket(
         let alive = true;
         ws.on('error', () => ws.terminate());
         ws.on('message', () => ws.close(1008));
-        ws.on('pong', () => { alive = true; });
+        ws.on('pong', () => {
+          alive = true;
+        });
         const heartbeat = setInterval(() => {
           if (!alive) return ws.terminate();
           alive = false;

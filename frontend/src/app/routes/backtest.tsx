@@ -16,22 +16,29 @@ function isTimeframe(value: unknown): value is BacktestDraft['timeframe'] {
 function readDraft(draft: unknown): BacktestDraft | null {
   if (typeof draft !== 'object' || draft === null) return null;
   const value = draft as Record<string, unknown>;
-  if (typeof value.instrumentUid !== 'string' || typeof value.ticker !== 'string'
-    || typeof value.emaPeriod !== 'string' || typeof value.lots !== 'string'
-    || !isTimeframe(value.timeframe)) {
+  if (
+    typeof value.instrumentUid !== 'string' ||
+    typeof value.ticker !== 'string' ||
+    typeof value.emaPeriod !== 'string' ||
+    typeof value.lots !== 'string' ||
+    !isTimeframe(value.timeframe)
+  ) {
     return null;
   }
   return {
-    instrumentUid: value.instrumentUid, ticker: value.ticker,
-    timeframe: value.timeframe, emaPeriod: value.emaPeriod, lots: value.lots,
+    instrumentUid: value.instrumentUid,
+    ticker: value.ticker,
+    timeframe: value.timeframe,
+    emaPeriod: value.emaPeriod,
+    lots: value.lots,
   };
 }
 
 function BacktestRoute() {
   const { authenticated, refreshSession } = useSessionAccess();
-  const dark = useAppSelector(state => state.ui.dark);
+  const dark = useAppSelector((state) => state.ui.dark);
   const router = useRouter();
-  const backtestDraft = useLocation({ select: location => location.state.backtestDraft });
+  const backtestDraft = useLocation({ select: (location) => location.state.backtestDraft });
   // Capture the one-shot draft on first render only, so it survives the history-state clear below.
   const [initialDraft] = useState(() => readDraft(backtestDraft));
 
@@ -44,7 +51,9 @@ function BacktestRoute() {
     router.history.replace(href, next);
   }, [backtestDraft, router]);
 
-  return authenticated
-    ? <BacktestPage dark={dark} refreshSession={refreshSession} initialDraft={initialDraft} />
-    : <Navigate to="/login" replace />;
+  return authenticated ? (
+    <BacktestPage dark={dark} refreshSession={refreshSession} initialDraft={initialDraft} />
+  ) : (
+    <Navigate to="/login" replace />
+  );
 }

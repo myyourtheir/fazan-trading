@@ -8,9 +8,16 @@ import {
   type LineData,
   type MouseEventParams,
   type Time,
-} from "lightweight-charts";
-import { axisPriceFormatter, candlePoint, candlePricePrecision, chartTime, chartTimeOptions, priceChartTheme } from "@/shared/lib/price-chart";
-import type { ChartCandle } from "../model/market-data";
+} from 'lightweight-charts';
+import {
+  axisPriceFormatter,
+  candlePoint,
+  candlePricePrecision,
+  chartTime,
+  chartTimeOptions,
+  priceChartTheme,
+} from '@/shared/lib/price-chart';
+import type { ChartCandle } from '../model/market-data';
 const samePoint = (a: LineData<Time>, b: LineData<Time>) =>
   a.time === b.time && a.value === b.value;
 
@@ -68,7 +75,7 @@ export function createPriceChart(
       lockVisibleTimeRangeOnResize: true,
     },
     localization: {
-      locale: "ru-RU",
+      locale: 'ru-RU',
       // Both price ticks and the crosshair label use this formatter.
       priceFormatter: axisPriceFormatter(0),
     },
@@ -84,25 +91,22 @@ export function createPriceChart(
     pointMarkersRadius: 0,
     lineStyle: LineStyle.Dashed,
   });
-  const confirmed: ISeriesApi<"Line">[] = [];
-  let emaColor = "";
+  const confirmed: ISeriesApi<'Line'>[] = [];
+  let emaColor = '';
   let previous: ChartCandle[] = [];
   let previousPreview: LineData<Time>[] = [];
   let pricePrecision = 0;
   const scale = chart.timeScale();
 
   function hover({ time, seriesData }: MouseEventParams<Time>) {
-    onHover(
-      typeof time === "number" && seriesData.has(bars) ? time : undefined,
-    );
+    onHover(typeof time === 'number' && seriesData.has(bars) ? time : undefined);
   }
   chart.subscribeCrosshairMove(hover);
 
   function updateConfirmed(candles: ChartCandle[]) {
     // The built-in LineSeries connects across whitespace, so each confirmed run gets its own series.
     const segments = confirmedSegments(candles);
-    while (confirmed.length > segments.length)
-      chart.removeSeries(confirmed.pop()!);
+    while (confirmed.length > segments.length) chart.removeSeries(confirmed.pop()!);
     segments.forEach((points, index) => {
       const series =
         confirmed[index] ??
@@ -113,10 +117,7 @@ export function createPriceChart(
           crosshairMarkerVisible: false,
         }));
       const old = series.data() as readonly LineData<Time>[];
-      if (
-        points.length >= old.length &&
-        old.every((point, i) => samePoint(point, points[i]))
-      ) {
+      if (points.length >= old.length && old.every((point, i) => samePoint(point, points[i]))) {
         for (const point of points.slice(old.length)) series.update(point);
       } else {
         series.setData(points);
@@ -135,7 +136,7 @@ export function createPriceChart(
         if (seriesPrecision !== Math.max(2, pricePrecision)) {
           bars.applyOptions({
             priceFormat: {
-              type: "price",
+              type: 'price',
               precision: seriesPrecision,
               minMove: 10 ** -seriesPrecision,
             },
@@ -152,23 +153,18 @@ export function createPriceChart(
         tail >= 0 &&
         previous.length <= candles.length &&
         previous[tail].time === candles[tail].time &&
-        previous
-          .slice(0, tail)
-          .every((bar, index) => sameBar(bar, candles[index]))
+        previous.slice(0, tail).every((bar, index) => sameBar(bar, candles[index]))
       ) {
         // Update the forming bar or append to the right without resetting the viewport.
         for (let index = tail; index < candles.length; index++) {
-          if (index === tail && sameBar(previous[tail], candles[index]))
-            continue;
+          if (index === tail && sameBar(previous[tail], candles[index])) continue;
           bars.update(candlePoint(candles[index]));
         }
       } else {
         // Keep horizontal zoom unchanged. If old bars shift indices, compensate in bar offsets.
         const range = scale.getVisibleLogicalRange();
         const position = scale.scrollPosition();
-        const indices = new Map(
-          candles.map(({ time }, index) => [time, index]),
-        );
+        const indices = new Map(candles.map(({ time }, index) => [time, index]));
         const middle = range ? (range.from + range.to) / 2 : 0;
         const anchor = previous
           .map(({ time }, oldIndex) => ({
@@ -176,20 +172,13 @@ export function createPriceChart(
             newIndex: indices.get(time),
           }))
           .filter((item) => item.newIndex !== undefined)
-          .sort(
-            (a, b) =>
-              Math.abs(a.oldIndex - middle) - Math.abs(b.oldIndex - middle),
-          )[0];
+          .sort((a, b) => Math.abs(a.oldIndex - middle) - Math.abs(b.oldIndex - middle))[0];
         bars.setData(candles.map(candlePoint));
         if (!range) restoreViewport = () => scale.fitContent();
-        else if (range.to >= tail)
-          restoreViewport = () => scale.scrollToPosition(position, false);
+        else if (range.to >= tail) restoreViewport = () => scale.scrollToPosition(position, false);
         else if (anchor?.newIndex !== undefined) {
           const offset =
-            position +
-            anchor.newIndex -
-            anchor.oldIndex -
-            (candles.length - previous.length);
+            position + anchor.newIndex - anchor.oldIndex - (candles.length - previous.length);
           restoreViewport = () => scale.scrollToPosition(offset, false);
         }
       }
@@ -222,8 +211,7 @@ export function createPriceChart(
       });
       bars.applyOptions(theme.candles);
       emaColor = theme.emaColor;
-      for (const series of [...confirmed, preview])
-        series.applyOptions({ color: emaColor });
+      for (const series of [...confirmed, preview]) series.applyOptions({ color: emaColor });
     },
     goToLatest: () => scale.scrollToRealTime(),
     dispose() {

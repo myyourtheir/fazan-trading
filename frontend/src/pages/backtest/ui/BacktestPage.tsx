@@ -1,11 +1,30 @@
 import { skipToken } from '@reduxjs/toolkit/query/react';
 import { useEffect, useState } from 'react';
 import { sandboxErrorMessage } from '@/entities/sandbox';
-import { FuturesSearchForm, strategyApi, timeframeLabels, timeframes, type BacktestDraft, type Timeframe } from '@/entities/strategy';
+import {
+  FuturesSearchForm,
+  strategyApi,
+  timeframeLabels,
+  timeframes,
+  type BacktestDraft,
+  type Timeframe,
+} from '@/entities/strategy';
 import { hasStatus, useDisplayTimeZoneSettings } from '@/shared/api';
 import {
-  Alert, AlertTitle, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Field,
-  FieldGroup, FieldLabel, Input, NativeSelect, NativeSelectOption,
+  Alert,
+  AlertTitle,
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  Field,
+  FieldGroup,
+  FieldLabel,
+  Input,
+  NativeSelect,
+  NativeSelectOption,
 } from '@/shared/ui';
 import { backtestApi, type BacktestParameters, type BacktestReport } from '../api/backtest-api';
 import { calendarDay } from '../lib/calendar-day';
@@ -18,8 +37,10 @@ const runErrors = {
   BACKTEST_CONTRACT_PERIOD: 'Диапазон выходит за период торгов выбранного контракта.',
   BACKTEST_CANDLES_MISSING: 'Не хватает завершённых свечей. Сократите или сдвиньте период.',
   BACKTEST_WARMUP_MISSING: 'Недостаточно свечей до начала диапазона для прогрева EMA.',
-  BACKTEST_HISTORY_CONFLICT: 'Данные брокера не совпали на стыке диапазонов. Сократите или сдвиньте период.',
-  BACKTEST_CONTRACT_PARAMS_MISSING: 'Нет параметров контракта для пересчёта цены в деньги. Выберите другой контракт.',
+  BACKTEST_HISTORY_CONFLICT:
+    'Данные брокера не совпали на стыке диапазонов. Сократите или сдвиньте период.',
+  BACKTEST_CONTRACT_PARAMS_MISSING:
+    'Нет параметров контракта для пересчёта цены в деньги. Выберите другой контракт.',
   SANDBOX_OPERATION_REJECTED: 'Песочница отклонила запрос истории. Проверьте контракт и период.',
 } as const;
 
@@ -28,22 +49,41 @@ function errorMessage(error: unknown) {
   const code = typeof data === 'object' && data && 'code' in data ? data.code : undefined;
   if (code === 'BACKTEST_WARMUP_MISSING' && data && typeof data === 'object' && 'details' in data) {
     const details = data.details;
-    if (details && typeof details === 'object' && 'required' in details && 'available' in details && 'searchedFrom' in details
-      && typeof details.required === 'number' && typeof details.available === 'number'
-      && typeof details.searchedFrom === 'string' && Number.isFinite(Date.parse(details.searchedFrom))) {
-      return `Для EMA(${details.required}) нужно завершённых свечей до старта: ${details.required}. `
-        + `Найдено: ${details.available} (искали до ${calendarDay(details.searchedFrom)} включительно). `
-        + 'Выберите более позднюю дату начала или уменьшите период EMA.';
+    if (
+      details &&
+      typeof details === 'object' &&
+      'required' in details &&
+      'available' in details &&
+      'searchedFrom' in details &&
+      typeof details.required === 'number' &&
+      typeof details.available === 'number' &&
+      typeof details.searchedFrom === 'string' &&
+      Number.isFinite(Date.parse(details.searchedFrom))
+    ) {
+      return (
+        `Для EMA(${details.required}) нужно завершённых свечей до старта: ${details.required}. ` +
+        `Найдено: ${details.available} (искали до ${calendarDay(details.searchedFrom)} включительно). ` +
+        'Выберите более позднюю дату начала или уменьшите период EMA.'
+      );
     }
   }
   return typeof code === 'string' && Object.hasOwn(runErrors, code)
-    ? runErrors[code as keyof typeof runErrors] : sandboxErrorMessage(error);
+    ? runErrors[code as keyof typeof runErrors]
+    : sandboxErrorMessage(error);
 }
 
 function sameParameters(a: BacktestParameters, b: BacktestParameters) {
-  return a.instrumentUid === b.instrumentUid && a.timeframe === b.timeframe && a.emaPeriod === b.emaPeriod
-    && a.lots === b.lots && a.from === b.from && a.to === b.to
-    && a.commission === b.commission && a.slippage === b.slippage && a.timeZone === b.timeZone;
+  return (
+    a.instrumentUid === b.instrumentUid &&
+    a.timeframe === b.timeframe &&
+    a.emaPeriod === b.emaPeriod &&
+    a.lots === b.lots &&
+    a.from === b.from &&
+    a.to === b.to &&
+    a.commission === b.commission &&
+    a.slippage === b.slippage &&
+    a.timeZone === b.timeZone
+  );
 }
 
 function isNonNegativeCost(value: string) {
@@ -51,8 +91,14 @@ function isNonNegativeCost(value: string) {
   return Number.isFinite(parsed) && parsed >= 0;
 }
 
-export function BacktestPage({ dark, refreshSession, initialDraft }: {
-  dark: boolean; refreshSession: () => void; initialDraft: BacktestDraft | null;
+export function BacktestPage({
+  dark,
+  refreshSession,
+  initialDraft,
+}: {
+  dark: boolean;
+  refreshSession: () => void;
+  initialDraft: BacktestDraft | null;
 }) {
   const [instrumentUid, setInstrumentUid] = useState(initialDraft?.instrumentUid ?? '');
   const [query, setQuery] = useState(initialDraft?.ticker ?? '');
@@ -72,13 +118,24 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
   const [lastReport, setLastReport] = useState<BacktestReport | null>(null);
 
   const contracts = futures.currentData ?? [];
-  const selected = contracts.find(contract => contract.uid === instrumentUid);
+  const selected = contracts.find((contract) => contract.uid === instrumentUid);
   const errors = futures.error ?? strategy.error ?? limits.error ?? result.error;
   useEffect(() => {
-    if ([futures.error, strategy.error, limits.error, result.error, displaySettings.error].some(error => hasStatus(error, 401))) {
+    if (
+      [futures.error, strategy.error, limits.error, result.error, displaySettings.error].some(
+        (error) => hasStatus(error, 401),
+      )
+    ) {
       refreshSession();
     }
-  }, [futures.error, strategy.error, limits.error, result.error, displaySettings.error, refreshSession]);
+  }, [
+    futures.error,
+    strategy.error,
+    limits.error,
+    result.error,
+    displaySettings.error,
+    refreshSession,
+  ]);
 
   // A draft snapshot takes precedence; otherwise a direct entry or refresh starts from the last saved settings.
   useEffect(() => {
@@ -95,18 +152,28 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
     if (!selected || !timeZone) return null;
     const ema = Number(emaPeriod);
     const lot = Number(lots);
-    if (!Number.isInteger(ema) || ema < 1 || !Number.isInteger(lot) || lot < 1 || !from || !to) return null;
+    if (!Number.isInteger(ema) || ema < 1 || !Number.isInteger(lot) || lot < 1 || !from || !to)
+      return null;
     if (!isNonNegativeCost(commission) || !isNonNegativeCost(slippage)) return null;
     return {
-      instrumentUid: selected.uid, timeframe, emaPeriod: ema, lots: lot, from, to, timeZone,
-      commission: Number(commission), slippage: Number(slippage),
+      instrumentUid: selected.uid,
+      timeframe,
+      emaPeriod: ema,
+      lots: lot,
+      from,
+      to,
+      timeZone,
+      commission: Number(commission),
+      slippage: Number(slippage),
     };
   };
 
-  const stale = lastReport !== null && (() => {
-    const current = currentParameters();
-    return current === null || !sameParameters(current, lastReport.parameters);
-  })();
+  const stale =
+    lastReport !== null &&
+    (() => {
+      const current = currentParameters();
+      return current === null || !sameParameters(current, lastReport.parameters);
+    })();
 
   const submit = async () => {
     const current = currentParameters();
@@ -119,79 +186,158 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
     }
   };
 
-  const canRun = Boolean(limits.data && selected && currentParameters())
-    && !futures.isFetching && !futures.isError && !result.isLoading;
+  const canRun =
+    Boolean(limits.data && selected && currentParameters()) &&
+    !futures.isFetching &&
+    !futures.isError &&
+    !result.isLoading;
 
   return (
     <div className="grid w-full min-w-0 max-w-screen-xl gap-4">
       <Card>
         <CardHeader>
-          <CardTitle><h1>Бэктест</h1></CardTitle>
-          <CardDescription>Исторический прогон стратегии «Сёрфинг» на завершённых свечах. Заявки не отправляются, торговля не меняется.</CardDescription>
+          <CardTitle>
+            <h1>Бэктест</h1>
+          </CardTitle>
+          <CardDescription>
+            Исторический прогон стратегии «Сёрфинг» на завершённых свечах. Заявки не отправляются,
+            торговля не меняется.
+          </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <FuturesSearchForm initialTicker={initialDraft?.ticker ?? ''} disabled={result.isLoading} isFetching={futures.isFetching}
-            search={term => {
+          <FuturesSearchForm
+            initialTicker={initialDraft?.ticker ?? ''}
+            disabled={result.isLoading}
+            isFetching={futures.isFetching}
+            search={(term) => {
               if (term === query) void futures.refetch();
-              else { setInstrumentUid(''); setQuery(term); }
-            }} />
-          {futures.isFetching && <p role="status" className="text-sm text-muted-foreground">Ищем фьючерсы…</p>}
-          {futures.currentData?.length === 0 && !futures.isFetching &&
-            <p className="text-sm text-muted-foreground">Подходящих фьючерсов нет.</p>}
-          {errors && <Alert variant="destructive"><AlertTitle>{errorMessage(errors)}</AlertTitle></Alert>}
-          <form className="grid gap-4" onSubmit={event => {
-            event.preventDefault();
-            void submit();
-          }}>
+              else {
+                setInstrumentUid('');
+                setQuery(term);
+              }
+            }}
+          />
+          {futures.isFetching && (
+            <p role="status" className="text-sm text-muted-foreground">
+              Ищем фьючерсы…
+            </p>
+          )}
+          {futures.currentData?.length === 0 && !futures.isFetching && (
+            <p className="text-sm text-muted-foreground">Подходящих фьючерсов нет.</p>
+          )}
+          {errors && (
+            <Alert variant="destructive">
+              <AlertTitle>{errorMessage(errors)}</AlertTitle>
+            </Alert>
+          )}
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submit();
+            }}
+          >
             <fieldset className="min-w-0" disabled={result.isLoading}>
               <FieldGroup className="grid gap-4 sm:grid-cols-3">
                 <Field className="min-w-0 sm:col-span-3">
                   <FieldLabel htmlFor="backtest-contract">Контракт</FieldLabel>
-                  <NativeSelect id="backtest-contract" className="w-full" value={selected?.uid ?? ''} required
-                    onChange={event => setInstrumentUid(event.target.value)}>
-                    <NativeSelectOption value="" disabled>Выберите контракт</NativeSelectOption>
-                    {contracts.map(contract =>
+                  <NativeSelect
+                    id="backtest-contract"
+                    className="w-full"
+                    value={selected?.uid ?? ''}
+                    required
+                    onChange={(event) => setInstrumentUid(event.target.value)}
+                  >
+                    <NativeSelectOption value="" disabled>
+                      Выберите контракт
+                    </NativeSelectOption>
+                    {contracts.map((contract) => (
                       <NativeSelectOption key={contract.uid} value={contract.uid}>
-                        {contract.ticker} · {contract.exchange}{contract.expirationDate ? ` · ${calendarDay(contract.expirationDate)}` : ''}
-                      </NativeSelectOption>)}
+                        {contract.ticker} · {contract.exchange}
+                        {contract.expirationDate
+                          ? ` · ${calendarDay(contract.expirationDate)}`
+                          : ''}
+                      </NativeSelectOption>
+                    ))}
                   </NativeSelect>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-timeframe">Таймфрейм</FieldLabel>
-                  <NativeSelect id="backtest-timeframe" value={timeframe}
-                    onChange={event => {
-                      const next = timeframes.find(value => value === event.target.value);
+                  <NativeSelect
+                    id="backtest-timeframe"
+                    value={timeframe}
+                    onChange={(event) => {
+                      const next = timeframes.find((value) => value === event.target.value);
                       if (next) setTimeframe(next);
-                    }}>
-                    {timeframes.map(value =>
-                      <NativeSelectOption key={value} value={value}>{timeframeLabels[value]}</NativeSelectOption>)}
+                    }}
+                  >
+                    {timeframes.map((value) => (
+                      <NativeSelectOption key={value} value={value}>
+                        {timeframeLabels[value]}
+                      </NativeSelectOption>
+                    ))}
                   </NativeSelect>
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-ema">Период EMA</FieldLabel>
-                  <Input id="backtest-ema" type="number" placeholder="55" required min={1} max={limits.data?.maxEmaPeriod}
-                    value={emaPeriod} onChange={event => setEmaPeriod(event.target.value)} />
+                  <Input
+                    id="backtest-ema"
+                    type="number"
+                    placeholder="55"
+                    required
+                    min={1}
+                    max={limits.data?.maxEmaPeriod}
+                    value={emaPeriod}
+                    onChange={(event) => setEmaPeriod(event.target.value)}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-lots">Объём, лотов</FieldLabel>
-                  <Input id="backtest-lots" type="number" min={1} max={2_147_483_647} required
-                    value={lots} onChange={event => setLots(event.target.value)} />
+                  <Input
+                    id="backtest-lots"
+                    type="number"
+                    min={1}
+                    max={2_147_483_647}
+                    required
+                    value={lots}
+                    onChange={(event) => setLots(event.target.value)}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-range">Диапазон дат</FieldLabel>
-                  <DateRangePicker id="backtest-range" describedBy="backtest-period" from={from} to={to}
+                  <DateRangePicker
+                    id="backtest-range"
+                    describedBy="backtest-period"
+                    from={from}
+                    to={to}
                     timeZone={timeZone}
-                    onChange={(nextFrom, nextTo) => { setFrom(nextFrom); setTo(nextTo); }} />
+                    onChange={(nextFrom, nextTo) => {
+                      setFrom(nextFrom);
+                      setTo(nextTo);
+                    }}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-commission">Комиссия, %</FieldLabel>
-                  <Input id="backtest-commission" type="number" min={0} step="0.0001" value={commission}
-                    onChange={event => setCommission(event.target.value)} />
+                  <Input
+                    id="backtest-commission"
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={commission}
+                    onChange={(event) => setCommission(event.target.value)}
+                  />
                 </Field>
                 <Field>
                   <FieldLabel htmlFor="backtest-slippage">Проскальзывание, %</FieldLabel>
-                  <Input id="backtest-slippage" type="number" min={0} step="0.01" value={slippage}
-                    onChange={event => setSlippage(event.target.value)} />
+                  <Input
+                    id="backtest-slippage"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={slippage}
+                    onChange={(event) => setSlippage(event.target.value)}
+                  />
                 </Field>
               </FieldGroup>
             </fieldset>
@@ -200,13 +346,27 @@ export function BacktestPage({ dark, refreshSession, initialDraft }: {
               {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
               Для EMA нужны завершённые свечи до начала диапазона: их число равно периоду EMA.
             </p>
-            {displaySettings.isError && <div className="flex flex-wrap items-center gap-2">
-              <p role="alert" className="text-sm">Не удалось загрузить часовой пояс.</p>
-              <Button type="button" size="sm" variant="outline" onClick={() => void displaySettings.refetch()}>Повторить загрузку</Button>
-            </div>}
-            {displaySettings.data && !timeZone && <p role="alert" className="text-sm">
-              Браузер не поддерживает {displaySettings.data.timeZone}. Обновите браузер или выберите другой пояс в настройках.
-            </p>}
+            {displaySettings.isError && (
+              <div className="flex flex-wrap items-center gap-2">
+                <p role="alert" className="text-sm">
+                  Не удалось загрузить часовой пояс.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void displaySettings.refetch()}
+                >
+                  Повторить загрузку
+                </Button>
+              </div>
+            )}
+            {displaySettings.data && !timeZone && (
+              <p role="alert" className="text-sm">
+                Браузер не поддерживает {displaySettings.data.timeZone}. Обновите браузер или
+                выберите другой пояс в настройках.
+              </p>
+            )}
             <Button type="submit" className="justify-self-start" disabled={!canRun}>
               {result.isLoading ? 'Считаем…' : 'Запустить бэктест'}
             </Button>

@@ -1,9 +1,15 @@
 import { rootApi } from '@/shared/api';
-import { addCandles, sameMarketSelection, type MarketChartData, type MarketHistory, type MarketSelection } from '../model/market-data';
+import {
+  addCandles,
+  sameMarketSelection,
+  type MarketChartData,
+  type MarketHistory,
+  type MarketSelection,
+} from '../model/market-data';
 import { watchMarket } from './watch-market';
 
 export const marketApi = rootApi.injectEndpoints({
-  endpoints: builder => ({
+  endpoints: (builder) => ({
     market: builder.query<MarketChartData, MarketSelection>({
       keepUnusedDataFor: 0,
       providesTags: ['Market'],
@@ -12,14 +18,21 @@ export const marketApi = rootApi.injectEndpoints({
         if (error?.status === 401) return { error };
         const history = data as MarketHistory | null | undefined;
         const matches = !!history && sameMarketSelection(history, selection);
-        return { data: { ...selection, candles: matches ? history.candles : [], historyAvailable: matches, stream: 'connecting' } };
+        return {
+          data: {
+            ...selection,
+            candles: matches ? history.candles : [],
+            historyAvailable: matches,
+            stream: 'connecting',
+          },
+        };
       },
       merge(cache, incoming) {
         if (incoming.historyAvailable) {
           const catchUp = cache.catchUp;
           if (catchUp) {
-            const retained = cache.candles.filter(candle => !catchUp.liveTimes[candle.time]);
-            const newer = cache.candles.filter(candle => catchUp.liveTimes[candle.time]);
+            const retained = cache.candles.filter((candle) => !catchUp.liveTimes[candle.time]);
+            const newer = cache.candles.filter((candle) => catchUp.liveTimes[candle.time]);
             cache.candles = addCandles(addCandles(retained, incoming.candles), newer);
             cache.catchUp = undefined;
           } else {
@@ -28,7 +41,10 @@ export const marketApi = rootApi.injectEndpoints({
           cache.historyAvailable = true;
         }
       },
-      async onCacheEntryAdded(selection, { cacheDataLoaded, cacheEntryRemoved, updateCachedData, dispatch }) {
+      async onCacheEntryAdded(
+        selection,
+        { cacheDataLoaded, cacheEntryRemoved, updateCachedData, dispatch },
+      ) {
         try {
           await cacheDataLoaded;
         } catch {

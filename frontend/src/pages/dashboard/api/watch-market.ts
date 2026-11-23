@@ -1,5 +1,14 @@
 import { watchSocket } from '@/shared/api';
-import { addCandles, sameCandle, sameMarketSelection, type ChartCandle, type MarketChartData, type MarketHistory, type MarketSelection, type StreamState } from '../model/market-data';
+import {
+  addCandles,
+  sameCandle,
+  sameMarketSelection,
+  type ChartCandle,
+  type MarketChartData,
+  type MarketHistory,
+  type MarketSelection,
+  type StreamState,
+} from '../model/market-data';
 
 type MarketUpdate = {
   stream: StreamState;
@@ -21,29 +30,38 @@ export async function watchMarket(
   { refreshHistory, reloadSelection }: { refreshHistory: () => void; reloadSelection: () => void },
 ) {
   await watchSocket('/api/market/live', removed, {
-    onConnecting: () => update(data => { data.stream = 'connecting'; }),
+    onConnecting: () =>
+      update((data) => {
+        data.stream = 'connecting';
+      }),
     onReconnect() {
-      update(cache => { cache.catchUp = { receivedSnapshot: false, liveTimes: {} }; });
+      update((cache) => {
+        cache.catchUp = { receivedSnapshot: false, liveTimes: {} };
+      });
       refreshHistory();
     },
     onMessage(message: MarketUpdate) {
       const payload = message.history ?? message.tick;
       if (payload && !sameMarketSelection(payload, selection)) return;
-      update(cache => {
+      update((cache) => {
         if (message.history) {
           const snapshot = message.history.candles;
           if (cache.catchUp) {
             // The initial socket snapshot can predate the new REST request. Protect only subsequent changes.
             if (cache.catchUp.receivedSnapshot) {
-              const previous = new Map(cache.candles.map(candle => [candle.time, candle]));
+              const previous = new Map(cache.candles.map((candle) => [candle.time, candle]));
               for (const candle of snapshot) {
-                if (!sameCandle(previous.get(candle.time), candle)) cache.catchUp.liveTimes[candle.time] = true;
+                if (!sameCandle(previous.get(candle.time), candle))
+                  cache.catchUp.liveTimes[candle.time] = true;
               }
             }
             cache.catchUp.receivedSnapshot = true;
           }
           const from = snapshot[0]?.time ?? -Infinity;
-          cache.candles = addCandles(cache.candles.filter(candle => candle.time >= from), snapshot);
+          cache.candles = addCandles(
+            cache.candles.filter((candle) => candle.time >= from),
+            snapshot,
+          );
           cache.historyAvailable = true;
         } else if (message.tick) {
           const candle = message.tick.candle;
@@ -54,7 +72,7 @@ export async function watchMarket(
       });
     },
     onClose(code) {
-      update(data => {
+      update((data) => {
         data.catchUp = undefined;
         setStream(data, 'disconnected');
       });

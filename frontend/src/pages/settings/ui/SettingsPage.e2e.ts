@@ -1,13 +1,18 @@
 import { expect, test } from '@playwright/test';
 
-test('the owner can check a token and select, create, and fund a sandbox account', async ({ page }) => {
-  test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses a mocked sandbox API and does not require a broker token.');
+test('the owner can check a token and select, create, and fund a sandbox account', async ({
+  page,
+}) => {
+  test.skip(
+    Boolean(process.env.SERFING_E2E_URL),
+    'Uses a mocked sandbox API and does not require a broker token.',
+  );
   const token = 'mock-sandbox-token';
   let configured = false;
   let accountId: string | null = null;
   let funded = false;
   const accounts = [{ id: 'existing', name: 'Мой счёт' }];
-  await page.route('/api/**', route => {
+  await page.route('/api/**', (route) => {
     const request = route.request();
     switch (new URL(request.url()).pathname) {
       case '/api/auth/session':
@@ -19,14 +24,20 @@ test('the owner can check a token and select, create, and fund a sandbox account
       case '/api/robot/history':
         return route.fulfill({ json: [] });
       case '/api/strategy':
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null } });
+        return route.fulfill({
+          json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55 }, settings: null },
+        });
       case '/api/strategy/futures':
         return route.fulfill({ json: [] });
       case '/api/sandbox':
-        return route.fulfill({ json: {
-          status: configured ? 'connected' : 'unconfigured', accountId, accounts: configured ? accounts : [],
-          virtualFundingRubles: configured ? 100_000 : undefined,
-        } });
+        return route.fulfill({
+          json: {
+            status: configured ? 'connected' : 'unconfigured',
+            accountId,
+            accounts: configured ? accounts : [],
+            virtualFundingRubles: configured ? 100_000 : undefined,
+          },
+        });
       case '/api/sandbox/connection':
         if (request.postDataJSON().token !== token) {
           return route.fulfill({ status: 422, json: { code: 'SANDBOX_TOKEN_REJECTED' } });
@@ -39,7 +50,9 @@ test('the owner can check a token and select, create, and fund a sandbox account
       case '/api/sandbox/balance': {
         const id = new URL(request.url()).searchParams.get('accountId');
         expect(id).toBe(accountId);
-        return route.fulfill({ json: { accountId: id, rubles: id === 'existing' ? null : funded ? 100_000 : 0 } });
+        return route.fulfill({
+          json: { accountId: id, rubles: id === 'existing' ? null : funded ? 100_000 : 0 },
+        });
       }
       case '/api/sandbox/accounts':
         accountId = 'created';
@@ -62,7 +75,8 @@ test('the owner can check a token and select, create, and fund a sandbox account
     await page.getByRole('menuitem', { name: 'Настройки' }).click();
     await expect(page).toHaveURL(/\/settings$/);
   }
-  const openDashboard = () => page.getByRole('banner').getByRole('link', { name: 'fazan-trading' }).click();
+  const openDashboard = () =>
+    page.getByRole('banner').getByRole('link', { name: 'fazan-trading' }).click();
   await openSettings();
   await expect(page.getByText('Песочница не подключена.')).toBeVisible();
   const connectionCard = page.getByRole('region', { name: 'Подключение' });

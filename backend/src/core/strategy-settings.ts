@@ -3,7 +3,12 @@ import { defaultTimeframe, type Timeframe } from './timeframe.js';
 
 const defaults = { ticker: 'IMOEXF', emaPeriod: 55, timeframe: defaultTimeframe } as const;
 
-export type SavedStrategy = { instrument: FutureContract; emaPeriod: number; lots: number; timeframe: Timeframe };
+export type SavedStrategy = {
+  instrument: FutureContract;
+  emaPeriod: number;
+  lots: number;
+  timeframe: Timeframe;
+};
 
 export interface StrategyStore {
   load(): Promise<SavedStrategy | null>;
@@ -11,7 +16,10 @@ export interface StrategyStore {
 }
 
 export class StrategySettings {
-  constructor(private readonly store: StrategyStore, private readonly sandbox: SandboxConnection) {}
+  constructor(
+    private readonly store: StrategyStore,
+    private readonly sandbox: SandboxConnection,
+  ) {}
 
   async get() {
     return { defaults, settings: await this.store.load() };
@@ -21,10 +29,21 @@ export class StrategySettings {
     return this.sandbox.searchFutures(query);
   }
 
-  save({ accountId, instrumentUid, emaPeriod, lots, timeframe }: {
-    accountId: string; instrumentUid: string; emaPeriod: number; lots: number; timeframe: Timeframe;
+  save({
+    accountId,
+    instrumentUid,
+    emaPeriod,
+    lots,
+    timeframe,
+  }: {
+    accountId: string;
+    instrumentUid: string;
+    emaPeriod: number;
+    lots: number;
+    timeframe: Timeframe;
   }) {
-    return this.sandbox.changeStrategyForAccount(accountId, instrumentUid,
-      instrument => this.store.save({ instrument, emaPeriod, lots, timeframe }));
+    return this.sandbox.changeStrategyForAccount(accountId, instrumentUid, (instrument) =>
+      this.store.save({ instrument, emaPeriod, lots, timeframe }),
+    );
   }
 }

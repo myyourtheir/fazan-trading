@@ -7,8 +7,10 @@ export const Route = createFileRoute('/dashboard')({ component: DashboardRoute }
 
 function DashboardRoute() {
   const { authenticated, refreshSession } = useSessionAccess();
-  const dark = useAppSelector(state => state.ui.dark);
-  return authenticated
-    ? <DashboardPage dark={dark} refreshSession={refreshSession} />
-    : <Navigate to="/login" replace />;
+  const dark = useAppSelector((state) => state.ui.dark);
+  return authenticated ? (
+    <DashboardPage dark={dark} refreshSession={refreshSession} />
+  ) : (
+    <Navigate to="/login" replace />
+  );
 }

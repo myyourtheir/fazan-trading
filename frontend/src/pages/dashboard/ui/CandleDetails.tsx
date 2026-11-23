@@ -1,34 +1,37 @@
-import { emaPrice, price } from "../lib/chart-format";
-import type { ChartCandle } from "../model/market-data";
+import { emaPrice, price } from '../lib/chart-format';
+import type { ChartCandle } from '../model/market-data';
 
-export function CandleDetails({ candle, hovered, timeLabel }: { candle: ChartCandle; hovered: boolean; timeLabel: string }) {
+export function CandleDetails({
+  candle,
+  hovered,
+  timeLabel,
+}: {
+  candle: ChartCandle;
+  hovered: boolean;
+  timeLabel: string;
+}) {
   const fields = [
-    ["Открытие", price.format(candle.open)],
-    ["Максимум", price.format(candle.high)],
-    ["Минимум", price.format(candle.low)],
+    ['Открытие', price.format(candle.open)],
+    ['Максимум', price.format(candle.high)],
+    ['Минимум', price.format(candle.low)],
+    [candle.complete ? 'Закрытие' : 'Закрытие (текущее)', price.format(candle.close)],
     [
-      candle.complete ? "Закрытие" : "Закрытие (текущее)",
-      price.format(candle.close),
-    ],
-    [
-      candle.previewEma !== null ? "Предварительная EMA" : "Подтверждённая EMA",
+      candle.previewEma !== null ? 'Предварительная EMA' : 'Подтверждённая EMA',
       candle.confirmedEma !== null
         ? emaPrice.format(candle.confirmedEma)
         : candle.previewEma !== null
           ? emaPrice.format(candle.previewEma)
-          : "Нет подтверждения",
+          : 'Нет подтверждения',
     ],
   ];
   return (
     <dl
-      aria-label={hovered ? "Выбранная свеча" : "Последняя свеча"}
+      aria-label={hovered ? 'Выбранная свеча' : 'Последняя свеча'}
       className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs"
     >
       <div className="flex gap-1">
         <dt className="sr-only">Начало свечи</dt>
-        <dd className="font-medium tabular-nums">
-          {timeLabel}
-        </dd>
+        <dd className="font-medium tabular-nums">{timeLabel}</dd>
       </div>
       {fields.map(([label, value]) => (
         <div key={label} className="flex gap-1">

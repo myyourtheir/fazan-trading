@@ -31,10 +31,20 @@ export class OwnerAuth {
     private readonly ttlMs: number,
   ) {}
 
-  static async create(password: string, sessions: SessionStore, options: { now?: () => number; ttlMs?: number } = {}) {
+  static async create(
+    password: string,
+    sessions: SessionStore,
+    options: { now?: () => number; ttlMs?: number } = {},
+  ) {
     const salt = randomBytes(32);
-    const expected = await derive(password, salt, 64) as Buffer;
-    return new OwnerAuth(salt, expected, sessions, options.now ?? Date.now, options.ttlMs ?? 12 * 60 * 60_000);
+    const expected = (await derive(password, salt, 64)) as Buffer;
+    return new OwnerAuth(
+      salt,
+      expected,
+      sessions,
+      options.now ?? Date.now,
+      options.ttlMs ?? 12 * 60 * 60_000,
+    );
   }
 
   async login(password: string): Promise<LoginResult> {
@@ -44,10 +54,13 @@ export class OwnerAuth {
       this.attempts = 0;
     }
     if (this.attempts >= maxAttempts) {
-      return { kind: 'throttled', retryAfter: Math.max(1, Math.ceil((this.windowStart + attemptWindowMs - now) / 1000)) };
+      return {
+        kind: 'throttled',
+        retryAfter: Math.max(1, Math.ceil((this.windowStart + attemptWindowMs - now) / 1000)),
+      };
     }
     this.attempts++;
-    const candidate = await derive(password, this.salt, 64) as Buffer;
+    const candidate = (await derive(password, this.salt, 64)) as Buffer;
     if (!timingSafeEqual(candidate, this.expected)) return { kind: 'denied' };
 
     const token = randomBytes(32).toString('base64url');

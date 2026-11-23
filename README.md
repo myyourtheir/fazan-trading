@@ -70,8 +70,8 @@ Dev-проект использует отдельный том PostgreSQL и н
 
 Требуются Node.js 24+ и доступный PostgreSQL. Для каждого приложения скопируйте его `.env.example` в `.env`. В `backend/.env` задайте адрес БД, пароль владельца и ключ шифрования; в `frontend/.env` при необходимости измените адрес бэкенда для прокси Vite.
 
-- `backend/`: `npm ci`, затем `npm run dev`; проверки — `npm run typecheck`, `npm test`, `npm run build`.
-- `frontend/`: `npm ci`, затем `npm run dev`; проверки — `npm run build`, `npx playwright install chromium`, `npm test`. Тест браузера использует подменный REST API, если адрес приложения не задан.
+- `backend/`: `npm ci`, затем `npm run dev`; проверки — `npm run format:check`, `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`.
+- `frontend/`: `npm ci`, затем `npm run dev`; проверки — `npm run format:check`, `npm run lint`, `npm run build`, `npx playwright install chromium`, `npm test`. Тест браузера использует подменный REST API, если адрес приложения не задан.
 
 Компоненты интерфейса добавляются из `frontend/` командой `npx shadcn@latest add <компонент>`. Настройки находятся в `frontend/components.json`, палитра светлой и тёмной тем — в `frontend/src/styles.css`.
 

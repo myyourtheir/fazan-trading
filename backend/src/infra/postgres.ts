@@ -10,7 +10,14 @@ import type { OrderIntent, OrderResult, TradingStore } from '../core/robot.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../../migrations/', import.meta.url));
-const { ownerSessions, displaySettings, sandboxConnection, strategySettings, tradeOrders, tradeExecutions } = schema;
+const {
+  ownerSessions,
+  displaySettings,
+  sandboxConnection,
+  strategySettings,
+  tradeOrders,
+  tradeExecutions,
+} = schema;
 type Database = NodePgDatabase<typeof schema>;
 
 export function connectToPostgres(connectionString: string | undefined) {
@@ -27,14 +34,16 @@ export class PostgresSessions implements SessionStore {
   constructor(private readonly db: Database) {}
 
   async create(digest: string, expiresAt: Date) {
-    await this.db.transaction(async tx => {
+    await this.db.transaction(async (tx) => {
       await tx.delete(ownerSessions).where(lte(ownerSessions.expiresAt, new Date()));
       await tx.insert(ownerSessions).values({ tokenDigest: digest, expiresAt });
     });
   }
 
   async activeUntil(digest: string, at: Date) {
-    const [session] = await this.db.select({ expiresAt: ownerSessions.expiresAt }).from(ownerSessions)
+    const [session] = await this.db
+      .select({ expiresAt: ownerSessions.expiresAt })
+      .from(ownerSessions)
       .where(and(eq(ownerSessions.tokenDigest, digest), gt(ownerSessions.expiresAt, at)));
     return session?.expiresAt ?? null;
   }
@@ -48,13 +57,17 @@ export class PostgresDisplaySettings implements DisplaySettingsStore {
   constructor(private readonly db: Database) {}
 
   async loadTimeZone() {
-    const [saved] = await this.db.select({ timeZone: displaySettings.timeZone }).from(displaySettings)
+    const [saved] = await this.db
+      .select({ timeZone: displaySettings.timeZone })
+      .from(displaySettings)
       .where(eq(displaySettings.id, 1));
     return saved?.timeZone ?? null;
   }
 
   async saveTimeZone(timeZone: string) {
-    await this.db.insert(displaySettings).values({ id: 1, timeZone })
+    await this.db
+      .insert(displaySettings)
+      .values({ id: 1, timeZone })
       .onConflictDoUpdate({ target: displaySettings.id, set: { timeZone } });
   }
 }
@@ -64,13 +77,17 @@ export class PostgresSandboxConnection implements SandboxStore {
 
   async load() {
     const { encryptedToken, accountId } = sandboxConnection;
-    const [saved] = await this.db.select({ encryptedToken, accountId }).from(sandboxConnection)
+    const [saved] = await this.db
+      .select({ encryptedToken, accountId })
+      .from(sandboxConnection)
       .where(eq(sandboxConnection.id, 1));
     return saved ?? null;
   }
 
   async save(connection: SavedSandboxConnection) {
-    await this.db.insert(sandboxConnection).values({ id: 1, ...connection })
+    await this.db
+      .insert(sandboxConnection)
+      .values({ id: 1, ...connection })
       .onConflictDoUpdate({ target: sandboxConnection.id, set: connection });
   }
 }
@@ -81,13 +98,21 @@ export class PostgresStrategySettings implements StrategyStore {
   async load() {
     const [saved] = await this.db.select().from(strategySettings).where(eq(strategySettings.id, 1));
     if (!saved) return null;
-    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots, timeframe } = saved;
-    return { instrument: { uid, ticker, name, classCode, exchange, expirationDate }, emaPeriod, lots, timeframe };
+    const { uid, ticker, name, classCode, exchange, expirationDate, emaPeriod, lots, timeframe } =
+      saved;
+    return {
+      instrument: { uid, ticker, name, classCode, exchange, expirationDate },
+      emaPeriod,
+      lots,
+      timeframe,
+    };
   }
 
   async save({ instrument, emaPeriod, lots, timeframe }: SavedStrategy) {
     const values = { ...instrument, emaPeriod, lots, timeframe };
-    await this.db.insert(strategySettings).values({ id: 1, ...values })
+    await this.db
+      .insert(strategySettings)
+      .values({ id: 1, ...values })
       .onConflictDoUpdate({ target: strategySettings.id, set: values });
   }
 }
@@ -98,24 +123,34 @@ export class PostgresTradingStore implements TradingStore {
   constructor(private readonly db: Database) {}
 
   async reserve(order: OrderIntent) {
-    const rows = await this.db.insert(tradeOrders).values({ ...order, status: 'reserved', brokerStatus: 'unknown' })
-      .onConflictDoNothing().returning({ id: tradeOrders.id });
+    const rows = await this.db
+      .insert(tradeOrders)
+      .values({ ...order, status: 'reserved', brokerStatus: 'unknown' })
+      .onConflictDoNothing()
+      .returning({ id: tradeOrders.id });
     return rows.length === 1;
   }
 
   async record(id: string, { executions, ...result }: OrderResult) {
-    await this.db.transaction(async tx => {
+    await this.db.transaction(async (tx) => {
       await tx.update(tradeOrders).set(result).where(eq(tradeOrders.id, id));
       await tx.delete(tradeExecutions).where(eq(tradeExecutions.orderId, id));
       if (executions.length) {
-        await tx.insert(tradeExecutions).values(executions.map((execution, sequence) => ({ ...execution, orderId: id, sequence })));
+        await tx
+          .insert(tradeExecutions)
+          .values(
+            executions.map((execution, sequence) => ({ ...execution, orderId: id, sequence })),
+          );
       }
     });
   }
 
   async hasUnresolved() {
-    const rows = await this.db.select({ id: tradeOrders.id }).from(tradeOrders)
-      .where(unresolvedOrders()).limit(1);
+    const rows = await this.db
+      .select({ id: tradeOrders.id })
+      .from(tradeOrders)
+      .where(unresolvedOrders())
+      .limit(1);
     return rows.length > 0;
   }
 
@@ -126,13 +161,22 @@ export class PostgresTradingStore implements TradingStore {
   }
 
   history(accountId?: string) {
-    return this.readJournal(accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId));
+    return this.readJournal(
+      accountId === undefined ? undefined : eq(tradeOrders.accountId, accountId),
+    );
   }
 
   private async readJournal(filter?: ReturnType<typeof eq>) {
-    const rows = await this.db.select().from(tradeOrders).leftJoin(tradeExecutions, eq(tradeOrders.id, tradeExecutions.orderId))
+    const rows = await this.db
+      .select()
+      .from(tradeOrders)
+      .leftJoin(tradeExecutions, eq(tradeOrders.id, tradeExecutions.orderId))
       .where(filter)
-      .orderBy(desc(sql`coalesce(${tradeOrders.signalTime}, ${tradeOrders.manualCloseTime})`), tradeOrders.id, tradeExecutions.sequence);
+      .orderBy(
+        desc(sql`coalesce(${tradeOrders.signalTime}, ${tradeOrders.manualCloseTime})`),
+        tradeOrders.id,
+        tradeExecutions.sequence,
+      );
     const journal = new Map<string, Awaited<ReturnType<TradingStore['history']>>[number]>();
     for (const { trade_orders: order, trade_executions: execution } of rows) {
       const entry = journal.get(order.id) ?? { ...order, executions: [] };

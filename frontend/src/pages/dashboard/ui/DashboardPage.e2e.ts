@@ -3,33 +3,53 @@ import type { JournalEntry } from '../api/journal-api';
 import type { Dashboard } from '../api/robot-api';
 import type { ChartCandle } from '../model/market-data';
 
-async function mockMarket(page: Page, options: {
-  failInitialHistory?: boolean;
-  historySize?: number;
-  blockAccountSwitch?: boolean;
-  wideHistoricalDetails?: boolean;
-} = {}) {
-  const instrument = { uid: 'future', ticker: 'IMOEXF', name: 'Индекс Мосбиржи', classCode: 'SPBFUT',
-    exchange: 'MOEX', expirationDate: null };
+async function mockMarket(
+  page: Page,
+  options: {
+    failInitialHistory?: boolean;
+    historySize?: number;
+    blockAccountSwitch?: boolean;
+    wideHistoricalDetails?: boolean;
+  } = {},
+) {
+  const instrument = {
+    uid: 'future',
+    ticker: 'IMOEXF',
+    name: 'Индекс Мосбиржи',
+    classCode: 'SPBFUT',
+    exchange: 'MOEX',
+    expirationDate: null,
+  };
   const selection = { instrumentUid: instrument.uid, emaPeriod: 3, timeframe: '1h' };
   const time = Date.UTC(2026, 10, 18, 12);
-  const candle = { time, open: 100, high: 110, low: 98, close: 104, complete: true,
-    confirmedEma: 102, previewEma: null };
+  const candle = {
+    time,
+    open: 100,
+    high: 110,
+    low: 98,
+    close: 104,
+    complete: true,
+    confirmedEma: 102,
+    previewEma: null,
+  };
   const nextCandle = { ...candle, time: time + 3_600_000, complete: false, confirmedEma: null };
   const history = Array.from({ length: options.historySize ?? 1 }, (_, index) => ({
-    ...candle, time: time - index * 3_600_000,
-  })).reverse().map((historyCandle, index, candles) =>
-    options.wideHistoricalDetails && index < candles.length - 1
-      ? {
-          ...historyCandle,
-          open: 1_000_000_000,
-          high: 1_000_000_010,
-          low: 999_999_990,
-          close: 1_000_000_004,
-          confirmedEma: 1_000_000_002,
-        }
-      : historyCandle,
-  );
+    ...candle,
+    time: time - index * 3_600_000,
+  }))
+    .reverse()
+    .map((historyCandle, index, candles) =>
+      options.wideHistoricalDetails && index < candles.length - 1
+        ? {
+            ...historyCandle,
+            open: 1_000_000_000,
+            high: 1_000_000_010,
+            low: 999_999_990,
+            close: 1_000_000_004,
+            confirmedEma: 1_000_000_002,
+          }
+        : historyCandle,
+    );
   let historyRequests = 0;
   let timeZone = 'UTC';
   let dashboard: Dashboard = { mode: 'stopped', reason: null, position: null };
@@ -40,8 +60,11 @@ async function mockMarket(page: Page, options: {
   let resumeRequests = 0;
   let recoveredOrder: JournalEntry | undefined;
   let blockAccountSwitch = options.blockAccountSwitch;
-  const accounts = [{ id: accountId, name: 'Первый' }, { id: 'next-account', name: 'Второй' }];
-  await page.route('/api/**', route => {
+  const accounts = [
+    { id: accountId, name: 'Первый' },
+    { id: 'next-account', name: 'Второй' },
+  ];
+  await page.route('/api/**', (route) => {
     const url = new URL(route.request().url());
     switch (url.pathname) {
       case '/api/auth/session':
@@ -52,7 +75,9 @@ async function mockMarket(page: Page, options: {
       case '/api/dashboard':
         return route.fulfill({ json: dashboard });
       case '/api/robot/history':
-        return route.fulfill({ json: journal.filter(order => order.accountId === url.searchParams.get('accountId')) });
+        return route.fulfill({
+          json: journal.filter((order) => order.accountId === url.searchParams.get('accountId')),
+        });
       case '/api/robot/start':
         dashboard = { mode: 'running', reason: null, position: 0 };
         return route.fulfill({ status: 204 });
@@ -63,8 +88,12 @@ async function mockMarket(page: Page, options: {
         reconcileRequests++;
         if (recoveredOrder) {
           journal = [recoveredOrder];
-          dashboard = { ...dashboard, reason: null, position: recoveredOrder.position,
-            recovery: { orderId: recoveredOrder.id, ready: true } };
+          dashboard = {
+            ...dashboard,
+            reason: null,
+            position: recoveredOrder.position,
+            recovery: { orderId: recoveredOrder.id, ready: true },
+          };
         }
         return route.fulfill({ status: 204 });
       case '/api/robot/resume':
@@ -73,67 +102,136 @@ async function mockMarket(page: Page, options: {
         return route.fulfill({ status: 204 });
       case '/api/robot/close':
         closeRequests++;
-        expect(route.request().postDataJSON()).toEqual({ accountId, instrumentUid: instrument.uid, confirmed: true });
+        expect(route.request().postDataJSON()).toEqual({
+          accountId,
+          instrumentUid: instrument.uid,
+          confirmed: true,
+        });
         journal.unshift({
-          ...filledOrder(candle), id: 'manual-close', action: 'manual-close', manualCloseTime: time + 3_610_000,
-          candleTime: null, signalTime: null, signalPrice: null, ema: null,
-          direction: 'sell', fromPosition: 1, targetPosition: 0, position: 0,
+          ...filledOrder(candle),
+          id: 'manual-close',
+          action: 'manual-close',
+          manualCloseTime: time + 3_610_000,
+          candleTime: null,
+          signalTime: null,
+          signalPrice: null,
+          ema: null,
+          direction: 'sell',
+          fromPosition: 1,
+          targetPosition: 0,
+          position: 0,
         });
         dashboard = { ...dashboard, position: 0 };
         return route.fulfill({ status: 204 });
       case '/api/sandbox':
-        return route.fulfill({ json: { status: 'connected', accountId, accounts, virtualFundingRubles: 100_000 } });
+        return route.fulfill({
+          json: { status: 'connected', accountId, accounts, virtualFundingRubles: 100_000 },
+        });
       case '/api/sandbox/account':
-        if (blockAccountSwitch) return route.fulfill({ status: 409, json: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' } });
+        if (blockAccountSwitch)
+          return route.fulfill({ status: 409, json: { code: 'SANDBOX_ACCOUNT_NOT_FLAT' } });
         accountId = route.request().postDataJSON().accountId;
         dashboard = { ...dashboard, position: null };
         return route.fulfill({ status: 204 });
       case '/api/sandbox/balance':
         expect(url.searchParams.get('accountId')).toBe(accountId);
-        return route.fulfill({ json: { accountId, rubles: accountId === 'virtual-account' ? 1_000 : 2_000 } });
+        return route.fulfill({
+          json: { accountId, rubles: accountId === 'virtual-account' ? 1_000 : 2_000 },
+        });
       case '/api/strategy':
-        return route.fulfill({ json: { defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
-          settings: { instrument, emaPeriod: 3, lots: 1, timeframe: selection.timeframe } } });
+        return route.fulfill({
+          json: {
+            defaults: { ticker: 'IMOEXF', emaPeriod: 55, timeframe: '1h' },
+            settings: { instrument, emaPeriod: 3, lots: 1, timeframe: selection.timeframe },
+          },
+        });
       case '/api/strategy/futures':
         return route.fulfill({ json: [instrument] });
       case '/api/market':
-        if (++historyRequests === 1 && options.failInitialHistory) return route.fulfill({ status: 502 });
+        if (++historyRequests === 1 && options.failInitialHistory)
+          return route.fulfill({ status: 502 });
         return route.fulfill({ json: { ...selection, candles: history } });
       default:
         return route.fulfill({ status: 404 });
     }
   });
   const sockets: WebSocketRoute[] = [];
-  await page.routeWebSocket('**/api/market/live', socket => { sockets.push(socket); });
+  await page.routeWebSocket('**/api/market/live', (socket) => {
+    sockets.push(socket);
+  });
   const tradingSockets: WebSocketRoute[] = [];
-  await page.routeWebSocket('**/api/robot/live', socket => { tradingSockets.push(socket); });
-  return { selection, candle, nextCandle, history, sockets, tradingSockets, closeRequests: () => closeRequests,
-    reconcileRequests: () => reconcileRequests, resumeRequests: () => resumeRequests,
+  await page.routeWebSocket('**/api/robot/live', (socket) => {
+    tradingSockets.push(socket);
+  });
+  return {
+    selection,
+    candle,
+    nextCandle,
+    history,
+    sockets,
+    tradingSockets,
+    closeRequests: () => closeRequests,
+    reconcileRequests: () => reconcileRequests,
+    resumeRequests: () => resumeRequests,
     setProblem: (order: JournalEntry) => {
       journal = [order];
-      dashboard = { mode: 'paused', reason: 'ROBOT_ORDER_SUBMISSION_UNCERTAIN', position: order.position,
-        recovery: { orderId: order.id, ready: false } };
+      dashboard = {
+        mode: 'paused',
+        reason: 'ROBOT_ORDER_SUBMISSION_UNCERTAIN',
+        position: order.position,
+        recovery: { orderId: order.id, ready: false },
+      };
     },
-    setRecoveredOrder: (order: JournalEntry) => { recoveredOrder = order; },
+    setRecoveredOrder: (order: JournalEntry) => {
+      recoveredOrder = order;
+    },
     setOrders: (...orders: JournalEntry[]) => {
-    dashboard = { ...dashboard, position: orders[0]?.position ?? null };
-    journal = orders;
-  }, allowAccountSwitch: () => { blockAccountSwitch = false; } };
+      dashboard = { ...dashboard, position: orders[0]?.position ?? null };
+      journal = orders;
+    },
+    allowAccountSwitch: () => {
+      blockAccountSwitch = false;
+    },
+  };
 }
 
 const filledOrder = (candle: ChartCandle): JournalEntry => ({
-  id: 'client-order', ticker: 'IMOEXF', instrumentUid: 'future', accountId: 'virtual-account', timeframe: '1h',
-  action: 'ema-crossing', manualCloseTime: null,
-  candleTime: candle.time, signalTime: candle.time + 3_600_000, signalPrice: 104, ema: 102, direction: 'buy',
-  lots: 1, fromPosition: 0, targetPosition: 1, brokerStatus: 'filled', status: 'confirmed',
-  position: 1, executedLots: 1, brokerOrderId: 'exchange-order',
+  id: 'client-order',
+  ticker: 'IMOEXF',
+  instrumentUid: 'future',
+  accountId: 'virtual-account',
+  timeframe: '1h',
+  action: 'ema-crossing',
+  manualCloseTime: null,
+  candleTime: candle.time,
+  signalTime: candle.time + 3_600_000,
+  signalPrice: 104,
+  ema: 102,
+  direction: 'buy',
+  lots: 1,
+  fromPosition: 0,
+  targetPosition: 1,
+  brokerStatus: 'filled',
+  status: 'confirmed',
+  position: 1,
+  executedLots: 1,
+  brokerOrderId: 'exchange-order',
   executions: [{ tradeId: 'trade', lots: 1, price: 105.25, time: candle.time + 3_605_000 }],
 });
 
-const chartCanvas = (page: Page) => page.getByRole('group', { name: 'График свечей' })
-  .getByRole('row').first().getByRole('cell').nth(1).locator('canvas').last();
+const chartCanvas = (page: Page) =>
+  page
+    .getByRole('group', { name: 'График свечей' })
+    .getByRole('row')
+    .first()
+    .getByRole('cell')
+    .nth(1)
+    .locator('canvas')
+    .last();
 
-test('hovering a differently wrapped historical candle keeps the plot in place', async ({ page }) => {
+test('hovering a differently wrapped historical candle keeps the plot in place', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   await page.setViewportSize({ width: 360, height: 800 });
   await mockMarket(page, { historySize: 80, wideHistoricalDetails: true });
@@ -156,7 +254,9 @@ test('hovering a differently wrapped historical candle keeps the plot in place',
   expect(await canvas.boundingBox()).toEqual(initialBox);
 });
 
-test('starts the robot and refreshes its separate signal and fill after a live notification', async ({ page }) => {
+test('starts the robot and refreshes its separate signal and fill after a live notification', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
   const { candle, sockets, tradingSockets, setOrders } = await mockMarket(page);
   await page.goto('/');
@@ -176,13 +276,22 @@ test('starts the robot and refreshes its separate signal and fill after a live n
   await expect(row.getByText('Лотов: 1; цена сделки: 105,25')).toBeVisible();
 });
 
-test('shows one reversal order with its fill and distinguishes an unconfirmed target', async ({ page }) => {
+test('shows one reversal order with its fill and distinguishes an unconfirmed target', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
   const { candle, nextCandle, tradingSockets, setOrders } = await mockMarket(page);
   const entry = filledOrder(candle);
   const reversal: JournalEntry = {
-    ...filledOrder(nextCandle), id: 'reversal', direction: 'sell', lots: 2, executedLots: 2,
-    fromPosition: 1, targetPosition: -1, position: 1, status: 'unconfirmed',
+    ...filledOrder(nextCandle),
+    id: 'reversal',
+    direction: 'sell',
+    lots: 2,
+    executedLots: 2,
+    fromPosition: 1,
+    targetPosition: -1,
+    position: 1,
+    status: 'unconfirmed',
     executions: [{ ...entry.executions[0], tradeId: 'reversal-fill', lots: 2 }],
   };
   setOrders(reversal, entry);
@@ -204,12 +313,21 @@ test('shows one reversal order with its fill and distinguishes an unconfirmed ta
   await expect(row.getByText('Позиция: 1 → -1; факт: -1')).toBeVisible();
 });
 
-test('shows the problem order, updates the journal after reconciliation, and waits for manual resume', async ({ page }) => {
+test('shows the problem order, updates the journal after reconciliation, and waits for manual resume', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
   const market = await mockMarket(page);
   const filled = filledOrder(market.candle);
-  market.setProblem({ ...filled, brokerStatus: 'unknown', status: 'unconfirmed', position: null, executedLots: null,
-    brokerOrderId: null, executions: [] });
+  market.setProblem({
+    ...filled,
+    brokerStatus: 'unknown',
+    status: 'unconfirmed',
+    position: null,
+    executedLots: null,
+    brokerOrderId: null,
+    executions: [],
+  });
   await page.goto('/');
   const robot = page.getByRole('region', { name: 'Управление роботом' });
   const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
@@ -238,9 +356,13 @@ test('shows the problem order, updates the journal after reconciliation, and wai
   expect(market.resumeRequests()).toBe(1);
 });
 
-test('keeps balance and journal on the confirmed account and reflows on mobile', async ({ page }) => {
+test('keeps balance and journal on the confirmed account and reflows on mobile', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked sandbox data.');
-  const { candle, setOrders, allowAccountSwitch } = await mockMarket(page, { blockAccountSwitch: true });
+  const { candle, setOrders, allowAccountSwitch } = await mockMarket(page, {
+    blockAccountSwitch: true,
+  });
   setOrders(filledOrder(candle));
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
@@ -250,11 +372,15 @@ test('keeps balance and journal on the confirmed account and reflows on mobile',
   const strategy = page.getByRole('region', { name: 'Настройки стратегии' });
   const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   const journal = page.getByRole('region', { name: 'Журнал заявок и исполнений' });
-  await expect(page.getByRole('banner').getByRole('combobox', { name: 'Виртуальный счёт' })).toHaveCount(0);
+  await expect(
+    page.getByRole('banner').getByRole('combobox', { name: 'Виртуальный счёт' }),
+  ).toHaveCount(0);
   await expect(page.getByRole('main').getByRole('group', { name: 'Счёт песочницы' })).toBeVisible();
   await expect(balance).toHaveText('1 000,00 ₽');
   await expect(journal.getByText('Покупка · IMOEXF')).toBeVisible();
-  const desktop = await Promise.all([robot, strategy, chart, journal].map(panel => panel.boundingBox()));
+  const desktop = await Promise.all(
+    [robot, strategy, chart, journal].map((panel) => panel.boundingBox()),
+  );
   expect(desktop[0]!.y).toBe(desktop[2]!.y);
   expect(desktop[2]!.y).toBe(desktop[3]!.y);
   expect(desktop[0]!.x).toBe(desktop[1]!.x);
@@ -263,7 +389,9 @@ test('keeps balance and journal on the confirmed account and reflows on mobile',
   expect(desktop[2]!.width).toBeGreaterThan(desktop[3]!.width);
 
   await selector.selectOption('next-account');
-  await expect(page.getByRole('group', { name: 'Счёт песочницы' }).getByRole('alert')).toContainText('Нельзя сменить счёт');
+  await expect(
+    page.getByRole('group', { name: 'Счёт песочницы' }).getByRole('alert'),
+  ).toContainText('Нельзя сменить счёт');
   await expect(selector).toHaveValue('virtual-account');
   await expect(balance).toHaveText('1 000,00 ₽');
   await expect(journal.getByText('Покупка · IMOEXF')).toBeVisible();
@@ -276,7 +404,9 @@ test('keeps balance and journal on the confirmed account and reflows on mobile',
   await expect(journal.getByText('Заявок пока нет.')).toBeVisible();
 
   await page.setViewportSize({ width: 360, height: 800 });
-  const mobile = await Promise.all([robot, strategy, chart, journal].map(panel => panel.boundingBox()));
+  const mobile = await Promise.all(
+    [robot, strategy, chart, journal].map((panel) => panel.boundingBox()),
+  );
   for (let i = 1; i < mobile.length; i++) {
     expect(mobile[i]!.x).toBe(mobile[0]!.x);
     expect(mobile[i]!.y).toBeGreaterThan(mobile[i - 1]!.y + mobile[i - 1]!.height);
@@ -321,7 +451,9 @@ test('stop leaves the position intact and closing requires confirmation', async 
   await expect(manual.getByRole('heading', { name: 'Сигнал' })).toHaveCount(0);
 });
 
-test('charts REST history, replaces live candles, and restores the chart after a socket drops', async ({ page }) => {
+test('charts REST history, replaces live candles, and restores the chart after a socket drops', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, candle, nextCandle, sockets } = await mockMarket(page);
   await page.goto('/');
@@ -333,7 +465,9 @@ test('charts REST history, replaces live candles, and restores the chart after a
   await expect(latest).toContainText('Подтверждённая EMA102,0');
   await expect.poll(() => sockets.length).toBe(1);
   const publish = (socket: WebSocketRoute, last: ChartCandle) =>
-    socket.send(JSON.stringify({ stream: 'live', history: { ...selection, candles: [candle, last] } }));
+    socket.send(
+      JSON.stringify({ stream: 'live', history: { ...selection, candles: [candle, last] } }),
+    );
 
   publish(sockets[0], { ...nextCandle, close: 108, previewEma: 105.268 });
   await expect(latest).toContainText('Предварительная EMA');
@@ -367,7 +501,9 @@ test('charts REST history, replaces live candles, and restores the chart after a
   await expect(chart.getByText(/2 св\./)).toBeVisible();
 });
 
-test('the owner can save a display timezone and see it on the dashboard after reloading', async ({ page }) => {
+test('the owner can save a display timezone and see it on the dashboard after reloading', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   await mockMarket(page);
   await page.goto('/');
@@ -395,7 +531,7 @@ test('the mobile price axis and crosshair follow the same candle precision', asy
   await page.goto('/');
   const plot = page.getByRole('group', { name: 'График свечей' });
   const axis = plot.getByRole('row').first().getByRole('cell').nth(2).locator('canvas');
-  const axisWidth = () => axis.last().evaluate(canvas => canvas.getBoundingClientRect().width);
+  const axisWidth = () => axis.last().evaluate((canvas) => canvas.getBoundingClientRect().width);
   await expect(page.getByLabel('Последняя свеча')).toContainText('Закрытие104');
   await expect(axis.last()).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
@@ -412,7 +548,9 @@ test('the mobile price axis and crosshair follow the same candle precision', asy
     });
   }
   const publish = (close: number) =>
-    sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...selection, candle: { ...nextCandle, close } } }));
+    sockets[0].send(
+      JSON.stringify({ stream: 'live', tick: { ...selection, candle: { ...nextCandle, close } } }),
+    );
   const hoverPlot = (y: number) => chartCanvas(page).hover({ position: { x: 20, y } });
 
   const narrow = await axisWidth();
@@ -442,7 +580,12 @@ test('live ticks remain visible when initial REST history fails', async ({ page 
   const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   await expect(chart.getByText('Не удалось загрузить историю свечей.')).toBeVisible();
   await expect.poll(() => sockets.length).toBe(1);
-  sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...selection, candle: { ...nextCandle, close: 107 } } }));
+  sockets[0].send(
+    JSON.stringify({
+      stream: 'live',
+      tick: { ...selection, candle: { ...nextCandle, close: 107 } },
+    }),
+  );
   await expect(chart.getByRole('status')).toHaveText('Поток подключён');
   await expect(chart.getByLabel('Последняя свеча')).toContainText('107');
   await chart.getByRole('button', { name: 'Повторить' }).click();
@@ -451,7 +594,9 @@ test('live ticks remain visible when initial REST history fails', async ({ page 
   await expect(chart.getByLabel('Последняя свеча')).toContainText('107');
 });
 
-test('browser sockets reconnect and catch up over REST without losing newer live ticks', async ({ page }) => {
+test('browser sockets reconnect and catch up over REST without losing newer live ticks', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market and trading data.');
   const market = await mockMarket(page);
   await page.goto('/');
@@ -461,25 +606,41 @@ test('browser sockets reconnect and catch up over REST without losing newer live
   await expect(page.getByText('Робот запущен')).toBeVisible();
   await expect.poll(() => market.sockets.length).toBe(1);
   await expect.poll(() => market.tradingSockets.length).toBe(1);
-  market.sockets[0].send(JSON.stringify({ stream: 'live', history: { ...market.selection, candles: [market.candle] } }));
+  market.sockets[0].send(
+    JSON.stringify({ stream: 'live', history: { ...market.selection, candles: [market.candle] } }),
+  );
   await expect(chart.getByText('Поток подключён')).toBeVisible();
 
   const missed = { ...market.nextCandle, complete: true, close: 106, confirmedEma: 103 };
   const current = { ...market.nextCandle, time: missed.time + 3_600_000, close: 107 };
   let release!: () => void;
-  const restGate = new Promise<void>(resolve => { release = resolve; });
-  await page.route('**/api/market', async route => {
-    await restGate;
-    await route.fulfill({ json: { ...market.selection, candles: [market.candle, missed, current] } });
+  const restGate = new Promise<void>((resolve) => {
+    release = resolve;
   });
-  const catchUp = page.waitForRequest(request => new URL(request.url()).pathname === '/api/market');
-  await Promise.all([market.sockets[0].close({ code: 1011 }), market.tradingSockets[0].close({ code: 1011 })]);
+  await page.route('**/api/market', async (route) => {
+    await restGate;
+    await route.fulfill({
+      json: { ...market.selection, candles: [market.candle, missed, current] },
+    });
+  });
+  const catchUp = page.waitForRequest(
+    (request) => new URL(request.url()).pathname === '/api/market',
+  );
+  await Promise.all([
+    market.sockets[0].close({ code: 1011 }),
+    market.tradingSockets[0].close({ code: 1011 }),
+  ]);
   await expect(chart.getByText('Поток прерван')).toBeVisible();
   market.setOrders(filledOrder(market.candle));
   try {
     await expect.poll(() => market.sockets.length).toBe(2);
     await catchUp;
-    market.sockets[1].send(JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: { ...current, close: 112 } } }));
+    market.sockets[1].send(
+      JSON.stringify({
+        stream: 'live',
+        tick: { ...market.selection, candle: { ...current, close: 112 } },
+      }),
+    );
     await expect(chart.getByLabel('Последняя свеча')).toContainText('112');
   } finally {
     release();
@@ -498,18 +659,27 @@ test('REST on reconnect replaces a stale candle at the same timestamp', async ({
   await expect.poll(() => market.sockets.length).toBe(1);
   const chart = page.getByRole('region', { name: 'Свечи и EMA' });
   const last = chart.getByLabel('Последняя свеча');
-  market.sockets[0].send(JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: market.nextCandle } }));
+  market.sockets[0].send(
+    JSON.stringify({ stream: 'live', tick: { ...market.selection, candle: market.nextCandle } }),
+  );
   await expect(chart.getByText(/2 св\./)).toBeVisible();
   await expect(last).toContainText('Закрытие (текущее)104');
-  await page.route('**/api/market', route => route.fulfill({ json: {
-    ...market.selection, candles: [market.candle, { ...market.nextCandle, close: 109 }],
-  } }));
+  await page.route('**/api/market', (route) =>
+    route.fulfill({
+      json: {
+        ...market.selection,
+        candles: [market.candle, { ...market.nextCandle, close: 109 }],
+      },
+    }),
+  );
   await market.sockets[0].close({ code: 1011 });
   await expect(last).toContainText('Закрытие (текущее)109');
   await expect(chart.getByText(/2 св\./)).toBeVisible();
 });
 
-test('zooming and scrolling history keeps the selected time across live updates and backfill', async ({ page }) => {
+test('zooming and scrolling history keeps the selected time across live updates and backfill', async ({
+  page,
+}) => {
   test.skip(Boolean(process.env.SERFING_E2E_URL), 'Uses mocked market data.');
   const { selection, nextCandle, history, sockets } = await mockMarket(page, { historySize: 80 });
   await page.goto('/');
@@ -540,7 +710,8 @@ test('zooming and scrolling history keeps the selected time across live updates 
   const past = await timeAtCenter();
   expect(past).not.toBe(zoomed);
   await expect.poll(() => sockets.length).toBe(1);
-  const publish = (candles: ChartCandle[]) => sockets[0].send(JSON.stringify({ stream: 'live', history: { ...selection, candles } }));
+  const publish = (candles: ChartCandle[]) =>
+    sockets[0].send(JSON.stringify({ stream: 'live', history: { ...selection, candles } }));
 
   publish([...history, nextCandle]);
   await expect(chart.getByText(/81 св\./)).toBeVisible();
@@ -553,7 +724,8 @@ test('zooming and scrolling history keeps the selected time across live updates 
   await expect.poll(timeAtCenter).not.toBe(past);
 
   const priceAxis = plot.getByRole('row').first().getByRole('cell').nth(2).locator('canvas');
-  const axisPixels = () => priceAxis.first().evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+  const axisPixels = () =>
+    priceAxis.first().evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
   await priceAxis.last().scrollIntoViewIfNeeded();
   const axis = (await priceAxis.last().boundingBox())!;
   const axisBeforeScale = await axisPixels();

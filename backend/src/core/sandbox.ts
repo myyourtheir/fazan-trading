@@ -48,8 +48,12 @@ const errorStatus = {
 } as const;
 
 export class SandboxError extends Error {
-  constructor(readonly code: keyof typeof errorStatus) { super(code); }
-  get status() { return errorStatus[this.code]; }
+  constructor(readonly code: keyof typeof errorStatus) {
+    super(code);
+  }
+  get status() {
+    return errorStatus[this.code];
+  }
 }
 
 function brokerError(error: unknown) {
@@ -73,7 +77,12 @@ export class SandboxConnection {
       const accounts = await this.listAccounts(this.decrypt(saved));
       return { status: 'connected', accountId: saved.accountId, accounts, virtualFundingRubles };
     } catch (error) {
-      return { status: 'unavailable', accountId: saved.accountId, accounts: [], code: brokerError(error).code };
+      return {
+        status: 'unavailable',
+        accountId: saved.accountId,
+        accounts: [],
+        code: brokerError(error).code,
+      };
     }
   }
 
@@ -81,7 +90,7 @@ export class SandboxConnection {
     return this.change(async () => {
       const accounts = await this.listAccounts(token);
       const saved = await this.store.load();
-      const accountId = accounts.find(account => account.id === saved?.accountId)?.id ?? null;
+      const accountId = accounts.find((account) => account.id === saved?.accountId)?.id ?? null;
       if (pinnedAccountId !== undefined && accountId !== pinnedAccountId) {
         throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
       }
@@ -113,7 +122,9 @@ export class SandboxConnection {
         accountId = await this.broker.openAccount(token);
       } catch (error) {
         const failure = brokerError(error);
-        throw failure.code === 'SANDBOX_UNREACHABLE' ? new SandboxError('SANDBOX_CREATION_UNCERTAIN') : failure;
+        throw failure.code === 'SANDBOX_UNREACHABLE'
+          ? new SandboxError('SANDBOX_CREATION_UNCERTAIN')
+          : failure;
       }
       await this.store.save({ ...saved, accountId });
     });
@@ -126,7 +137,9 @@ export class SandboxConnection {
         await this.broker.fundAccount(token, accountId);
       } catch (error) {
         const failure = brokerError(error);
-        throw failure.code === 'SANDBOX_UNREACHABLE' ? new SandboxError('SANDBOX_FUNDING_UNCERTAIN') : failure;
+        throw failure.code === 'SANDBOX_UNREACHABLE'
+          ? new SandboxError('SANDBOX_FUNDING_UNCERTAIN')
+          : failure;
       }
     });
   }
@@ -142,15 +155,22 @@ export class SandboxConnection {
   }
 
   async searchFutures(query: string): Promise<FutureContract[]> {
-    const { saved: { encryptedToken }, token } = await this.credentials();
+    const {
+      saved: { encryptedToken },
+      token,
+    } = await this.credentials();
     const term = query.toLowerCase();
-    const matches = (await this.fetchTradableFutures(token))
-      .filter(({ ticker, name }) => ticker.toLowerCase().includes(term) || name.toLowerCase().includes(term));
+    const matches = (await this.fetchTradableFutures(token)).filter(
+      ({ ticker, name }) =>
+        ticker.toLowerCase().includes(term) || name.toLowerCase().includes(term),
+    );
 
     // An in-flight search can finish after the token is replaced.
     if ((await this.store.load())?.encryptedToken === encryptedToken) {
-      const offered = this.offeredFutures?.encryptedToken === encryptedToken
-        ? this.offeredFutures : { encryptedToken, contracts: new Map<string, FutureContract>() };
+      const offered =
+        this.offeredFutures?.encryptedToken === encryptedToken
+          ? this.offeredFutures
+          : { encryptedToken, contracts: new Map<string, FutureContract>() };
       for (const contract of matches) offered.contracts.set(contract.uid, contract);
       this.offeredFutures = offered;
     }
@@ -168,12 +188,17 @@ export class SandboxConnection {
     return { token, accountId: saved.accountId };
   }
 
-  changeStrategyForAccount(accountId: string, instrumentUid: string, action: (contract: FutureContract) => Promise<void>) {
+  changeStrategyForAccount(
+    accountId: string,
+    instrumentUid: string,
+    action: (contract: FutureContract) => Promise<void>,
+  ) {
     return this.change(async () => {
       const { saved } = await this.selectedAccountCredentials(accountId);
       await this.requireFlatAccount(saved);
       const offered = this.offeredFutures;
-      if (offered?.encryptedToken !== saved.encryptedToken) throw new SandboxError('FUTURE_SELECTION_EXPIRED');
+      if (offered?.encryptedToken !== saved.encryptedToken)
+        throw new SandboxError('FUTURE_SELECTION_EXPIRED');
       const contract = offered.contracts.get(instrumentUid);
       if (!contract) throw new SandboxError('FUTURE_UNAVAILABLE');
       await action(contract);
@@ -183,9 +208,16 @@ export class SandboxConnection {
   private async fetchTradableFutures(token: string): Promise<FutureContract[]> {
     try {
       const contracts = await this.broker.futures(token);
-      return contracts.filter(contract => contract.uid && contract.apiTradeAvailableFlag)
-        .map(({ uid, ticker, name, classCode, exchange, expirationDate }) =>
-          ({ uid, ticker, name, classCode, exchange, expirationDate }));
+      return contracts
+        .filter((contract) => contract.uid && contract.apiTradeAvailableFlag)
+        .map(({ uid, ticker, name, classCode, exchange, expirationDate }) => ({
+          uid,
+          ticker,
+          name,
+          classCode,
+          exchange,
+          expirationDate,
+        }));
     } catch (error) {
       throw brokerError(error);
     }
@@ -217,7 +249,8 @@ export class SandboxConnection {
 
   private async selectedAccountCredentials(accountId: string) {
     const credentials = await this.credentials();
-    if (credentials.saved.accountId !== accountId) throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
+    if (credentials.saved.accountId !== accountId)
+      throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     await this.requireAccount(credentials.token, accountId);
     return credentials;
   }
@@ -231,14 +264,16 @@ export class SandboxConnection {
   }
 
   private async requireAccount(token: string, accountId: string) {
-    if (!(await this.listAccounts(token)).some(account => account.id === accountId)) {
+    if (!(await this.listAccounts(token)).some((account) => account.id === accountId)) {
       throw new SandboxError('SANDBOX_ACCOUNT_UNAVAILABLE');
     }
   }
 
   private async requireFlatAccount(saved: SavedSandboxConnection) {
     if (!saved.accountId) return;
-    const flat = await this.broker.accountIsFlat(this.decrypt(saved), saved.accountId).catch(() => null);
+    const flat = await this.broker
+      .accountIsFlat(this.decrypt(saved), saved.accountId)
+      .catch(() => null);
     if (flat === null) throw new SandboxError('SANDBOX_ACCOUNT_FLAT_UNVERIFIED');
     if (!flat) throw new SandboxError('SANDBOX_ACCOUNT_NOT_FLAT');
   }

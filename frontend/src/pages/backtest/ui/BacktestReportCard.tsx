@@ -21,10 +21,26 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function BacktestReportCard({ report, stale, dark }: {
-  report: BacktestReport; stale: boolean; dark: boolean;
+export function BacktestReportCard({
+  report,
+  stale,
+  dark,
+}: {
+  report: BacktestReport;
+  stale: boolean;
+  dark: boolean;
 }) {
-  const { parameters, currency, result, executions, finalSignal, pointValue, priceStep, priceStepAmount, lot } = report;
+  const {
+    parameters,
+    currency,
+    result,
+    executions,
+    finalSignal,
+    pointValue,
+    priceStep,
+    priceStepAmount,
+    lot,
+  } = report;
   const timeZone = useDisplayTimeZone();
   const formatTime = useMemo(() => displayTimeFormatter(timeZone), [timeZone]);
   const currencyCode = currency.toUpperCase();
@@ -38,9 +54,13 @@ export function BacktestReportCard({ report, stale, dark }: {
           {stale && <Badge variant="secondary">Параметры изменены</Badge>}
         </CardTitle>
         <CardDescription>
-          {calendarDay(parameters.from)} — {calendarDay(parameters.to)} ({parameters.timeZone}) · {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
-          {' · '}{parameters.lots} лот.
-          {report.cutoff !== null && <> Последний день ещё не закончился: прогон до {formatTime(report.cutoff)}.</>}
+          {calendarDay(parameters.from)} — {calendarDay(parameters.to)} ({parameters.timeZone}) ·{' '}
+          {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
+          {' · '}
+          {parameters.lots} лот.
+          {report.cutoff !== null && (
+            <> Последний день ещё не закончился: прогон до {formatTime(report.cutoff)}.</>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -53,30 +73,39 @@ export function BacktestReportCard({ report, stale, dark }: {
           <Stat label="Исполнений" value={String(executions.length)} />
         </dl>
         <p className="text-sm text-muted-foreground">
-          EMA рассчитана по закрытиям свечей с прогревом до начала диапазона. Сигнал определяется по завершённой свече, исполнение
-          {' '}моделируется по цене открытия следующей свечи внутри периода.
+          EMA рассчитана по закрытиям свечей с прогревом до начала диапазона. Сигнал определяется по
+          завершённой свече, исполнение моделируется по цене открытия следующей свечи внутри
+          периода.
         </p>
         <p className="text-sm text-muted-foreground">
           {noCosts
             ? 'Комиссия и проскальзывание не учитываются.'
-            : `Комиссия ${preciseFormat.format(parameters.commission)}%, проскальзывание ${percentFormat.format(parameters.slippage)}%`
-              + ' от цены исполнения против владельца.'}{' '}
-          Деньги пересчитаны из пунктов цены: шаг {preciseFormat.format(priceStep)}{' '}
-          стоит {moneyFormat.format(priceStepAmount)} {currencyCode}, поэтому коэффициент{' '}
-          {moneyFormat.format(pointValue)} {currencyCode} за пункт на лот (лот — {lot} контракт).
-          {' '}Используются параметры контракта на момент прогона.
+            : `Комиссия ${preciseFormat.format(parameters.commission)}%, проскальзывание ${percentFormat.format(parameters.slippage)}%` +
+              ' от цены исполнения против владельца.'}{' '}
+          Деньги пересчитаны из пунктов цены: шаг {preciseFormat.format(priceStep)} стоит{' '}
+          {moneyFormat.format(priceStepAmount)} {currencyCode}, поэтому коэффициент{' '}
+          {moneyFormat.format(pointValue)} {currencyCode} за пункт на лот (лот — {lot} контракт).{' '}
+          Используются параметры контракта на момент прогона.
         </p>
         {finalSignal && (
           <p className="text-sm text-muted-foreground">
-            Последний сигнал без следующей свечи — {finalSignal.direction === 'buy' ? 'покупка' : 'продажа'}{' '}
-            на {formatTime(finalSignal.candleTime)} — не исполнен и не меняет позицию.
+            Последний сигнал без следующей свечи —{' '}
+            {finalSignal.direction === 'buy' ? 'покупка' : 'продажа'} на{' '}
+            {formatTime(finalSignal.candleTime)} — не исполнен и не меняет позицию.
           </p>
         )}
         <Suspense fallback={<p role="status">Загружаем график…</p>}>
-          <HistoryChart candles={report.candles} executions={executions} dark={dark} timeZone={timeZone} />
+          <HistoryChart
+            candles={report.candles}
+            executions={executions}
+            dark={dark}
+            timeZone={timeZone}
+          />
         </Suspense>
         {executions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Пересечений за период не было — исполнений нет.</p>
+          <p className="text-sm text-muted-foreground">
+            Пересечений за период не было — исполнений нет.
+          </p>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -92,7 +121,9 @@ export function BacktestReportCard({ report, stale, dark }: {
               {executions.map((execution, index) => (
                 <tr key={index} className="border-t">
                   <td className="py-1 pr-4">{formatTime(execution.time)}</td>
-                  <td className="py-1 pr-4">{execution.direction === 'buy' ? 'Покупка' : 'Продажа'}</td>
+                  <td className="py-1 pr-4">
+                    {execution.direction === 'buy' ? 'Покупка' : 'Продажа'}
+                  </td>
                   <td className="py-1 pr-4 text-right">{execution.lots}</td>
                   <td className="py-1 pr-4 text-right">{preciseFormat.format(execution.price)}</td>
                   <td className="py-1 text-right">{preciseFormat.format(execution.commission)}</td>

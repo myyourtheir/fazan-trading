@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { hasStatus } from "@/shared/api";
+import { useEffect, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
+import { hasStatus } from '@/shared/api';
 import {
   Alert,
   AlertTitle,
@@ -11,7 +11,7 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
-} from "@/shared/ui";
+} from '@/shared/ui';
 import {
   FuturesSearchForm,
   strategyApi,
@@ -19,8 +19,8 @@ import {
   timeframes,
   type BacktestDraft,
   type StrategyConfig,
-} from "@/entities/strategy";
-import { sandboxErrorMessage } from "@/entities/sandbox";
+} from '@/entities/strategy';
+import { sandboxErrorMessage } from '@/entities/sandbox';
 
 const maxInt = 2_147_483_647;
 
@@ -36,8 +36,7 @@ export function StrategyForm({
   disabled,
   refreshSession,
 }: StrategyAccountProps & { config: StrategyConfig }) {
-  const initialTicker =
-    config.settings?.instrument.ticker ?? config.defaults.ticker;
+  const initialTicker = config.settings?.instrument.ticker ?? config.defaults.ticker;
   const [query, setQuery] = useState(initialTicker);
   const [contractUid, setContractUid] = useState(config.settings?.instrument.uid);
   const [timeframe, setTimeframe] = useState(
@@ -46,40 +45,31 @@ export function StrategyForm({
   const [emaPeriod, setEmaPeriod] = useState(
     String(config.settings?.emaPeriod ?? config.defaults.emaPeriod),
   );
-  const [lots, setLots] = useState(
-    config.settings ? String(config.settings.lots) : "",
-  );
+  const [lots, setLots] = useState(config.settings ? String(config.settings.lots) : '');
   const futures = strategyApi.useSearchFuturesQuery(query, {
     skip: !accountId || !query,
   });
-  const [save, { isLoading, isSuccess, error, reset }] =
-    strategyApi.useSaveStrategyMutation();
+  const [save, { isLoading, isSuccess, error, reset }] = strategyApi.useSaveStrategyMutation();
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (hasStatus(futures.error, 401) || hasStatus(error, 401))
-      refreshSession();
+    if (hasStatus(futures.error, 401) || hasStatus(error, 401)) refreshSession();
   }, [futures.error, error, refreshSession]);
 
   const canEdit = Boolean(accountId) && !disabled && !isLoading;
   const results = futures.currentData ?? [];
   const selectedMatch = results.find((result) => result.uid === contractUid);
   const canSave =
-    canEdit &&
-    !futures.isFetching &&
-    !futures.isError &&
-    selectedMatch &&
-    emaPeriod &&
-    lots;
+    canEdit && !futures.isFetching && !futures.isError && selectedMatch && emaPeriod && lots;
 
   // The backtest hand-off carries a snapshot of the current draft, including unsaved edits, and does
   // not inherit the save restrictions tied to the robot or account state.
   const openBacktest = () => {
     void navigate({
-      to: "/backtest",
+      to: '/backtest',
       state: {
         backtestDraft: {
-          instrumentUid: selectedMatch?.uid ?? "",
+          instrumentUid: selectedMatch?.uid ?? '',
           ticker: selectedMatch?.ticker ?? initialTicker,
           timeframe,
           emaPeriod,
@@ -115,13 +105,11 @@ export function StrategyForm({
           <AlertTitle>{sandboxErrorMessage(futures.error)}</AlertTitle>
         </Alert>
       )}
-      {accountId &&
-        !futures.isFetching &&
-        futures.currentData?.length === 0 && (
-          <p role="status" className="text-sm text-muted-foreground">
-            Подходящих фьючерсов нет.
-          </p>
-        )}
+      {accountId && !futures.isFetching && futures.currentData?.length === 0 && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Подходящих фьючерсов нет.
+        </p>
+      )}
       <form
         className="grid justify-items-start gap-4"
         onSubmit={(event) => {
@@ -142,13 +130,8 @@ export function StrategyForm({
             <NativeSelect
               id="strategy-contract"
               className="w-full"
-              value={selectedMatch?.uid ?? ""}
-              disabled={
-                !canEdit ||
-                futures.isFetching ||
-                !results.length ||
-                futures.isError
-              }
+              value={selectedMatch?.uid ?? ''}
+              disabled={!canEdit || futures.isFetching || !results.length || futures.isError}
               onChange={(event) => {
                 setContractUid(event.target.value);
                 reset();
@@ -179,7 +162,9 @@ export function StrategyForm({
                 }}
               >
                 {timeframes.map((value) => (
-                  <NativeSelectOption key={value} value={value}>{timeframeLabels[value]}</NativeSelectOption>
+                  <NativeSelectOption key={value} value={value}>
+                    {timeframeLabels[value]}
+                  </NativeSelectOption>
                 ))}
               </NativeSelect>
             </Field>
@@ -220,7 +205,7 @@ export function StrategyForm({
           </div>
         </FieldGroup>
         <Button type="submit" disabled={!canSave}>
-          {isLoading ? "Сохраняем…" : "Сохранить настройки"}
+          {isLoading ? 'Сохраняем…' : 'Сохранить настройки'}
         </Button>
         <Button type="button" variant="outline" onClick={openBacktest}>
           Бэктест
