@@ -34,6 +34,19 @@ test('reports a wrapped PostgreSQL cause without exposing query data or credenti
   );
 });
 
+test('reports duplicate relations during migrations without exposing error details', () => {
+  const error = new Error('CREATE TABLE strategy_profiles (secret text)', {
+    cause: Object.assign(new Error('relation "strategy_profiles" already exists'), {
+      code: '42P07',
+      detail: 'password=secret',
+    }),
+  });
+  assert.equal(
+    startupErrorMessage(error, 'database migrations'),
+    'Backend startup failed during database migrations: PostgreSQL relation already exists (42P07).',
+  );
+});
+
 test('unknown errors and cyclic causes are not logged verbatim', () => {
   const error: { code: string; cause?: unknown } = { code: 'secret-token' };
   error.cause = error;

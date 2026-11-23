@@ -2,6 +2,7 @@
 // ORM wrappers can include credentials and application data in any of them.
 const diagnostics: Record<string, string> = {
   '42P01': 'PostgreSQL relation does not exist',
+  '42P07': 'PostgreSQL relation already exists',
   '42703': 'PostgreSQL column does not exist',
   '42501': 'PostgreSQL permission denied',
   '3D000': 'PostgreSQL database does not exist',
