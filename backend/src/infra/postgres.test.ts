@@ -134,7 +134,62 @@ test(
         children: [],
       });
       assert.ok(proof.ok && proof.value.closeProof);
-      const linked = await active.reserveProtectedClose(proof.value.closeProof, exit, position);
+      const trailingPlan = { id: randomUUID(), stop: 91 };
+      const trailing = await active.replaceProtection(
+        proof.value.closeProof,
+        trailingPlan,
+        position,
+      );
+      assert.ok(trailing.ok);
+      assert.equal((await observer.loadProtection())?.id, trailingPlan.id);
+      assert.equal(
+        (await observer.reserveProtectedClose(proof.value.closeProof, exit, position)).ok,
+        false,
+        'the old stop proof cannot also authorize an exit',
+      );
+      const increaseMarker = await active.beginEvidence(
+        { ...scope, stopId: trailingPlan.id, version: trailing.value.version },
+        'close',
+        randomUUID(),
+      );
+      assert.ok(increaseMarker.ok);
+      const increaseProof = await active.finishEvidence({
+        ...increaseMarker.value,
+        parent: { status: 'never-triggered' },
+        children: [],
+      });
+      assert.ok(increaseProof.ok && increaseProof.value.closeProof);
+      const increase = { ...entry, id: randomUUID(), fromPosition: 2, targetPosition: 4 };
+      const fallback = { ...trailingPlan, id: randomUUID() };
+      const reservedIncrease = await active.reserveProtectedEntry(
+        increase,
+        { id: randomUUID(), stop: 92 },
+        'increase',
+        { proof: increaseProof.value.closeProof, fallback },
+      );
+      assert.ok(reservedIncrease.ok);
+      assert.equal((await observer.unresolved())?.id, increase.id);
+      const skipped = await active.settleProtectedEntry(reservedIncrease.value.ref, {
+        kind: 'not-sent',
+        origin: 'increase',
+        status: 'stale-signal-before-send',
+      });
+      assert.ok(skipped.ok && skipped.value.protection);
+      assert.equal((await observer.loadProtection())?.id, fallback.id);
+      assert.equal((await observer.loadProtection())?.lots, position.position);
+      const exitMarker = await active.beginEvidence(
+        { ...scope, stopId: fallback.id, version: skipped.value.protection.version },
+        'close',
+        randomUUID(),
+      );
+      assert.ok(exitMarker.ok);
+      const exitProof = await active.finishEvidence({
+        ...exitMarker.value,
+        parent: { status: 'never-triggered' },
+        children: [],
+      });
+      assert.ok(exitProof.ok && exitProof.value.closeProof);
+      const linked = await active.reserveProtectedClose(exitProof.value.closeProof, exit, position);
       assert.ok(linked.ok);
       const send = await active.beginProtectedCloseSubmit(linked.value.reservationOwner);
       assert.ok(send.ok);
@@ -177,7 +232,7 @@ test(
       try {
         await assert.rejects(settle());
         assert.deepEqual(await observer.loadProtectedClose(exit.id), original);
-        assert.equal((await observer.loadProtection())?.id, stopId);
+        assert.equal((await observer.loadProtection())?.id, fallback.id);
       } finally {
         await second.db.$client.query(
           'ALTER TABLE protection_ledger DROP CONSTRAINT test_reject_clear',
@@ -189,7 +244,7 @@ test(
       assert.equal(await observer.unresolved(), null);
       assert.deepEqual(
         new Set((await observer.history(scope.accountId)).map((order) => order.id)),
-        new Set([entry.id, exit.id]),
+        new Set([entry.id, increase.id, exit.id]),
       );
       assert.equal(await legacyB.reserve(exit), false, 'a linked request ID remains occupied');
     } finally {

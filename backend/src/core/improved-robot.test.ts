@@ -503,6 +503,55 @@ for (const when of ['within the candle', 'after the next close', 'after reconnec
   });
 }
 
+test('reconnect checks the live stop before accepting signals and never replays its baseline', async () => {
+  const h = setup({ nativeProtection: true, submitProtection: 'throw' });
+  await enterLong(h);
+  const before = h.robot.status().protection!;
+  assert.equal(before.state, 'unconfirmed');
+  h.emit({ stream: 'disconnected' });
+  const missed = candle(start + 2 * hour, 99);
+  h.emit(
+    {
+      stream: 'live',
+      history: history([candle(start + hour, 101), missed]),
+      recoveredAt: missed.time + hour,
+      freshCandleTime: missed.time,
+    },
+    missed.time + hour,
+  );
+  await setImmediate();
+  assert.equal(h.robot.status().mode, 'running');
+  assert.equal(h.events.at(-1), 'lookup-stop:' + before.id);
+  assert.equal(h.orders.length, 1);
+  await complete(h, missed);
+  assert.equal(h.orders.length, 1);
+  await complete(h, candle(start + 3 * hour, 101));
+  await complete(h, candle(start + 4 * hour, 99));
+  assert.deepEqual(
+    h.orders.map((order) => order.targetPosition),
+    [8, 0, -9],
+  );
+});
+
+test('weekend opt-out still permits a protective gap exit', async () => {
+  const h = setup({ nativeProtection: true, submitProtection: 'confirmed' });
+  await enterLong(h);
+  const saturday = candle(Date.UTC(2026, 10, 21), 99);
+  h.emit(
+    {
+      stream: 'live',
+      history: history([{ ...saturday, complete: false }]),
+      openedCandleTime: saturday.time,
+    },
+    saturday.time,
+  );
+  await setImmediate();
+  assert.deepEqual(
+    h.orders.map((order) => order.targetPosition),
+    [8, 0],
+  );
+});
+
 async function enterLong(h: ReturnType<typeof setup>) {
   await h.robot.start();
   h.emit({ stream: 'live', history: history([candle(start, 99)]) }, start);
