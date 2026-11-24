@@ -560,6 +560,17 @@ export class ProtectionLedger implements ProtectionTransactions, TradingStore<Re
           )
             p.evidenceConflict = true;
           for (const id of supplied) if (usableChildId(id)) ids.add(id);
+          // This evidence was read after the previous active observation. A
+          // trigger during cancellation supersedes that earlier snapshot.
+          const first = evidence.parent.childIds[0];
+          if (!p.evidenceConflict && p.observation?.status === 'active' && first) {
+            const child = evidence.children.find(({ childId }) => childId === first);
+            p.observation = {
+              status: 'triggered',
+              childId: first,
+              childStatus: child?.terminal ? 'terminal' : 'unknown',
+            };
+          }
         }
         for (const child of evidence.children) {
           if (!usableChildId(child.childId)) {
@@ -885,6 +896,27 @@ export class ProtectionLedger implements ProtectionTransactions, TradingStore<Re
           order.status = status;
           s.protection = null;
           s.settledOrders[order.id] = true;
+        } else if (
+          status === 'reconciled' &&
+          brokerStatus === 'cancelled' &&
+          brokerOrderId &&
+          executedLots !== null &&
+          executedLots > 0 &&
+          executedLots < order.lots &&
+          executionLots === executedLots &&
+          position ===
+            order.fromPosition + (order.direction === 'buy' ? executedLots : -executedLots) &&
+          account &&
+          this.accountMatches(order, account) &&
+          !account.activeOrders &&
+          account.position === position &&
+          settlement.remainderStop?.id &&
+          settlement.remainderStop.id !== s.protection?.id &&
+          settlement.remainderStop.stop === s.protection?.stop
+        ) {
+          order.status = status;
+          s.settledOrders[order.id] = true;
+          this.installEntryStop(s, order, settlement.remainderStop, position);
         } else if (
           settlement.result.status === 'reconciled' &&
           (brokerStatus === 'rejected' || brokerStatus === 'cancelled') &&

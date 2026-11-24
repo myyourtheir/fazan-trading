@@ -48,6 +48,8 @@ export type CloseSettlement = {
   result: OrderResult & { status: 'confirmed' | 'reconciled' | 'unconfirmed' };
   /** Required, with a matching flat account and no active orders, to clear protection. */
   account?: AccountEvidence;
+  /** A terminal partial close may hand its verified remainder to a fresh stop. */
+  remainderStop?: StopPlan;
 };
 export type Write<T> =
   | { ok: true; value: T }

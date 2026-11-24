@@ -224,6 +224,7 @@ type Run<C extends TradingConfig, H> = {
   reconnect?: { history: H; cutoff: number; generation: number };
   reconnectGeneration?: number;
   improvedPosition?: ImprovedPosition;
+  stopRecoveryAttempted?: boolean;
   deferredClose?: {
     id: string;
     reverse?: { signal: LiveSignal; revision: number; hours: { start: number; end: number } };
@@ -800,6 +801,7 @@ export class Robot<
     };
     this.publish();
     const parent = await port.closeEvidence(config, protection).catch(() => {
+      if (verifyUnchanged) return { status: 'unknown' } as const;
       throw blocked();
     });
     const ids = parent.status === 'triggered' ? [...new Set(parent.childIds.filter(Boolean))] : [];
@@ -810,7 +812,8 @@ export class Robot<
         try {
           children.push({ ...(await port.childEvidence(config, protection, id)), childId: id });
         } catch {
-          throw blocked();
+          if (!verifyUnchanged) throw blocked();
+          children.push({ childId: id, terminal: false, executedLots: null });
         }
       }
     }
@@ -819,6 +822,7 @@ export class Robot<
       protection.state !== 'not-sent' &&
       protection.state !== 'rejected'
         ? await port.lookup(config, protection).catch(() => {
+            if (verifyUnchanged) return { status: 'unknown' } as const;
             throw blocked();
           })
         : undefined;
@@ -843,7 +847,7 @@ export class Robot<
       position: fromPosition,
       activeOrders: false,
     };
-    return { closeProof, account, fromPosition, executed, current };
+    return { closeProof, account, fromPosition, current };
   }
 
   private async closeProtected(
@@ -870,7 +874,7 @@ export class Robot<
       closeProof,
       account,
       fromPosition,
-      executed,
+      current,
     }: Awaited<ReturnType<Robot<C, HistoryEntry, H>['proveStopInactive']>>,
     canDispatch: () => boolean,
     context?: OrderContext,
@@ -878,6 +882,7 @@ export class Robot<
   ) {
     const store = this.store.protection!;
     const blocked = () => new RobotError('ROBOT_PROTECTION_UNRESOLVED');
+    const native = current.closeObservation?.status === 'triggered';
     if (!canDispatch()) throw blocked();
     if (fromPosition === 0) {
       if (!(await store.clearChildFlat(closeProof, account)).ok) throw blocked();
@@ -947,9 +952,9 @@ export class Robot<
     if (posted) this.setCloseRecovery(order, posted);
     if (!(await this.observeLinkedClose(config, order, posted, false))) {
       if (!context) throw new RobotError('ROBOT_ORDER_UNRESOLVED');
-      return { kind: 'pending', id: order.id, native: executed !== 0 } as const;
+      return { kind: 'pending', id: order.id } as const;
     }
-    return { kind: executed === 0 ? 'market' : 'native' } as const;
+    return { kind: native ? 'native' : 'market' } as const;
   }
 
   private setCloseRecovery(order: LinkedOrder, state: BrokerOrder = order) {
@@ -987,7 +992,11 @@ export class Robot<
     if (order.submitState !== 'claimed') throw new RobotError('ROBOT_ORDER_UNRESOLVED');
     const config = await this.loadRecoveryAccount(order);
     if (!sameSelection(config, order)) throw new RobotError('ROBOT_SELECTION_CHANGED');
-    await this.observeLinkedClose(config, order, null, true);
+    if (await this.observeLinkedClose(config, order, null, true)) {
+      const protection = this.protection;
+      if (protection?.entryOrderId === order.id && protection.state === 'not-sent')
+        await this.restoreVerifiedStop(config, protection);
+    }
   }
 
   private async observeLinkedClose(
@@ -1040,7 +1049,13 @@ export class Robot<
       state.executedLots === 0 &&
       (state.brokerStatus === 'rejected' || state.brokerStatus === 'cancelled');
     const accepted = reconciling || posted?.brokerStatus === 'filled';
-    const settled = accepted && (full || (reconciling && zero));
+    const partial =
+      verified &&
+      state.brokerStatus === 'cancelled' &&
+      state.executedLots! > 0 &&
+      state.executedLots! < order.lots &&
+      !!this.protection;
+    const settled = accepted && (full || (reconciling && (zero || partial)));
     const evidence = state ?? posted ?? previous;
     const contradictory =
       minimum > (evidence.executedLots ?? 0) ||
@@ -1066,6 +1081,10 @@ export class Robot<
           status: settled ? (reconciling ? 'reconciled' : 'confirmed') : 'unconfirmed',
           position: this.position,
         },
+        ...(reconciling &&
+          partial && {
+            remainderStop: { id: randomUUID(), stop: this.protection!.stop },
+          }),
         ...(account && {
           account: { ...account, accountId: config.accountId, instrumentUid: config.instrumentUid },
         }),
@@ -1301,6 +1320,7 @@ export class Robot<
       fresh,
       session.since,
       run.lastAttemptedCandleOpenMs,
+      this.now(),
     );
     const revision = session.revision ?? 0;
     if (crossing || this.protection) {
@@ -1319,9 +1339,7 @@ export class Robot<
     session: LiveSession<H>,
     opened: MarketHistory['candles'][number],
   ) {
-    const previous = [...(session.indicators?.candles.values() ?? [])]
-      .filter((candle) => candle.time < opened.time)
-      .sort((a, b) => b.time - a.time)[0];
+    const previous = this.previousCompleted(session, opened.time);
     const side = this.protection?.direction === 'sell' ? 1 : -1;
     const live = () => this.run === run && run.session === session;
     const protection = await this.checkLiveProtection(run, live, opened.time);
@@ -1354,6 +1372,25 @@ export class Robot<
       },
     });
     run.blockedThrough = opened.time;
+  }
+
+  private previousCompleted(session: LiveSession<H>, time: number) {
+    let previous: MarketHistory['candles'][number] | undefined;
+    for (const candle of session.indicators?.candles.values() ?? [])
+      if (candle.time < time && (!previous || candle.time > previous.time)) previous = candle;
+    return previous;
+  }
+
+  private priorityOpening(session: LiveSession<H>, protection: StoredProtection) {
+    const opened = session.queuedOpen;
+    if (!opened) return false;
+    const side = protection.direction === 'sell' ? 1 : -1;
+    const ema = this.previousCompleted(session, opened.time)?.confirmedEma;
+    return (
+      side * (opened.open - protection.stop) <= 0 ||
+      ema == null ||
+      gapAgainstPosition(side, opened.open, ema)
+    );
   }
 
   private async tradeImprovedClose(
@@ -1407,7 +1444,7 @@ export class Robot<
           await this.replaceLiveStop(run, refreshed, protection.stop);
         return;
       }
-      run.improvedPosition = undefined;
+      if (!this.protection && this.position === 0) run.improvedPosition = undefined;
       if (outcome.kind === 'pending' && live()) {
         run.deferredClose = {
           id: outcome.id,
@@ -1435,7 +1472,7 @@ export class Robot<
         cancel,
       });
       if (outcome.kind === 'pending' && live()) run.deferredClose = { id: outcome.id };
-      run.improvedPosition = undefined;
+      if (!this.protection && this.position === 0) run.improvedPosition = undefined;
       return outcome;
     } catch (error) {
       await this.refreshCloseRecovery().catch(() => {});
@@ -1462,8 +1499,14 @@ export class Robot<
     this.publish();
     if (this.recovery) return;
     run.deferredClose = undefined;
-    if (this.protection || this.position !== 0) throw new RobotError('ROBOT_PROTECTION_UNRESOLVED');
-    run.improvedPosition = undefined;
+    if (this.protection) {
+      const time = session.latestCompleted ?? deferred.reverse?.signal.candleTime ?? this.now();
+      run.blockedThrough = Math.max(run.blockedThrough ?? -Infinity, time);
+      await this.checkLiveProtection(run, () => this.run === run && run.session === session, time);
+      return;
+    }
+    if (this.position !== 0) throw new RobotError('ROBOT_POSITION_UNVERIFIED');
+    if (!this.protection && this.position === 0) run.improvedPosition = undefined;
     if (deferred.reverse && eligible(deferred.reverse))
       await this.trade(run, session, deferred.reverse.signal, deferred.reverse.revision);
   }
@@ -1485,6 +1528,7 @@ export class Robot<
         (protection.direction === 'sell' ? 1 : -1) * protection.lots,
       );
       if (error) throw new RobotError(error);
+      run.stopRecoveryAttempted = false;
       return live() ? protection : undefined;
     }
     if (
@@ -1495,19 +1539,25 @@ export class Robot<
     )
       return;
     run.blockedThrough = Math.max(run.blockedThrough ?? -Infinity, time);
-    await this.closeLiveProtection(
-      run,
-      protection,
-      live,
-      {
-        type: 'signal',
-        candleTime: time,
-        signalTime: this.now(),
-        strategy: { kind: 'improved-surfing', reason: 'protection-recovery' },
-      },
-      false,
-    );
+    const evidence = await this.proveStopInactive(run.config, protection, live, false, true);
+    if (
+      live() &&
+      !run.stopRecoveryAttempted &&
+      evidence.current.closeObservation?.status === 'never-triggered'
+    ) {
+      run.stopRecoveryAttempted = true;
+      await this.replaceLiveStop(run, evidence, protection.stop);
+      return live() && this.protection?.state === 'confirmed' ? this.protection : undefined;
+    }
+    const outcome = await this.closeAfterProof(run.config, evidence, live, {
+      type: 'signal',
+      candleTime: time,
+      signalTime: this.now(),
+      strategy: { kind: 'improved-surfing', reason: 'protection-recovery' },
+    });
+    if (outcome.kind === 'pending' && live()) run.deferredClose = { id: outcome.id };
     run.improvedPosition = undefined;
+    this.publish();
   }
 
   private async adjustPosition(
@@ -1543,6 +1593,8 @@ export class Robot<
     let add: OrderIntent | undefined;
     if (
       improved.protection.canIncrease &&
+      candle.confirmedEma !== null &&
+      Number.isFinite(candle.confirmedEma) &&
       Math.abs(target) <= 2_147_483_647 &&
       addOnDue(position, candle.close, improved.parameters)
     ) {
@@ -1564,7 +1616,7 @@ export class Robot<
         if (await improved.protection.canIncrease(run.config, intent)) add = intent;
       }
     }
-    if (!current()) return;
+    if (!current() || this.priorityOpening(session, protection)) return;
     if (!add && stop === protection.stop) {
       run.improvedPosition = { ...trailed, stop };
       return;
@@ -1589,8 +1641,9 @@ export class Robot<
       run.improvedPosition = undefined;
       return;
     }
-    const plan = { id: randomUUID(), stop: current() ? stop : protection.stop };
-    if (add && current()) {
+    const actionable = () => current() && !this.priorityOpening(session, protection);
+    const plan = { id: randomUUID(), stop: actionable() ? stop : protection.stop };
+    if (add && actionable()) {
       const signal: LiveSignal = {
         candleTime: time,
         signalTime: context.signalTime,
@@ -1601,6 +1654,7 @@ export class Robot<
         proof: evidence.closeProof,
         plan,
         fallback: { id: randomUUID(), stop: protection.stop },
+        previousProtection: protection,
         nextPosition: { ...trailed, stop: plan.stop, addOns: position.addOns + 1 },
       });
       return;
@@ -1686,12 +1740,6 @@ export class Robot<
     revision: number,
   ) {
     const stillLive = () => this.run === run && run.session === session;
-    const stale = (now = this.now()) =>
-      !!this.improved &&
-      ((session.revision ?? 0) !== revision ||
-        session.indicators?.invalid ||
-        (session.latestCompleted ?? -Infinity) > signal.candleTime ||
-        signal.candleTime + 2 * timeframeMs[run.config.timeframe] <= now);
     const fromPosition = await this.readPosition(run.config, !run.hasConfirmedEntry).catch(
       (error) => {
         if (stillLive()) throw error;
@@ -1739,9 +1787,9 @@ export class Robot<
       fromPosition,
       ...delta,
     };
-    if (stale()) return;
-    if (this.isImproved()) {
-      await this.tradeGuarded(run, session, signal, intent, revision);
+    if (this.improved) {
+      if (this.signalCurrent(run, session, signal.candleTime, revision, this.now()))
+        await this.tradeGuarded(run, session, signal, intent, revision);
       return;
     }
     if (!(await this.store.reserve(intent))) {
@@ -1749,25 +1797,6 @@ export class Robot<
       return;
     }
     this.publish();
-    let eligible: { start: number; end: number } | null = null;
-    if (this.improved && stillLive()) {
-      try {
-        eligible = await this.improved.session(run.config, signal.signalTime);
-      } catch (error) {
-        const live = stillLive();
-        await this.recordNotSent(
-          intent,
-          live
-            ? 'session-check-failed-before-send'
-            : run.stopped
-              ? 'stopped-before-send'
-              : 'feed-lost-before-send',
-        );
-        this.publish();
-        if (live && stillLive()) throw error;
-        return;
-      }
-    }
     const accountCheckError = stillLive()
       ? await this.recheckPosition(run.config, fromPosition)
       : undefined;
@@ -1781,25 +1810,10 @@ export class Robot<
       this.publish();
       return;
     }
-    const finalNow = this.improved ? this.now() : 0;
-    if (this.improved && stale(finalNow)) {
-      await this.recordNotSent(intent, 'stale-signal-before-send');
-      this.publish();
-      return;
-    }
-    if (this.improved && !this.eligibleSession(eligible, signal.signalTime, finalNow)) {
-      await this.recordNotSent(intent, 'session-ended-before-send');
-      this.publish();
-      return;
-    }
     if (await this.submitAndRecord(run.config, intent)) {
       run.hasConfirmedEntry = true;
     }
     this.publish();
-  }
-
-  private isImproved() {
-    return !!this.improved;
   }
 
   private eligibleSession(
@@ -1830,6 +1844,7 @@ export class Robot<
     freshTime: number,
     since: number,
     lastAttempted: number,
+    now: number,
   ): LiveSignal | undefined {
     if (
       !this.improved ||
@@ -1837,8 +1852,8 @@ export class Robot<
       freshTime <= lastAttempted ||
       freshTime + timeframeMs[history.timeframe] <= since ||
       !Number.isFinite(freshTime) ||
-      freshTime + timeframeMs[history.timeframe] > this.now() ||
-      freshTime + 2 * timeframeMs[history.timeframe] <= this.now()
+      freshTime + timeframeMs[history.timeframe] > now ||
+      freshTime + 2 * timeframeMs[history.timeframe] <= now
     )
       return;
     const completed = this.improvedCompletion(session, freshTime);
@@ -1975,6 +1990,7 @@ export class Robot<
       proof: CloseProofRef;
       plan: StopPlan;
       fallback: StopPlan;
+      previousProtection: StoredProtection;
       nextPosition: ImprovedPosition;
     },
   ) {
@@ -2013,6 +2029,19 @@ export class Robot<
       else await restoreAfterSkip(result.value.protection);
     };
     let eligible: { start: number; end: number } | null;
+    const invalid = (accountProblem: boolean): EntryBeforeSendStatus | null => {
+      if (this.mode === 'stopped') return 'stopped-before-send';
+      if (this.run !== run || run.session !== session) return 'feed-lost-before-send';
+      if (accountProblem) return 'account-check-failed-before-send';
+      if (increase && this.priorityOpening(session, increase.previousProtection))
+        return 'stale-signal-before-send';
+      const now = this.now();
+      if (!this.signalCurrent(run, session, signal.candleTime, revision, now))
+        return 'stale-signal-before-send';
+      if (!this.eligibleSession(eligible, signal.signalTime, now))
+        return 'session-ended-before-send';
+      return null;
+    };
     try {
       eligible = await this.improved!.session(run.config, signal.signalTime);
     } catch (error) {
@@ -2026,28 +2055,9 @@ export class Robot<
       throw error;
     }
     const accountError = await this.recheckPosition(run.config, intent.fromPosition);
-    const now = this.now();
-    if (
-      this.run !== run ||
-      run.session !== session ||
-      accountError ||
-      (session.revision ?? 0) !== revision ||
-      session.indicators?.invalid ||
-      (session.latestCompleted ?? -Infinity) > signal.candleTime ||
-      signal.candleTime + 2 * timeframeMs[run.config.timeframe] <= now ||
-      !this.eligibleSession(eligible, signal.signalTime, now)
-    ) {
-      await release(
-        this.mode === 'stopped'
-          ? 'stopped-before-send'
-          : this.run !== run || run.session !== session
-            ? 'feed-lost-before-send'
-            : accountError
-              ? 'account-check-failed-before-send'
-              : !this.eligibleSession(eligible, signal.signalTime, now)
-                ? 'session-ended-before-send'
-                : 'stale-signal-before-send',
-      );
+    const beforeClaim = invalid(!!accountError);
+    if (beforeClaim) {
+      await release(beforeClaim);
       if (accountError && this.run === run) this.pause(run, accountError);
       return;
     }
@@ -2060,22 +2070,7 @@ export class Robot<
       !increase ||
       (await this.improved!.protection.canIncrease!(run.config, intent).catch(() => false));
     const finalAccountError = await this.recheckPosition(run.config, intent.fromPosition);
-    const sendNow = this.now();
-    const invalidStatus =
-      this.mode === 'stopped'
-        ? 'stopped-before-send'
-        : this.run !== run || run.session !== session
-          ? 'feed-lost-before-send'
-          : finalAccountError || !marginOk
-            ? 'account-check-failed-before-send'
-            : (session.revision ?? 0) !== revision ||
-                session.indicators?.invalid ||
-                (session.latestCompleted ?? -Infinity) > signal.candleTime ||
-                signal.candleTime + 2 * timeframeMs[run.config.timeframe] <= sendNow
-              ? 'stale-signal-before-send'
-              : !this.eligibleSession(eligible, signal.signalTime, sendNow)
-                ? 'session-ended-before-send'
-                : null;
+    const invalidStatus = invalid(!!finalAccountError || !marginOk);
     if (invalidStatus) {
       const cancelled = await store
         .cancelEntryBeforeSend(begun.value.owner, invalidStatus)
@@ -2137,8 +2132,7 @@ export class Robot<
     this.protection = settled.value.protection;
     // A lost entry response is never authority to initiate another side effect.
     if (this.run !== run && !increase) {
-      if (this.run === run) this.pause(run, 'ROBOT_PROTECTION_UNRESOLVED');
-      else this.publish();
+      this.publish();
       return;
     }
     run.improvedPosition = position;
@@ -2210,6 +2204,18 @@ export class Robot<
     protection: StoredProtection,
     finishReplacement = false,
   ) {
+    await this.submitStoredStop(
+      run.config,
+      protection,
+      () => this.run === run || finishReplacement,
+    );
+  }
+
+  private async submitStoredStop(
+    config: TradingConfig,
+    protection: StoredProtection,
+    shouldSend: () => boolean,
+  ) {
     const store = this.store.protection!;
     const begun = await store.beginStopSubmit({
       accountId: protection.accountId,
@@ -2220,9 +2226,9 @@ export class Robot<
     if (!begun.ok) throw new RobotError('ROBOT_PROTECTION_UNRESOLVED');
     this.protection = begun.value.protection;
     let outcome: 'confirmed' | 'not-sent' | 'rejected' | 'unconfirmed' = 'not-sent';
-    if (this.run === run || finishReplacement) {
+    if (shouldSend()) {
       try {
-        outcome = await this.improved!.protection.submit(run.config, begun.value.protection);
+        outcome = await this.improved!.protection.submit(config, begun.value.protection);
       } catch {
         outcome = 'unconfirmed';
       }
@@ -2230,6 +2236,18 @@ export class Robot<
     const finished = await store.finishStopSubmit(begun.value.owner, outcome);
     if (!finished.ok) throw new RobotError('ROBOT_PROTECTION_UNRESOLVED');
     this.protection = finished.value;
+  }
+
+  private async restoreVerifiedStop(account: RecoveryAccount, protection: StoredProtection) {
+    if (!this.improved?.protection.closeEvidence) return;
+    const config = await this.loadConfig();
+    if (!sameSelection(config, account) || config.token !== account.token)
+      throw new RobotError('ROBOT_SELECTION_CHANGED');
+    const expected = (protection.direction === 'sell' ? 1 : -1) * protection.lots;
+    const error = await this.recheckPosition(config, expected);
+    if (error) throw new RobotError(error);
+    await this.submitStoredStop(config, protection, () => true);
+    this.reason = this.protection?.state === 'confirmed' ? null : 'ROBOT_PROTECTION_UNRESOLVED';
   }
 
   private async reconcileGuardedEntry(recovery: Recovery) {
@@ -2276,7 +2294,11 @@ export class Robot<
     }
     this.protection = settled.value.protection;
     this.reason = this.protection ? 'ROBOT_PROTECTION_UNRESOLVED' : reason;
-    if (!(await store.loadProtectedEntry())) this.recovery = undefined;
+    if (!(await store.loadProtectedEntry())) {
+      this.recovery = undefined;
+      if (settled.value.protection?.state === 'not-sent')
+        await this.restoreVerifiedStop(config, settled.value.protection);
+    }
   }
 
   private async recheckPosition(config: TradingConfig, expected: number) {

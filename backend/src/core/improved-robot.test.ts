@@ -64,11 +64,12 @@ function setup(
     zeroSubmit?: boolean;
     nativeProtection?: boolean;
     maxAddOns?: number;
-    margin?: () => boolean;
+    margin?: () => boolean | Promise<boolean>;
     cancelStop?: () => Promise<void>;
     closeEvidence?: NonNullable<ImprovedProtection['closeEvidence']>;
     childEvidence?: NonNullable<ImprovedProtection['childEvidence']>;
-    observeOrder?: (order: OrderIntent) => 'filled' | 'new';
+    observeOrder?: (order: OrderIntent) => 'filled' | 'new' | 'terminal-partial';
+    deferSubmit?: (order: OrderIntent) => boolean;
     tradeWeekends?: boolean;
   } = {},
 ) {
@@ -190,6 +191,8 @@ function setup(
       async submit(_token, order) {
         events.push('send-order:' + order.id);
         orders.push(order);
+        if (options.deferSubmit?.(order))
+          return { brokerOrderId: 'broker', brokerStatus: 'new', executedLots: 0 };
         position = options.zeroSubmit
           ? 0
           : options.partial
@@ -206,8 +209,16 @@ function setup(
       },
       async orderState(_token, order) {
         events.push('lookup-order:' + order.id);
-        if (options.observeOrder?.(order) === 'new')
+        const observed = options.observeOrder?.(order);
+        if (observed === 'new')
           return { brokerOrderId: 'broker', brokerStatus: 'new', executedLots: 0, executions: [] };
+        if (observed === 'terminal-partial')
+          return {
+            brokerOrderId: 'broker',
+            brokerStatus: 'cancelled',
+            executedLots: 1,
+            executions: [{ tradeId: 'partial-fill', lots: 1, price: 101, time: start }],
+          };
         if (options.zeroLookup)
           return {
             brokerOrderId: 'broker',
@@ -550,6 +561,78 @@ test('weekend opt-out still permits a protective gap exit', async () => {
     h.orders.map((order) => order.targetPosition),
     [8, 0],
   );
+});
+
+test('a gap received while an add-on is in preflight wins over the increase', async () => {
+  let approve!: (allowed: boolean) => void;
+  const h = setup({
+    nativeProtection: true,
+    submitProtection: 'confirmed',
+    margin: () =>
+      new Promise((resolve) => {
+        approve = resolve;
+      }),
+  });
+  await enterLong(h);
+  await complete(h, candle(start + 2 * hour, 110));
+  const opened = candle(start + 3 * hour, 99);
+  h.emit(
+    {
+      stream: 'live',
+      history: history([{ ...opened, complete: false }]),
+      openedCandleTime: opened.time,
+    },
+    opened.time,
+  );
+  approve(true);
+  await setImmediate();
+  assert.deepEqual(
+    h.orders.map((order) => order.targetPosition),
+    [8, 0],
+  );
+});
+
+test('a stop triggered during cancellation forbids reversal even with zero native fills', async () => {
+  let triggered = false;
+  const h = setup({
+    nativeProtection: true,
+    submitProtection: 'confirmed',
+    cancelStop: async () => {
+      triggered = true;
+    },
+    closeEvidence: async () =>
+      triggered ? { status: 'triggered', childIds: ['child'] } : { status: 'never-triggered' },
+    childEvidence: async () => ({ terminal: true, executedLots: 0 }),
+  });
+  await enterLong(h);
+  await complete(h, candle(start + 2 * hour, 99));
+  assert.deepEqual(
+    h.orders.map((order) => order.targetPosition),
+    [8, 0],
+  );
+  assert.equal(h.robot.status().protection, null);
+});
+
+test('a terminal partial reversal exit restores protection on the verified remainder', async () => {
+  let terminal = false;
+  const h = setup({
+    nativeProtection: true,
+    submitProtection: 'confirmed',
+    deferSubmit: (order) => order.targetPosition === 0,
+    observeOrder: (order) =>
+      order.targetPosition !== 0 ? 'filled' : terminal ? 'terminal-partial' : 'new',
+  });
+  await enterLong(h);
+  const reversal = candle(start + 2 * hour, 99);
+  await complete(h, reversal);
+  terminal = true;
+  h.setPosition(7);
+  h.emit({ stream: 'live', history: history([reversal]) });
+  await setImmediate();
+  assert.equal(h.orders.length, 2);
+  assert.equal(h.robot.status().recovery, undefined);
+  assert.equal(h.robot.status().protection?.lots, 7);
+  assert.equal(h.robot.status().protection?.state, 'confirmed');
 });
 
 async function enterLong(h: ReturnType<typeof setup>) {
