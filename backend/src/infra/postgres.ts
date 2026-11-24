@@ -17,8 +17,19 @@ import {
 } from '../core/strategy-settings.js';
 import { surfingStrategy } from '../core/surfing-strategy.js';
 import { isTimeframe } from '../core/timeframe.js';
-import type { OrderIntent, OrderResult, RecoveredOrder, TradingStore } from '../core/robot.js';
+import {
+  RobotError,
+  type OrderIntent,
+  type OrderResult,
+  type RecoveredOrder,
+  type TradingStore,
+} from '../core/robot.js';
 import type { JournalEntry } from '../core/journal.js';
+import {
+  ProtectionLedger,
+  protectionLedgerAccount,
+  protectionLedgerBlocksTrading,
+} from '../core/protection-ledger.js';
 import * as schema from './db/schema.js';
 
 const migrationsFolder = fileURLToPath(new URL('../../migrations/', import.meta.url));
@@ -33,8 +44,32 @@ const {
   strategySelection,
   tradeOrders,
   tradeExecutions,
+  protectionLedger,
 } = schema;
 type Database = NodePgDatabase<typeof schema>;
+type Transaction = Parameters<Parameters<Database['transaction']>[0]>[0];
+
+// All reservations use this lock, including writes by the legacy Surfing journal.
+async function lockProtectionLedger(tx: Transaction) {
+  const [ledger] = await tx
+    .select()
+    .from(protectionLedger)
+    .where(eq(protectionLedger.id, 1))
+    .for('update');
+  if (!ledger) throw new Error('Trading guard unavailable');
+  return ledger.state;
+}
+
+async function readProtectionLedger(db: Database) {
+  const [ledger] = await db.select().from(protectionLedger).where(eq(protectionLedger.id, 1));
+  if (!ledger) throw new Error('Trading guard unavailable');
+  return ledger.state;
+}
+
+async function requireUnlockedSettings(tx: Transaction) {
+  if (protectionLedgerBlocksTrading(await lockProtectionLedger(tx)))
+    throw new RobotError('ROBOT_PROTECTION_UNRESOLVED');
+}
 
 export function connectToPostgres(connectionString: string | undefined) {
   const db = drizzle({ connection: { connectionString, connectionTimeoutMillis: 5_000 }, schema });
@@ -113,10 +148,15 @@ export class PostgresSandboxConnection implements SandboxStore {
   }
 
   public async save(connection: SavedSandboxConnection) {
-    await this.db
-      .insert(sandboxConnection)
-      .values({ id: 1, ...connection })
-      .onConflictDoUpdate({ target: sandboxConnection.id, set: connection });
+    await this.db.transaction(async (tx) => {
+      const pinnedAccount = protectionLedgerAccount(await lockProtectionLedger(tx));
+      if (pinnedAccount !== undefined && pinnedAccount !== connection.accountId)
+        throw new RobotError('ROBOT_PROTECTION_UNRESOLVED');
+      await tx
+        .insert(sandboxConnection)
+        .values({ id: 1, ...connection })
+        .onConflictDoUpdate({ target: sandboxConnection.id, set: connection });
+    });
   }
 }
 
@@ -163,6 +203,7 @@ export class PostgresStrategySettings implements StrategyStore {
       throw new Error('Invalid strategy settings');
     const values = { ...instrument, kind: surfingStrategy.kind, parameters, timeframe };
     await this.db.transaction(async (tx) => {
+      await requireUnlockedSettings(tx);
       await tx.execute(sql`select pg_advisory_xact_lock(1936028243)`);
       const [legacy] = await tx.select().from(strategySettings).where(eq(strategySettings.id, 1));
       const [claim] = await tx
@@ -206,13 +247,16 @@ export class PostgresStrategySettings implements StrategyStore {
     if (kind !== 'improved-surfing' || !validImproved(parameters) || !isTimeframe(timeframe))
       throw new Error('Invalid strategy settings');
     const values = { ...instrument, kind, parameters, timeframe };
-    await this.db
-      .insert(strategyProfiles)
-      .values({ appAccountId: this.appAccountId, ...values })
-      .onConflictDoUpdate({
-        target: [strategyProfiles.appAccountId, strategyProfiles.kind],
-        set: values,
-      });
+    await this.db.transaction(async (tx) => {
+      await requireUnlockedSettings(tx);
+      await tx
+        .insert(strategyProfiles)
+        .values({ appAccountId: this.appAccountId, ...values })
+        .onConflictDoUpdate({
+          target: [strategyProfiles.appAccountId, strategyProfiles.kind],
+          set: values,
+        });
+    });
   }
 
   public async selected(): Promise<StrategyKind> {
@@ -227,10 +271,13 @@ export class PostgresStrategySettings implements StrategyStore {
 
   public async select(kind: StrategyKind) {
     if (!isStrategyKind(kind)) throw new Error('Invalid strategy selection');
-    await this.db
-      .insert(strategySelection)
-      .values({ appAccountId: this.appAccountId, kind })
-      .onConflictDoUpdate({ target: strategySelection.appAccountId, set: { kind } });
+    await this.db.transaction(async (tx) => {
+      await requireUnlockedSettings(tx);
+      await tx
+        .insert(strategySelection)
+        .values({ appAccountId: this.appAccountId, kind })
+        .onConflictDoUpdate({ target: strategySelection.appAccountId, set: { kind } });
+    });
   }
 
   public async legacyClaimAvailable() {
@@ -248,6 +295,7 @@ export class PostgresStrategySettings implements StrategyStore {
 
   public async claimLegacy() {
     await this.db.transaction(async (tx) => {
+      await requireUnlockedSettings(tx);
       await tx.execute(sql`select pg_advisory_xact_lock(1936028243)`);
       const [legacy] = await tx.select().from(strategySettings).where(eq(strategySettings.id, 1));
       const [claimed] = await tx
@@ -288,20 +336,28 @@ export class PostgresTradingStore implements TradingStore<JournalEntry> {
   ) {}
 
   public async reserve(order: OrderIntent) {
-    const rows = await this.db
-      .insert(tradeOrders)
-      .values({
-        ...this.projection.toJournalIntent(order),
-        status: 'reserved',
-        brokerStatus: 'unknown',
-      })
-      .onConflictDoNothing()
-      .returning({ id: tradeOrders.id });
-    return rows.length === 1;
+    return this.db.transaction(async (tx) => {
+      const ledger = await lockProtectionLedger(tx);
+      if (protectionLedgerBlocksTrading(ledger) || Object.hasOwn(ledger.orders, order.id))
+        return false;
+      const rows = await tx
+        .insert(tradeOrders)
+        .values({
+          ...this.projection.toJournalIntent(order),
+          status: 'reserved',
+          brokerStatus: 'unknown',
+        })
+        .onConflictDoNothing()
+        .returning({ id: tradeOrders.id });
+      return rows.length === 1;
+    });
   }
 
   public async record(id: string, { executions, ...result }: OrderResult) {
     await this.db.transaction(async (tx) => {
+      const ledger = await lockProtectionLedger(tx);
+      if (result.status === 'unconfirmed' && protectionLedgerBlocksTrading(ledger))
+        throw new Error('Protected trading guard active');
       await tx.update(tradeOrders).set(result).where(eq(tradeOrders.id, id));
       await tx.delete(tradeExecutions).where(eq(tradeExecutions.orderId, id));
       if (executions.length) {
@@ -315,6 +371,7 @@ export class PostgresTradingStore implements TradingStore<JournalEntry> {
   }
 
   public async hasUnresolved() {
+    if (protectionLedgerBlocksTrading(await readProtectionLedger(this.db))) return true;
     const rows = await this.db
       .select({ id: tradeOrders.id })
       .from(tradeOrders)
@@ -326,6 +383,11 @@ export class PostgresTradingStore implements TradingStore<JournalEntry> {
   public async unresolved() {
     // The partial unique index allows at most one unresolved intent.
     const [order] = await this.readJournal(unresolvedOrders());
+    return order ? this.projection.toRecoveredOrder(order) : null;
+  }
+
+  public async recoveredOrder(id: string) {
+    const [order] = await this.readJournal(eq(tradeOrders.id, id));
     return order ? this.projection.toRecoveredOrder(order) : null;
   }
 
@@ -356,5 +418,57 @@ export class PostgresTradingStore implements TradingStore<JournalEntry> {
       }
     }
     return [...journal.values()];
+  }
+}
+
+/** Durable guarded journal. The production strategy gate does not instantiate the Improved Robot. */
+export class PostgresProtectionStore extends ProtectionLedger {
+  public constructor(
+    db: Database,
+    private readonly legacy: PostgresTradingStore,
+  ) {
+    super({
+      read: () => readProtectionLedger(db),
+      write: (transition) =>
+        db.transaction(async (tx) => {
+          const ledger = await lockProtectionLedger(tx);
+          const [unresolved] = await tx
+            .select({ id: tradeOrders.id })
+            .from(tradeOrders)
+            .where(unresolvedOrders())
+            .limit(1);
+          if (unresolved) return { ok: false, reason: 'order-conflict' };
+          const originalIds = new Set(Object.keys(ledger.orders));
+          const result = transition(ledger);
+          if (!result.ok) return result;
+          const added = Object.keys(ledger.orders).filter((id) => !originalIds.has(id));
+          if (added.length) {
+            const [duplicate] = await tx
+              .select({ id: tradeOrders.id })
+              .from(tradeOrders)
+              .where(inArray(tradeOrders.id, added))
+              .limit(1);
+            if (duplicate) return { ok: false, reason: 'order-conflict' };
+          }
+          await tx
+            .update(protectionLedger)
+            .set({ state: ledger })
+            .where(eq(protectionLedger.id, 1));
+          return result;
+        }),
+    });
+  }
+
+  public override async hasUnresolved() {
+    return (await super.hasUnresolved()) || (await this.legacy.unresolved()) !== null;
+  }
+
+  public override async unresolved() {
+    return (await super.unresolved()) ?? this.legacy.unresolved();
+  }
+
+  public override async record(id: string, result: OrderResult) {
+    if (await this.legacy.recoveredOrder(id)) return this.legacy.record(id, result);
+    return super.record(id, result);
   }
 }

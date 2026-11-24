@@ -14,6 +14,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { BrokerOrder, OrderIntent } from '../../core/robot.js';
 import type { JournalEntry } from '../../core/journal.js';
+import type { ProtectionLedgerState } from '../../core/protection-ledger.js';
 import { defaultTimeframe, type Timeframe } from '../../core/timeframe.js';
 
 export const ownerSessions = pgTable(
@@ -119,6 +120,15 @@ export const legacyStrategyClaim = pgTable(
       .references(() => appOwner.appAccountId),
   },
   (table) => [check('legacy_strategy_claim_singleton', sql`${table.id} = 1`)],
+);
+
+export const protectionLedger = pgTable(
+  'protection_ledger',
+  {
+    id: integer('id').primaryKey(),
+    state: jsonb('state').$type<ProtectionLedgerState>().notNull(),
+  },
+  (table) => [check('protection_ledger_singleton', sql`${table.id} = 1`)],
 );
 
 export const tradeOrders = pgTable(

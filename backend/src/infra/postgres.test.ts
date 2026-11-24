@@ -15,6 +15,7 @@ import {
   ensureAppOwner,
   migrateDatabase,
   PostgresDisplaySettings,
+  PostgresProtectionStore,
   PostgresSandboxConnection,
   PostgresStrategySettings,
   PostgresTradingStore,
@@ -24,6 +25,179 @@ import { TokenCipher } from './token-cipher.js';
 const testDatabase = process.env.SERFING_TEST_DATABASE_URL;
 const cipher = new TokenCipher('ab'.repeat(32));
 const hourMs = timeframeMs['1h'];
+
+test(
+  'PostgreSQL serializes protected and Surfing reservations, then restores the linked guard',
+  { skip: !testDatabase && 'Requires a disposable PostgreSQL database' },
+  async () => {
+    const first = connectToPostgres(testDatabase);
+    const second = connectToPostgres(testDatabase);
+    const scope = { accountId: randomUUID(), instrumentUid: randomUUID() };
+    const stopId = randomUUID();
+    const position = { ...scope, position: 2, activeOrders: false };
+    const flat = { ...position, position: 0 };
+    const exit: OrderIntent = {
+      ...scope,
+      id: randomUUID(),
+      ticker: 'T',
+      timeframe: '1h',
+      context: { type: 'manual-close', time: Date.now() },
+      direction: 'sell',
+      lots: 2,
+      fromPosition: 2,
+      targetPosition: 0,
+    };
+    const entry: OrderIntent = {
+      ...exit,
+      id: randomUUID(),
+      context: {
+        type: 'signal',
+        candleTime: 1,
+        signalTime: 2,
+        strategy: { kind: 'improved-surfing' },
+      },
+      direction: 'buy',
+      fromPosition: 0,
+      targetPosition: 2,
+    };
+    const filled = {
+      status: 'confirmed',
+      brokerStatus: 'filled',
+      brokerOrderId: 'entry-exchange-id',
+      executedLots: 2,
+      executions: [{ tradeId: 'entry-fill', lots: 2, price: 100, time: 3 }],
+      position: 2,
+    } as const;
+    const plan = { id: stopId, stop: 90 };
+    try {
+      await migrateDatabase(first.db);
+      const legacyA = new PostgresTradingStore(first.db, surfingJournalProjection);
+      const legacyB = new PostgresTradingStore(second.db, surfingJournalProjection);
+      const active = new PostgresProtectionStore(first.db, legacyA);
+      const observer = new PostgresProtectionStore(second.db, legacyB);
+      const ordinary = { ...exit, id: randomUUID() };
+      const [initial, ordinaryWon] = await Promise.all([
+        active.reserveProtectedEntry(entry, plan, 'origin'),
+        legacyB.reserve(ordinary),
+      ]);
+      assert.notEqual(initial.ok, ordinaryWon);
+      if (ordinaryWon)
+        await legacyB.record(ordinary.id, {
+          status: 'stopped-before-send',
+          executedLots: null,
+          executions: [],
+          position: null,
+          brokerStatus: 'unknown',
+          brokerOrderId: null,
+        });
+      const reserved = initial.ok
+        ? initial
+        : await active.reserveProtectedEntry(entry, plan, 'origin');
+      assert.ok(reserved.ok);
+      const claim = await active.beginEntrySubmit(reserved.value.ref, 'origin');
+      assert.ok(claim.ok);
+      assert.equal(observer.consumeEntrySubmit(claim.value.owner), false);
+      assert.equal(active.consumeEntrySubmit(claim.value.owner), true);
+      const handoff = await active.settleProtectedEntry(claim.value.ref, {
+        kind: 'observed',
+        result: { ...filled, executions: [...filled.executions] },
+        account: position,
+      });
+      assert.ok(handoff.ok && handoff.value.protection);
+      assert.equal(await observer.loadProtectedEntry(), null);
+      assert.deepEqual(await observer.loadProtection(), handoff.value.protection);
+      assert.equal(await legacyB.reserve(ordinary), false);
+      assert.equal(await legacyB.reserve({ ...ordinary, id: randomUUID() }), false);
+      await assert.rejects(
+        new PostgresSandboxConnection(second.db).save({
+          accountId: randomUUID(),
+          encryptedToken: 'fake',
+        }),
+        { code: 'ROBOT_PROTECTION_UNRESOLVED' },
+      );
+      await assert.rejects(
+        new PostgresStrategySettings(second.db, await ensureAppOwner(second.db)).select(
+          'improved-surfing',
+        ),
+        { code: 'ROBOT_PROTECTION_UNRESOLVED' },
+      );
+      const marker = await active.beginEvidence(
+        { ...scope, stopId, version: handoff.value.protection.version },
+        'close',
+        randomUUID(),
+      );
+      assert.ok(marker.ok);
+      assert.deepEqual((await observer.loadProtection())?.pendingAttempt, marker.value);
+      const proof = await active.finishEvidence({
+        ...marker.value,
+        parent: { status: 'never-triggered' },
+        children: [],
+      });
+      assert.ok(proof.ok && proof.value.closeProof);
+      const linked = await active.reserveProtectedClose(proof.value.closeProof, exit, position);
+      assert.ok(linked.ok);
+      const send = await active.beginProtectedCloseSubmit(linked.value.reservationOwner);
+      assert.ok(send.ok);
+      assert.equal(observer.consumeProtectedCloseSubmit(send.value.submitOwner), false);
+      assert.equal(active.consumeProtectedCloseSubmit(send.value.submitOwner), true);
+      assert.equal(active.consumeProtectedCloseSubmit(send.value.submitOwner), false);
+      await first.close();
+      const original = await observer.loadProtectedClose(exit.id);
+      assert.deepEqual(original, send.value.order);
+      assert.ok(original);
+      assert.equal((await observer.unresolved())?.id, exit.id);
+      assert.equal(
+        (
+          await observer.forfeitUnclaimedProtectedClose(
+            original.protectionLink,
+            original.orderVersion,
+          )
+        ).ok,
+        false,
+      );
+      await assert.rejects(
+        observer.record(exit.id, { ...filled, executions: [...filled.executions] }),
+      );
+      const settle = () =>
+        observer.settleProtectedClose(original.protectionLink, original.orderVersion, {
+          kind: 'observed',
+          result: {
+            ...filled,
+            brokerOrderId: 'exit-exchange-id',
+            status: 'reconciled',
+            executions: [{ tradeId: 'exit-fill', lots: 2, price: 89, time: 4 }],
+            position: 0,
+          },
+          account: flat,
+        });
+      await second.db.$client.query(
+        `ALTER TABLE protection_ledger ADD CONSTRAINT test_reject_clear
+         CHECK (state->'protection' <> 'null'::jsonb)`,
+      );
+      try {
+        await assert.rejects(settle());
+        assert.deepEqual(await observer.loadProtectedClose(exit.id), original);
+        assert.equal((await observer.loadProtection())?.id, stopId);
+      } finally {
+        await second.db.$client.query(
+          'ALTER TABLE protection_ledger DROP CONSTRAINT test_reject_clear',
+        );
+      }
+      const settled = await settle();
+      assert.ok(settled.ok);
+      assert.equal(await observer.loadProtection(), null);
+      assert.equal(await observer.unresolved(), null);
+      assert.deepEqual(
+        new Set((await observer.history(scope.accountId)).map((order) => order.id)),
+        new Set([entry.id, exit.id]),
+      );
+      assert.equal(await legacyB.reserve(exit), false, 'a linked request ID remains occupied');
+    } finally {
+      if (!first.db.$client.ended) await first.close();
+      await second.close();
+    }
+  },
+);
 
 test(
   'PostgreSQL restores the latest display timezone after reconnecting',
@@ -609,14 +783,16 @@ test(
           ).load(),
           null,
         );
-        assert.deepEqual(
-          await new PostgresTradingStore(connection.db, surfingJournalProjection).history(),
-          [],
+        const legacy = new PostgresTradingStore(connection.db, surfingJournalProjection);
+        assert.deepEqual(await legacy.history(), []);
+        assert.equal(
+          await new PostgresProtectionStore(connection.db, legacy).loadProtection(),
+          null,
         );
         const migrations = await connection.db.$client.query(
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         );
-        assert.equal(migrations.rows[0].count, 11);
+        assert.equal(migrations.rows[0].count, 12);
       } finally {
         await connection.close();
       }
@@ -843,7 +1019,7 @@ test(
         const journalRows = await connection.db.$client.query(
           'SELECT count(*)::int AS count FROM drizzle.__drizzle_migrations',
         );
-        assert.equal(journalRows.rows[0].count, 11);
+        assert.equal(journalRows.rows[0].count, 12);
       } finally {
         await connection.close();
       }
