@@ -12,13 +12,13 @@ import {
 import { timeframeMs } from './timeframe.js';
 
 const hour = timeframeMs['1h'];
-const warmup = [bar(moscowMidnight - 2 * hour, 97), bar(moscowMidnight - hour, 99)];
+const warmup = [bar(moscowMidnight - 2 * hour, 101), bar(moscowMidnight - hour, 99)];
 const cross = bar(start, 99, 101);
 const surfing: FullBacktestParameters = {
   kind: 'surfing',
   instrumentUid: 'instrument',
   timeframe: '1h',
-  emaPeriod: 1,
+  emaPeriod: 2,
   lots: 2,
   from: '2026-11-18',
   to: '2026-11-18',
@@ -27,7 +27,7 @@ const surfing: FullBacktestParameters = {
   slippage: 2,
 };
 
-test('Surfing uses broker EMA and fills a reversal in two legs, keeping the final short open', async () => {
+test('Surfing uses local EMA and fills a reversal in two legs, keeping the final short open', async () => {
   const { backtest, calls } = historicalFixture([
     ...warmup,
     cross,
@@ -35,13 +35,16 @@ test('Surfing uses broker EMA and fills a reversal in two legs, keeping the fina
     bar(start + 2 * hour, 98, 97),
   ]);
   const report = await backtest.run(surfing);
-  assert.deepEqual(calls.minutes, [[moscowMidnight, historyEnd]]);
+  assert.deepEqual(calls.minutes, [
+    [moscowMidnight, historyEnd],
+    [moscowMidnight - 2 * hour, moscowMidnight],
+  ]);
   assert.deepEqual(
-    report.candles.map(({ time, ema }) => [time, ema]),
+    report.candles.map(({ time, ema }) => [time, ema === null ? null : Number(ema.toFixed(6))]),
     [
-      [start, 100],
-      [start + hour, 100],
-      [start + 2 * hour, 100],
+      [start, 100.666667],
+      [start + hour, 99.555556],
+      [start + 2 * hour, 97.851852],
     ],
   );
   assert.deepEqual(
@@ -98,7 +101,7 @@ test('a signal at session end is dropped, and no position is opened by warm-up',
 
 test('an entirely empty broker range is not reported as a confirmed closed day', async () => {
   const { backtest } = historicalFixture(warmup);
-  await assert.rejects(backtest.run(improvedRun), { code: 'BACKTEST_CANDLES_MISSING' });
+  await assert.rejects(backtest.run(improvedRun), { code: 'BACKTEST_HISTORY_EMPTY' });
 });
 
 test('a minute hole inside an observed session is counted and execution uses the next observed price', async () => {
@@ -157,8 +160,8 @@ test('trailing protection uses only completed closes and never gives back a bett
     cross,
     bar(start + hour, 101, 110),
     bar(start + 2 * hour, 110, 112, 109, 113),
-    bar(start + 3 * hour, 112, 113, 110, 129), // An enormous ATR cannot lower the stop at 104.
-    bar(start + 4 * hour, 112, 110, 104, 114),
+    bar(start + 3 * hour, 113, 113, 110, 129), // An enormous ATR cannot lower the stop at 104.
+    bar(start + 4 * hour, 114, 110, 104, 114),
   ]);
   const report = await backtest.run({ ...improvedRun, maxAddOns: 0 });
   assert.deepEqual(
@@ -183,13 +186,14 @@ test('a rejected add-on neither resizes nor consumes the threshold', async () =>
     [
       ...warmup,
       cross,
-      bar(start + hour, 100, 106),
-      bar(start + 2 * hour, 106, 106),
-      bar(start + 3 * hour, 100, 101),
+      bar(start + hour, 98.9, 106),
+      bar(start + 2 * hour, 107, 106),
+      bar(start + 3 * hour, 106, 107),
     ],
     { pointValue: 1.7 },
   );
-  // The 10-lot position requires ₽1,060 at the first attempt (equity ₽1,051), then ₽1,000.
+  // The 10-lot position requires ₽1,070 at the first attempt (equity ₽1,068.85),
+  // then ₽1,060 at the second (equity ₽1,060.35).
   const report = await backtest.run(improvedRun);
   assert.deepEqual(
     report.executions.map(({ reason, time, lots }) => [reason, time, lots]),
@@ -207,7 +211,7 @@ test('the weekend switch suppresses new openings but not protective exits', asyn
   const saturday = friday + 24 * hour;
   const { backtest } = historicalFixture(
     [
-      bar(thursday, 97),
+      bar(thursday, 101),
       bar(thursday + hour, 99),
       bar(friday, 99, 101),
       bar(friday + hour, 101, 102),
@@ -228,20 +232,7 @@ test('the weekend switch suppresses new openings but not protective exits', asyn
   );
 });
 
-test('coverage failures are explicit and never fall back to locally computed EMA or coarser stops', async (t) => {
-  for (const [code, corrupt] of Object.entries({
-    BACKTEST_EMA_MISSING: (fixture) => fixture.ema.shift(),
-    BACKTEST_MINUTES_MISSING: (fixture) => fixture.minutes.splice(0, 60),
-    BACKTEST_CANDLES_MISSING: (fixture) => fixture.candles.pop(),
-    BACKTEST_WARMUP_MISSING: (fixture) => fixture.candles.shift(),
-    BACKTEST_HISTORY_CONFLICT: (fixture) => {
-      fixture.minutes[1].high += 100;
-    },
-  } satisfies Record<string, (fixture: ReturnType<typeof historicalFixture>) => unknown>)) {
-    await t.test(code, async () => {
-      const fixture = historicalFixture([...warmup, cross, bar(start + hour, 101)]);
-      corrupt(fixture);
-      await assert.rejects(fixture.backtest.run(improvedRun), { code });
-    });
-  }
+test('a warmup shortage does not produce a trading report', async () => {
+  const { backtest } = historicalFixture([cross]);
+  await assert.rejects(backtest.run(improvedRun), { code: 'BACKTEST_WARMUP_MISSING' });
 });

@@ -1,10 +1,11 @@
 import {
   runBacktest,
-  type BacktestCandle,
+  type BacktestChartCandle,
   type BacktestDataset,
   type BacktestParameters,
 } from './backtest.js';
 import type { BacktestAdapter } from './backtest-history.js';
+import { backtestEma } from './backtest-ema.js';
 import { crossing, type Side } from './crossing.js';
 import { decideSurfing } from './surfing.js';
 
@@ -14,22 +15,25 @@ export function createSurfingBacktest(
     observation: Parameters<typeof decideSurfing>[1],
     parameters: BacktestParameters,
   ) => ReturnType<typeof decideSurfing>,
-): BacktestAdapter<BacktestParameters, BacktestCandle, Side | null> {
+): BacktestAdapter<BacktestParameters, BacktestChartCandle, Side | null> {
   return {
+    emaSource: 'local',
     warmupCount: ({ emaPeriod }) => emaPeriod,
-    prepare({ emaPeriod }, selected, warmup) {
+    prepare(_parameters, selected, warmup, warmupInRange) {
       const last = warmup[warmup.length - 1].close;
-      let ema = last + warmup.reduce((sum, bar) => sum + (bar.close - last), 0) / emaPeriod;
-      const initialState = crossing(null, last, ema).side;
-      const alpha = 2 / (emaPeriod + 1);
-      const candles = selected.map((bar) => {
-        ema = emaPeriod === 1 ? bar.close : ema + (bar.close - ema) * alpha;
-        return { ...bar, ema };
-      });
+      const ema = backtestEma(warmup);
+      const initialState = crossing(null, last, ema.initial).side;
+      const candles: BacktestChartCandle[] = selected.slice(0, warmupInRange).map((bar, index) => ({
+        ...bar,
+        ema: index === warmupInRange - 1 ? ema.initial : null,
+      }));
+      for (let index = warmupInRange; index < selected.length; index++)
+        candles.push(ema.next(selected[index]));
       return { candles, initialState };
     },
     decide: (side, candle, parameters) => {
-      const result = decide({ side }, candle, parameters);
+      if (candle.ema === null) return undefined;
+      const result = decide({ side }, { ...candle, ema: candle.ema }, parameters);
       return { ...result, state: result.state.side };
     },
   };

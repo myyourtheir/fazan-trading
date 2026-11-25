@@ -71,10 +71,10 @@ test('dashboard and direct entry use saved profiles, and switching only changes 
       case '/api/strategy/futures':
         return route.fulfill({ json: [contract] });
       case '/api/backtest/limits':
-        return route.fulfill({ json: { maxDays: 30, maxEmaPeriod: 1000 } });
+        return route.fulfill({ json: { maxEmaPeriod: 1000 } });
       case '/api/backtest/run':
         runs.push(request.postDataJSON());
-        return route.fulfill({ status: 422, json: { code: 'BACKTEST_MINUTES_MISSING' } });
+        return route.fulfill({ status: 422, json: { code: 'BACKTEST_NO_CONFIRMED_INTERVALS' } });
       default:
         return route.fulfill({ status: 404 });
     }
@@ -106,7 +106,9 @@ test('dashboard and direct entry use saved profiles, and switching only changes 
   await page.getByLabel('Проскальзывание, шагов цены').fill('2');
   await page.getByLabel('Период ATR').fill('12');
   await page.getByRole('button', { name: 'Запустить бэктест' }).click();
-  await expect(page.getByText(/нет минутной истории/)).toBeVisible();
+  await expect(
+    page.getByText(/нет свечей стратегии, подтверждённых минутными свечами/),
+  ).toBeVisible();
   expect(runs[0]).toEqual({
     ...improved,
     atrPeriod: 12,

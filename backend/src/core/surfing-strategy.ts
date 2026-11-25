@@ -3,7 +3,7 @@ import { findLiveCrossing } from './crossing.js';
 import { decideSurfing, type SurfingObservation, type SurfingState } from './surfing.js';
 import { defineStrategy } from './strategy.js';
 import type { TradingConfig } from './robot.js';
-import type { BacktestCandle, BacktestParameters } from './backtest.js';
+import type { BacktestChartCandle, BacktestParameters } from './backtest.js';
 import type { Side } from './crossing.js';
 
 type Parameters = { emaPeriod: number; lots: number };
@@ -24,7 +24,7 @@ export const surfingStrategy = defineStrategy<
   { close: number; ema: number },
   SurfingLiveConfig,
   BacktestParameters,
-  BacktestCandle,
+  BacktestChartCandle,
   Side | null
 >({
   kind: 'surfing',

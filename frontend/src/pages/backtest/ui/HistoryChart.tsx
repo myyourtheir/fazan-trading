@@ -75,7 +75,9 @@ export default function HistoryChart({
     });
     barsRef.current?.setData(candles.map(candlePoint));
     emaRef.current?.setData(
-      candles.map(({ time, ema }) => ({ time: chartTime(time), value: ema })),
+      candles.map(({ time, ema }) =>
+        ema === null ? { time: chartTime(time) } : { time: chartTime(time), value: ema },
+      ),
     );
     chartRef.current?.timeScale().fitContent();
   }, [candles]);

@@ -37,7 +37,7 @@ test('public history runs a strategy without EMA and fills signals even when the
           lot: 1,
         };
       },
-      async candles() {
+      async backtestCandles() {
         return bars;
       },
     },

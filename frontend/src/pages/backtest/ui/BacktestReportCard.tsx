@@ -5,6 +5,7 @@ import { displayTimeFormatter } from '@/shared/lib/display-time';
 import { Badge, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui';
 import type { BacktestReport } from '../api/backtest-api';
 import { calendarDay } from '../lib/calendar-day';
+import { BacktestCoverageNotice } from './BacktestCoverageNotice';
 
 const HistoryChart = lazy(() => import('./HistoryChart'));
 const EquityChart = lazy(() => import('./EquityChart'));
@@ -62,6 +63,7 @@ export function BacktestReportCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
+        <BacktestCoverageNotice coverage={report.coverage} timeZone={parameters.timeZone} />
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           <Stat
             label="Доходность после комиссии"
@@ -74,9 +76,9 @@ export function BacktestReportCard({
           <Stat label="Суммарная комиссия" value={money(result.commission)} />
         </dl>
         <p className="text-sm text-muted-foreground">
-          Модель: историческая EMA брокера и завершённые свечи. Сигнал исполняется на первом
-          доступном минутном открытии той же сессии, разворот — двумя исполнениями. Гэп исполняется
-          по открытию; стоп — по уровню при касании или по открытию минуты при перескоке. Позиция в
+          Модель: EMA рассчитана по закрытиям свечей. Сигнал исполняется на первом доступном
+          минутном открытии той же сессии, разворот — двумя исполнениями. Гэп исполняется по
+          открытию; стоп — по уровню при касании или по открытию минуты при перескоке. Позиция в
           конце отмечается по последнему минутному закрытию без принудительного выхода.
         </p>
         <p className="text-sm text-muted-foreground">

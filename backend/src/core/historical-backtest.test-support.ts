@@ -1,6 +1,5 @@
 import { HistoricalBacktest, type FullBacktestParameters } from './historical-backtest.js';
 import { minute } from './historical-simulation.js';
-import type { BacktestCandle } from './backtest.js';
 import type { MarketCandle } from './market-data.js';
 import { timeframeMs } from './timeframe.js';
 
@@ -11,7 +10,7 @@ export const improvedRun = {
   kind: 'improved-surfing',
   instrumentUid: 'instrument',
   timeframe: '1h',
-  emaPeriod: 1,
+  emaPeriod: 2,
   atrPeriod: 1,
   stopAtrMultiplier: 2,
   addStepAtr: 1,
@@ -30,13 +29,12 @@ export function historicalBar(
   close = open,
   low = Math.min(open, close) - 1,
   high = Math.max(open, close) + 1,
-  ema = 100,
-): BacktestCandle {
-  return { time, open, high, low, close, complete: true, ema };
+): MarketCandle {
+  return { time, open, high, low, close, complete: true };
 }
 
 export function historicalFixture(
-  bars: BacktestCandle[],
+  bars: MarketCandle[],
   {
     timeframe = '1h',
     pointValue = 1,
@@ -48,11 +46,9 @@ export function historicalFixture(
   } = {},
 ) {
   const interval = timeframeMs[timeframe];
-  const candles: MarketCandle[] = bars.map(({ ema: _ema, ...bar }) => bar);
-  const ema = bars.map((bar) => ({ time: bar.time, value: bar.ema }));
+  const candles = [...bars];
   const minutes: MarketCandle[] = [];
   for (const bar of candles) {
-    if (bar.time < moscowMidnight) continue;
     for (let time = bar.time; time < bar.time + interval; time += minute) {
       const first = time === bar.time;
       minutes.push({
@@ -80,11 +76,8 @@ export function historicalFixture(
           priceStepAmount: 0.5 * pointValue,
         };
       },
-      async candles(_token, _uid, _timeframe, from, to) {
+      async backtestCandles(_token, _uid, _timeframe, from, to) {
         return inRange(candles, from, to);
-      },
-      async ema(_token, _uid, _timeframe, _length, from, to) {
-        return inRange(ema, from, to);
       },
       async minuteCandles(_token, _uid, from, to) {
         calls.minutes.push([+from, +to]);
@@ -94,5 +87,5 @@ export function historicalFixture(
     async () => 'test',
     () => now,
   );
-  return { backtest, candles, minutes, ema, calls };
+  return { backtest, candles, minutes, calls };
 }

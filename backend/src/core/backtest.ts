@@ -28,6 +28,7 @@ export type ResolvedBacktestContract = {
 };
 
 export type BacktestCandle = MarketCandle & { ema: number };
+export type BacktestChartCandle = MarketCandle & { ema: number | null };
 
 export type BacktestBaseParameters = Omit<MarketSelection, 'emaPeriod'> & {
   from: string;
@@ -47,6 +48,7 @@ export type BacktestDataset<
   contract: ResolvedBacktestContract;
   initialState: S;
   cutoff: number | null;
+  warmupInRange?: number;
 };
 
 export type BacktestExecution = {
@@ -80,7 +82,14 @@ export type BacktestReport<P = BacktestParameters, C extends MarketCandle = Back
 // The dataset's contract is already resolved: a missing or non-positive price step would otherwise
 // yield an infinite or zero conversion coefficient and a meaningless money result.
 export function runBacktest<P extends BacktestBaseParameters, C extends MarketCandle, S>(
-  { parameters, candles, contract, initialState, cutoff }: BacktestDataset<P, C, S>,
+  {
+    parameters,
+    candles,
+    contract,
+    initialState,
+    cutoff,
+    warmupInRange = 0,
+  }: BacktestDataset<P, C, S>,
   decide: (
     state: S,
     candle: C,
@@ -133,7 +142,7 @@ export function runBacktest<P extends BacktestBaseParameters, C extends MarketCa
   };
 
   let pending: { direction: 'buy' | 'sell'; lots: number } | null = null;
-  for (let index = 0; index < candles.length; index++) {
+  for (let index = warmupInRange; index < candles.length; index++) {
     const candle = candles[index];
 
     // The previous candle's signal executes at this candle's open, including after a session pause.

@@ -321,12 +321,12 @@ function setup(
 
 test('the public historical run and Robot agree on entry, add-on, reversal and gap at the same fills', async () => {
   const bars = [
-    historicalBar(moscowMidnight - 2 * hour, 97),
+    historicalBar(moscowMidnight - 2 * hour, 101),
     historicalBar(moscowMidnight - hour, 99),
     historicalBar(start, 99, 101),
     historicalBar(start + hour, 101, 110),
     historicalBar(start + 2 * hour, 110, 99),
-    historicalBar(start + 3 * hour, 100, 99),
+    historicalBar(start + 3 * hour, 102, 99),
     historicalBar(start + 4 * hour, 102),
   ];
   const pointValue = 3;
@@ -362,7 +362,13 @@ test('the public historical run and Robot agree on entry, add-on, reversal and g
       return { time, price };
     },
   });
-  const prepared = bars.map((bar) => ({ ...bar, confirmedEma: bar.ema, previewEma: null }));
+  // The live broker supplies the same observations as the local EMA(2) in this fixture.
+  const confirmed = [null, 100, 302 / 3, 962 / 9, 2744 / 27, 8090 / 81, 24614 / 243];
+  const prepared = bars.map((bar, index) => ({
+    ...bar,
+    confirmedEma: confirmed[index],
+    previewEma: null,
+  }));
   await robot.start();
   emit({ stream: 'live', history: history(prepared.slice(0, 2)) }, start);
   for (const candle of prepared.slice(2, -1)) {

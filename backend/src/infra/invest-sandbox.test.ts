@@ -57,3 +57,30 @@ test('the SDK requests the base futures catalogue through the sandbox channel', 
     instrumentStatus: InstrumentStatus.INSTRUMENT_STATUS_BASE,
   });
 });
+
+test('the SDK retains malformed rows only for backtests, so they are not mistaken for an empty reply', async (t) => {
+  const time = new Date('2026-11-18T12:00:00Z');
+  const quote = { units: 100, nano: 0 };
+  const bar = { time, open: quote, high: quote, low: quote, isComplete: true };
+  t.mock.method(
+    NodeApiClient,
+    'create',
+    async () =>
+      ({
+        marketdata: {
+          async getCandles() {
+            return { candles: [bar, { ...bar, time: undefined, close: quote }] };
+          },
+        },
+      }) as unknown as NodeApiClient,
+  );
+  const adapter = new InvestSandbox();
+  const to = new Date(+time + 3_600_000);
+  const unusable = { time: +time, open: 100, high: 100, low: 100, close: NaN, complete: true };
+  assert.deepEqual(await adapter.backtestCandles(token, 'future', '1h', time, to), [
+    unusable,
+    null,
+  ]);
+  assert.deepEqual(await adapter.minuteCandles(token, 'future', time, to), [unusable, null]);
+  assert.deepEqual(await adapter.candles(token, 'future', '1h', time, to), []);
+});

@@ -103,6 +103,19 @@ function marketCandle(
   };
 }
 
+function backtestCandle({ time, open, high, low, close, isComplete }: HistoricCandle) {
+  if (!time || !Number.isFinite(time.getTime())) return null;
+  // Preserve the observed interval even when the broker omitted a price.
+  return {
+    time: time.getTime(),
+    open: open ? price(open) : NaN,
+    high: high ? price(high) : NaN,
+    low: low ? price(low) : NaN,
+    close: close ? price(close) : NaN,
+    complete: isComplete,
+  };
+}
+
 const brokerStatuses: Partial<Record<ReportStatus, BrokerOrder['brokerStatus']>> = {
   [ReportStatus.EXECUTION_REPORT_STATUS_FILL]: 'filled',
   [ReportStatus.EXECUTION_REPORT_STATUS_REJECTED]: 'rejected',
@@ -331,7 +344,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Histo
     });
   }
 
-  public candles(
+  public async candles(
     token: string,
     instrumentId: string,
     timeframe: Timeframe,
@@ -339,7 +352,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Histo
     to: Date,
     signal?: AbortSignal,
   ) {
-    return this.historicalCandles(
+    const candles = await this.historicalCandles(
       token,
       instrumentId,
       intervals[timeframe].candles,
@@ -347,16 +360,37 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Histo
       to,
       signal,
     );
+    return candles
+      .map((candle) => marketCandle(candle, candle.isComplete))
+      .filter((candle) => candle !== null);
   }
 
-  public minuteCandles(token: string, instrumentId: string, from: Date, to: Date) {
-    return this.historicalCandles(
+  public async backtestCandles(
+    token: string,
+    instrumentId: string,
+    timeframe: Timeframe,
+    from: Date,
+    to: Date,
+  ) {
+    const candles = await this.historicalCandles(
+      token,
+      instrumentId,
+      intervals[timeframe].candles,
+      from,
+      to,
+    );
+    return candles.map(backtestCandle);
+  }
+
+  public async minuteCandles(token: string, instrumentId: string, from: Date, to: Date) {
+    const candles = await this.historicalCandles(
       token,
       instrumentId,
       CandleInterval.CANDLE_INTERVAL_1_MIN,
       from,
       to,
     );
+    return candles.map(backtestCandle);
   }
 
   public ema(
@@ -447,9 +481,7 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Histo
         { instrumentId, from, to, interval },
         requestOptions(signal),
       );
-      return candles
-        .map((candle) => marketCandle(candle, candle.isComplete))
-        .filter((candle) => candle !== null);
+      return candles;
     });
   }
 

@@ -189,7 +189,7 @@ test('one non-EMA definition drives actual live reconnect and public backtest', 
   decisions.length = 0;
   const backtest = new BacktestHistory(
     {
-      async candles() {
+      async backtestCandles() {
         return bars;
       },
       async backtestFuture() {

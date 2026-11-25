@@ -20,7 +20,7 @@ export type HistoricalCandle = {
   high: number;
   low: number;
   close: number;
-  ema: number;
+  ema: number | null;
 };
 export type BacktestExecution = {
   time: number;
@@ -31,8 +31,17 @@ export type BacktestExecution = {
   reason: 'entry' | 'add-on' | 'reversal-exit' | 'reversal-entry' | 'gap' | 'stop';
 };
 export type EquityPoint = { time: number; value: number };
+export type BacktestCoverage = {
+  requested: { from: string; to: string };
+  actual: { from: number; to: number };
+  uncoveredStart: boolean;
+  uncoveredEnd: boolean;
+  excludedIntervals?: number[];
+  readyAt?: number;
+};
 export type BacktestReport = {
   parameters: BacktestParameters;
+  coverage: BacktestCoverage;
   currency: string;
   pointValue: number;
   priceStep: number;
@@ -52,7 +61,7 @@ export type BacktestReport = {
     returnPercent: number;
   };
 };
-type BacktestLimits = { maxDays: number; maxEmaPeriod: number };
+type BacktestLimits = { maxEmaPeriod: number };
 
 export const backtestApi = rootApi.injectEndpoints({
   endpoints: (builder) => ({

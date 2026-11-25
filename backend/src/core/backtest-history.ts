@@ -1,23 +1,33 @@
 import { Temporal } from '@js-temporal/polyfill';
-import type { MarketBroker, MarketCandle } from './market-data.js';
+import type { MarketCandle } from './market-data.js';
 import type { Side } from './crossing.js';
-import { timeframeMs } from './timeframe.js';
+import { timeframeMs, type Timeframe } from './timeframe.js';
 import {
   runBacktest,
   type BacktestContract,
   type BacktestDataset,
   type BacktestBaseParameters,
   type BacktestParameters,
-  type BacktestCandle,
+  type BacktestChartCandle,
   type BacktestReport,
 } from './backtest.js';
 
 const dayMs = 86_400_000;
 const maxChunkMs = 6 * dayMs;
 const maxWarmupMs = 365 * dayMs;
-export const backtestLimits = { maxDays: 30, maxEmaPeriod: 1000 };
+export const backtestLimits = { maxEmaPeriod: 1000 };
 
-export interface BacktestBroker extends Pick<MarketBroker, 'candles'> {
+// Undated broker rows are observable but cannot be assigned to an interval.
+export type BacktestCandleRows = (MarketCandle | null)[];
+
+export interface BacktestBroker {
+  backtestCandles(
+    token: string,
+    uid: string,
+    timeframe: Timeframe,
+    from: Date,
+    to: Date,
+  ): Promise<BacktestCandleRows>;
   backtestFuture(
     token: string,
     uid: string,
@@ -33,11 +43,10 @@ export interface BacktestBroker extends Pick<MarketBroker, 'candles'> {
 
 type BacktestErrorCode =
   | 'INVALID_REQUEST'
-  | 'BACKTEST_PERIOD_TOO_LONG'
-  | 'BACKTEST_CONTRACT_PERIOD'
+  | 'BACKTEST_HISTORY_EMPTY'
   | 'BACKTEST_CANDLES_MISSING'
-  | 'BACKTEST_MINUTES_MISSING'
-  | 'BACKTEST_EMA_MISSING'
+  | 'BACKTEST_NO_CONFIRMED_INTERVALS'
+  | 'BACKTEST_CANDLES_LOAD_FAILED'
   | 'BACKTEST_PERIOD_UNFINISHED'
   | 'BACKTEST_EXECUTION_PRICE_INVALID'
   | 'BACKTEST_WARMUP_MISSING'
@@ -45,11 +54,13 @@ type BacktestErrorCode =
   | 'BACKTEST_CONTRACT_PARAMS_MISSING';
 
 export type BacktestAdapter<P extends BacktestBaseParameters, C extends MarketCandle, S> = {
+  emaSource?: 'local';
   warmupCount(parameters: P): number;
   prepare(
     parameters: P,
     selected: MarketCandle[],
     warmup: MarketCandle[],
+    warmupInRange: number,
   ): { candles: C[]; initialState: S };
   decide(
     state: S,
@@ -60,7 +71,16 @@ export type BacktestAdapter<P extends BacktestBaseParameters, C extends MarketCa
 type RawBacktestDataset<P, C extends MarketCandle, S> = Omit<
   BacktestDataset<P, C, S>,
   'contract'
-> & { contract: BacktestContract };
+> & { contract: BacktestContract; coverage: BacktestCoverage };
+
+export type BacktestCoverage = {
+  requested: { from: string; to: string };
+  actual: { from: number; to: number };
+  uncoveredStart: boolean;
+  uncoveredEnd: boolean;
+  excludedIntervals?: number[];
+  readyAt?: number;
+};
 
 export class BacktestError extends Error {
   constructor(
@@ -84,11 +104,79 @@ export function parseBacktestDate(value: string) {
   }
 }
 
+export function backtestCalendar(timeZone: string) {
+  const localDay = (time: number) =>
+    Temporal.Instant.fromEpochMilliseconds(time).toZonedDateTimeISO(timeZone).toPlainDate();
+  const startOfDay = (day: Temporal.PlainDate) => day.toZonedDateTime(timeZone).epochMilliseconds;
+  return { localDay, startOfDay };
+}
+
+export function contractHistoryBounds(
+  from: number,
+  to: number,
+  { firstTrade, lastTrade }: Awaited<ReturnType<BacktestBroker['backtestFuture']>>,
+  timeZone: string,
+) {
+  const { localDay, startOfDay } = backtestCalendar(timeZone);
+  const contractStart = firstTrade ? startOfDay(localDay(+firstTrade)) : -Infinity;
+  const last = lastTrade ? startOfDay(localDay(+lastTrade).add({ days: 1 })) : Infinity;
+  const start = Math.max(from, contractStart);
+  const end = Math.min(to, last);
+  if (start >= end) throw new BacktestError('BACKTEST_HISTORY_EMPTY');
+  return { start, end, contractStart };
+}
+
+export const backtestWarmupStart = (availableFrom: number, contractStart: number) =>
+  Math.max(availableFrom - maxWarmupMs, contractStart);
+
+export function describeCoverage(
+  { from, to }: { from: string; to: string },
+  candles: readonly MarketCandle[],
+  timeZone: string,
+): BacktestCoverage {
+  const { localDay } = backtestCalendar(timeZone);
+  const actual = { from: candles[0].time, to: candles[candles.length - 1].time };
+  return {
+    requested: { from, to },
+    actual,
+    uncoveredStart: localDay(actual.from).toString() !== from,
+    uncoveredEnd: localDay(actual.to).toString() !== to,
+  };
+}
+
+export async function loadBacktestCandles(read: () => Promise<BacktestCandleRows>) {
+  try {
+    return await read();
+  } catch {
+    throw new BacktestError('BACKTEST_CANDLES_LOAD_FAILED');
+  }
+}
+
+export function completeBacktestWarmup(
+  prior: MarketCandle[],
+  selected: MarketCandle[],
+  required: number,
+  searchedFrom: string,
+  interval: number,
+) {
+  const warmupInRange = Math.max(0, required - prior.length);
+  if (warmupInRange > selected.length)
+    throw new BacktestError('BACKTEST_WARMUP_MISSING', {
+      required,
+      available: prior.length + selected.length,
+      searchedFrom,
+    });
+  const warmup = required ? prior.slice(-required).concat(selected.slice(0, warmupInRange)) : [];
+  // Indicators use completed candles, so the readiness boundary is the closing time.
+  const readyAt = warmupInRange ? selected[warmupInRange - 1].time + interval : undefined;
+  return { warmup, warmupInRange, readyAt };
+}
+
 function mergeCandle(entries: Map<number, MarketCandle>, candle: MarketCandle) {
   const previous = entries.get(candle.time);
-  if (!previous?.complete) entries.set(candle.time, candle);
+  if (!previous || !usableCandle(previous)) entries.set(candle.time, candle);
   else if (
-    candle.complete &&
+    usableCandle(candle) &&
     (previous.open !== candle.open ||
       previous.high !== candle.high ||
       previous.low !== candle.low ||
@@ -99,10 +187,12 @@ function mergeCandle(entries: Map<number, MarketCandle>, candle: MarketCandle) {
 }
 
 const byTime = (a: MarketCandle, b: MarketCandle) => a.time - b.time;
+const usableCandle = (bar: MarketCandle) =>
+  bar.complete && [bar.open, bar.high, bar.low, bar.close].every(Number.isFinite);
 
 export class BacktestHistory<
   P extends BacktestBaseParameters = BacktestParameters,
-  C extends MarketCandle = BacktestCandle,
+  C extends MarketCandle = BacktestChartCandle,
   S = Side | null,
 > {
   constructor(
@@ -113,11 +203,16 @@ export class BacktestHistory<
   ) {}
 
   public async check(parameters: P) {
-    const { parameters: selected, candles, cutoff } = await this.gather(parameters);
-    return { parameters: selected, candles, cutoff };
+    const { parameters: selected, candles, cutoff, coverage } = await this.gather(parameters);
+    return { parameters: selected, candles, cutoff, coverage, emaSource: this.adapter.emaSource };
   }
 
-  public async run(parameters: P): Promise<BacktestReport<P, C>> {
+  public async run(parameters: P): Promise<
+    BacktestReport<P, C> & {
+      coverage: BacktestCoverage;
+      emaSource?: 'local';
+    }
+  > {
     const dataset = await this.gather(parameters);
     const { priceStep, priceStepAmount, lot, currency } = dataset.contract;
     if (
@@ -133,10 +228,14 @@ export class BacktestHistory<
     ) {
       throw new BacktestError('BACKTEST_CONTRACT_PARAMS_MISSING');
     }
-    return runBacktest(
-      { ...dataset, contract: { currency, priceStep, priceStepAmount, lot } },
-      this.adapter.decide,
-    );
+    return {
+      ...runBacktest(
+        { ...dataset, contract: { currency, priceStep, priceStepAmount, lot } },
+        this.adapter.decide,
+      ),
+      emaSource: this.adapter.emaSource,
+      coverage: dataset.coverage,
+    };
   }
 
   private async gather(parameters: P): Promise<RawBacktestDataset<P, C, S>> {
@@ -144,14 +243,11 @@ export class BacktestHistory<
     const fromDay = parseBacktestDate(parameters.from);
     const toDay = parseBacktestDate(parameters.to);
     const now = this.now();
-    const localDay = (time: number) =>
-      Temporal.Instant.fromEpochMilliseconds(time).toZonedDateTimeISO(timeZone).toPlainDate();
-    const startOfDay = (day: Temporal.PlainDate) => day.toZonedDateTime(timeZone).epochMilliseconds;
+    const { localDay, startOfDay } = backtestCalendar(timeZone);
     const days = fromDay.until(toDay).days + 1;
     if (days < 1 || Temporal.PlainDate.compare(toDay, localDay(now)) > 0) {
       throw new BacktestError('INVALID_REQUEST');
     }
-    if (days > backtestLimits.maxDays) throw new BacktestError('BACKTEST_PERIOD_TOO_LONG');
     const from = startOfDay(fromDay);
     // Calendar days can be shorter or longer than 24 hours, and midnight itself can be skipped.
     const to = startOfDay(toDay.add({ days: 1 }));
@@ -161,53 +257,55 @@ export class BacktestHistory<
     const warmupCount = this.adapter.warmupCount(parameters);
     const token = await this.loadToken();
     const contract = await this.broker.backtestFuture(token, instrumentUid);
-    const firstTradeDay = contract.firstTrade && localDay(+contract.firstTrade);
-    if (
-      (firstTradeDay && Temporal.PlainDate.compare(fromDay, firstTradeDay) < 0) ||
-      (contract.lastTrade && Temporal.PlainDate.compare(toDay, localDay(+contract.lastTrade)) > 0)
-    ) {
-      throw new BacktestError('BACKTEST_CONTRACT_PERIOD');
-    }
     const interval = timeframeMs[timeframe];
-    const end = Math.min(to, now);
+    const {
+      start: availableFrom,
+      end,
+      contractStart,
+    } = contractHistoryBounds(from, to, contract, timeZone);
+    const cutoff = Math.min(to, now);
+    const availableTo = Math.min(end, cutoff);
     const readCandles = (start: number, stop: number) =>
-      this.broker.candles(token, instrumentUid, timeframe, new Date(start), new Date(stop));
+      loadBacktestCandles(() =>
+        this.broker.backtestCandles(
+          token,
+          instrumentUid,
+          timeframe,
+          new Date(start),
+          new Date(stop),
+        ),
+      );
     const candles = new Map<number, MarketCandle>();
-    for (let start = from; start < end; ) {
-      const stop = Math.min(start + maxChunkMs, end);
+    let sawUndated = false;
+    for (let start = availableFrom; start < availableTo; ) {
+      const stop = Math.min(start + maxChunkMs, availableTo);
       for (const bar of await readCandles(start, stop)) {
-        if (bar.time >= start && bar.time <= stop && bar.time < to && bar.time + interval <= now) {
+        if (!bar || !Number.isFinite(bar.time)) sawUndated = true;
+        else if (bar.time >= start && bar.time <= stop && bar.time < availableTo) {
           mergeCandle(candles, bar);
         }
       }
-      if (stop === end) break;
+      if (stop === availableTo) break;
       start = stop - interval;
     }
 
-    const selected = [...candles.values()].sort(byTime);
-    if (
-      selected.length === 0 ||
-      selected.some(
-        (bar) => !bar.complete || ![bar.open, bar.high, bar.low, bar.close].every(Number.isFinite),
-      )
-    ) {
-      throw new BacktestError('BACKTEST_CANDLES_MISSING');
-    }
+    if (!candles.size && !sawUndated) throw new BacktestError('BACKTEST_HISTORY_EMPTY');
+    const selected = [...candles.values()]
+      .filter((bar) => usableCandle(bar) && bar.time + interval <= now)
+      .sort(byTime);
+    if (!selected.length) throw new BacktestError('BACKTEST_CANDLES_MISSING');
 
-    const earliest = Math.max(
-      from - maxWarmupMs,
-      firstTradeDay ? startOfDay(firstTradeDay) : -Infinity,
-    );
+    const earliest = backtestWarmupStart(availableFrom, contractStart);
     const before = new Map<number, MarketCandle>();
-    for (let stop = from; stop > earliest && before.size < warmupCount; ) {
+    for (let stop = availableFrom; stop > earliest && before.size < warmupCount; ) {
       const start = Math.max(stop - maxChunkMs, earliest);
       for (const bar of await readCandles(start, stop)) {
         if (
+          bar &&
           bar.time >= start &&
           bar.time <= stop &&
-          bar.time + interval <= from &&
-          bar.complete &&
-          Number.isFinite(bar.close)
+          bar.time + interval <= availableFrom &&
+          usableCandle(bar)
         ) {
           mergeCandle(before, bar);
         }
@@ -215,16 +313,19 @@ export class BacktestHistory<
       if (start === earliest) break;
       stop = start + interval;
     }
-    if (before.size < warmupCount) {
-      throw new BacktestError('BACKTEST_WARMUP_MISSING', {
-        required: warmupCount,
-        available: before.size,
-        searchedFrom: localDay(earliest).toString(),
-      });
-    }
-
-    const warmup = warmupCount === 0 ? [] : [...before.values()].sort(byTime).slice(-warmupCount);
-    const { candles: rows, initialState } = this.adapter.prepare(parameters, selected, warmup);
+    const { warmup, warmupInRange, readyAt } = completeBacktestWarmup(
+      [...before.values()].sort(byTime),
+      selected,
+      warmupCount,
+      localDay(earliest).toString(),
+      interval,
+    );
+    const { candles: rows, initialState } = this.adapter.prepare(
+      parameters,
+      selected,
+      warmup,
+      warmupInRange,
+    );
 
     const contractData: BacktestContract = {
       currency: contract.currency,
@@ -237,7 +338,9 @@ export class BacktestHistory<
       candles: rows,
       contract: contractData,
       initialState,
-      cutoff: end < to ? end : null,
+      warmupInRange,
+      cutoff: cutoff < to ? cutoff : null,
+      coverage: { ...describeCoverage(parameters, selected, timeZone), readyAt },
     };
   }
 }

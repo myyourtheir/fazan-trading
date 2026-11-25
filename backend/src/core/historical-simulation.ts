@@ -1,5 +1,10 @@
-import { BacktestError } from './backtest-history.js';
-import type { BacktestCandle, BacktestExecution, ResolvedBacktestContract } from './backtest.js';
+import { BacktestError, type BacktestCoverage } from './backtest-history.js';
+import type {
+  BacktestCandle,
+  BacktestChartCandle,
+  BacktestExecution,
+  ResolvedBacktestContract,
+} from './backtest.js';
 import type { Side } from './crossing.js';
 import type { FullBacktestParameters } from './historical-backtest.js';
 import {
@@ -22,12 +27,14 @@ export const moscow = 'Europe/Moscow';
 export const minute = 60_000;
 export type HistoricalDataset = {
   from: number;
-  warmup: BacktestCandle[];
+  warmup: BacktestChartCandle[];
+  warmupInRange: number;
   candles: BacktestCandle[];
   minutes: MarketCandle[];
   sessionByBucket: ReadonlyMap<number, number>;
   missingMinutes: number;
   contract: ResolvedBacktestContract;
+  coverage: BacktestCoverage;
 };
 type Reason = 'entry' | 'add-on' | 'reversal-exit' | 'reversal-entry' | 'gap' | 'stop';
 
@@ -98,8 +105,9 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
     const immediateLoss = (price - base) * delta * pointValue;
     return value(base) - commission - immediateLoss >= requiredMargin(position + delta, base);
   };
-  const observe = (candle: BacktestCandle): Side | null => {
-    previousEma = candle.ema;
+  const observe = (candle: BacktestChartCandle): Side | null => {
+    const { ema } = candle;
+    previousEma = ema ?? undefined;
     if (improved) {
       const observed = observeCompleted(
         indicators,
@@ -109,12 +117,17 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
       indicators = observed.state;
       return observed.crossing;
     }
-    if (parameters.kind !== 'surfing') return null;
-    const next = decideSurfing({ side: surfingSide }, candle, parameters);
+    if (parameters.kind !== 'surfing' || ema === null) return null;
+    const next = decideSurfing({ side: surfingSide }, { ...candle, ema }, parameters);
     surfingSide = next.state.side;
     return next.signal ? surfingSide : null;
   };
-  for (const candle of warmup) observe(candle);
+  // ATR can first become ready on a close with a real crossing from an already seeded EMA.
+  // That crossing may execute at the next confirmed open, not during warmup.
+  const readinessCandle = improved && data.warmupInRange ? warmup.at(-1) : undefined;
+  const signalCandles = readinessCandle ? [readinessCandle, ...candles] : candles;
+  const baseline = readinessCandle ? warmup.slice(0, -1) : warmup;
+  for (const candle of baseline) observe(candle);
 
   let closeIndex = 0;
   let lastBucket = -Infinity;
@@ -123,12 +136,12 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
     const bucket = Math.floor(time / interval) * interval;
     const session = data.sessionByBucket.get(bucket)!;
     let signalAtOpen:
-      | { kind: 'crossing'; candle: BacktestCandle; side: Side; atr: number | null }
+      | { kind: 'crossing'; close: number; side: Side; atr: number | null }
       | { kind: 'add-on' }
       | null = null;
     let simultaneousTrail: ImprovedPosition | null = null;
-    while (closeIndex < candles.length && candles[closeIndex].time + interval <= time) {
-      const candle = candles[closeIndex++];
+    while (closeIndex < signalCandles.length && signalCandles[closeIndex].time + interval <= time) {
+      const candle = signalCandles[closeIndex++];
       const signalTime = candle.time + interval;
       const crossing = observe(candle);
       const atr = indicators.atr;
@@ -147,7 +160,7 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
         : crossing;
 
       if (signal && Math.sign(position) !== signal) {
-        if (eligible) signalAtOpen = { kind: 'crossing', candle, side: signal, atr };
+        if (eligible) signalAtOpen = { kind: 'crossing', close: candle.close, side: signal, atr };
         continue;
       }
       if (improved && model && atr !== null) {
@@ -186,7 +199,7 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
           model.addOns++;
         }
       } else if (signalAtOpen.kind === 'crossing') {
-        const { candle, side, atr } = signalAtOpen;
+        const { close, side, atr } = signalAtOpen;
         const reversal = position !== 0;
         if (reversal) {
           fill(time, open, -position, 'reversal-exit');
@@ -195,11 +208,11 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
         const lots =
           parameters.kind === 'surfing'
             ? parameters.lots
-            : entryLots(value(open), candle.close, pointValue);
+            : entryLots(value(open), close, pointValue);
         if (lots > 0 && lots <= 2_147_483_647 && affordable(open, side * lots)) {
           fill(time, open, side * lots, reversal ? 'reversal-entry' : 'entry');
           if (improved && atr !== null)
-            model = openImprovedPosition(side, candle.close, atr, lots, improved);
+            model = openImprovedPosition(side, close, atr, lots, improved);
         }
       }
     }
@@ -220,9 +233,10 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
     throw new BacktestError('BACKTEST_EXECUTION_PRICE_INVALID');
   return {
     parameters: { ...parameters, timeZone: moscow },
+    emaSource: 'local' as const,
+    coverage: data.coverage,
     ...contract,
     pointValue,
-    candles,
     executions,
     equity,
     model: { missingMinutes: data.missingMinutes, marginPerLotAtClose: lastClose },

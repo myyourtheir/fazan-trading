@@ -13,6 +13,7 @@ import {
 import { hasStatus } from '@/shared/api';
 import {
   Alert,
+  AlertDescription,
   AlertTitle,
   Button,
   Card,
@@ -39,25 +40,33 @@ import { DateRangePicker } from './DateRangePicker';
 import { ImprovedBacktestFields, type ImprovedDraft } from './ImprovedBacktestFields';
 
 const runErrors = {
-  BACKTEST_PERIOD_TOO_LONG: 'Сократите диапазон до указанного лимита.',
   INVALID_REQUEST: 'Проверьте параметры и даты прогона.',
   BACKTEST_PERIOD_UNFINISHED: 'Выберите полностью завершившиеся дни по Москве.',
-  BACKTEST_CONTRACT_PERIOD: 'Диапазон выходит за период торгов выбранного контракта.',
-  BACKTEST_CANDLES_MISSING: 'Не хватает завершённых свечей выбранного таймфрейма.',
-  BACKTEST_WARMUP_MISSING: 'Недостаточно подтверждённой истории до начала диапазона для прогрева.',
-  BACKTEST_MINUTES_MISSING: 'Для части свечей выбранного таймфрейма нет минутной истории.',
-  BACKTEST_EMA_MISSING: 'Не хватает исторической брокерской EMA для свечей прогона или прогрева.',
+  BACKTEST_HISTORY_EMPTY: 'За выбранный период нет свечей',
+  BACKTEST_CANDLES_LOAD_FAILED: 'Не удалось загрузить свечи',
+  BACKTEST_CANDLES_MISSING: 'За выбранный период нет пригодных для прогона свечей.',
+  BACKTEST_NO_CONFIRMED_INTERVALS:
+    'За выбранный период нет свечей стратегии, подтверждённых минутными свечами.',
+  BACKTEST_WARMUP_MISSING: 'Недостаточно пригодных свечей для прогрева индикаторов.',
   BACKTEST_UNAVAILABLE: 'Бэктест сейчас недоступен.',
   BACKTEST_EXECUTION_PRICE_INVALID: 'Условия исполнения не дают корректной цены или суммы сделки.',
-  BACKTEST_HISTORY_CONFLICT: 'Свечи выбранного таймфрейма не совпали с минутной историей.',
+  BACKTEST_HISTORY_CONFLICT: 'Источник вернул разные свечи с одним временем открытия.',
   BACKTEST_CONTRACT_PARAMS_MISSING:
     'Нет параметров контракта для пересчёта цены в деньги. Выберите другой контракт.',
   SANDBOX_OPERATION_REJECTED: 'Песочница отклонила запрос истории. Проверьте контракт и период.',
 } as const;
 
+function errorData(error: unknown) {
+  return typeof error === 'object' && error && 'data' in error ? error.data : null;
+}
+
+function errorCode(data: unknown) {
+  return typeof data === 'object' && data && 'code' in data ? data.code : undefined;
+}
+
 function errorMessage(error: unknown) {
-  const data = typeof error === 'object' && error && 'data' in error ? error.data : null;
-  const code = typeof data === 'object' && data && 'code' in data ? data.code : undefined;
+  const data = errorData(error);
+  const code = errorCode(data);
   if (code === 'BACKTEST_WARMUP_MISSING' && data && typeof data === 'object' && 'details' in data) {
     const details = data.details;
     if (
@@ -72,9 +81,9 @@ function errorMessage(error: unknown) {
       Number.isFinite(Date.parse(details.searchedFrom))
     ) {
       return (
-        `Для прогрева нужно завершённых свечей до старта: ${details.required}. ` +
-        `Найдено: ${details.available} (искали до ${calendarDay(details.searchedFrom)} включительно). ` +
-        'Выберите более позднюю дату начала или уменьшите периоды индикаторов.'
+        `Для прогрева нужно завершённых свечей: ${details.required}. ` +
+        `Найдено: ${details.available} (поиск с ${calendarDay(details.searchedFrom)}, включая выбранный диапазон). ` +
+        'Выберите другой диапазон или уменьшите периоды индикаторов.'
       );
     }
   }
@@ -152,6 +161,12 @@ export function BacktestForm({
       : undefined;
   const selected = contracts.find((contract) => contract.uid === instrumentUid) ?? defaultMatch;
   const errors = futures.error ?? limits.error ?? result.error;
+  const code = errorCode(errorData(errors));
+  const historyWarning =
+    code === 'BACKTEST_HISTORY_EMPTY' ||
+    code === 'BACKTEST_CANDLES_MISSING' ||
+    code === 'BACKTEST_NO_CONFIRMED_INTERVALS' ||
+    code === 'BACKTEST_WARMUP_MISSING';
   useEffect(() => {
     if ([futures.error, limits.error, result.error].some((error) => hasStatus(error, 401))) {
       refreshSession();
@@ -292,8 +307,11 @@ export function BacktestForm({
             <p className="text-sm text-muted-foreground">Подходящих фьючерсов нет.</p>
           )}
           {errors && (
-            <Alert variant="destructive">
+            <Alert variant={historyWarning ? 'default' : 'destructive'}>
               <AlertTitle>{errorMessage(errors)}</AlertTitle>
+              {result.error && lastReport && (
+                <AlertDescription>Ниже показан предыдущий успешный отчёт.</AlertDescription>
+              )}
             </Alert>
           )}
           <form
@@ -449,9 +467,8 @@ export function BacktestForm({
               </FieldGroup>
             </fieldset>
             <p id="backtest-period" className="text-sm text-muted-foreground">
-              Обе даты включительно по Москве; сегодня и будущие даты недоступны.{' '}
-              {limits.data && `Лимит прогона: ${limits.data.maxDays} календарных дней. `}
-              Свечи до начала диапазона используются только для прогрева индикаторов.
+              Обе даты включительно по Москве; сегодня и будущие даты недоступны. Свечи до начала
+              диапазона используются только для прогрева индикаторов.
             </p>
             <Button type="submit" className="justify-self-start" disabled={!canRun}>
               {result.isLoading ? 'Считаем…' : 'Запустить бэктест'}

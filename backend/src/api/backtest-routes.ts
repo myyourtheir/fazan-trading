@@ -1,5 +1,4 @@
-import type { BacktestCandle, BacktestParameters } from '../core/backtest.js';
-import type { Side } from '../core/crossing.js';
+import type { BacktestParameters } from '../core/backtest.js';
 import { Router, type RequestHandler } from 'express';
 import { BacktestError, backtestLimits, type BacktestHistory } from '../core/backtest-history.js';
 import type { FullBacktestParameters, HistoricalBacktest } from '../core/historical-backtest.js';
@@ -87,11 +86,14 @@ function readFullParameters(body: Record<string, unknown>): FullBacktestParamete
   return { ...base, ...strategy, kind };
 }
 
-const errorStatus = (error: BacktestError) =>
-  error.code === 'INVALID_REQUEST' || error.code === 'BACKTEST_PERIOD_TOO_LONG' ? 400 : 422;
+function errorStatus(error: BacktestError) {
+  if (error.code === 'INVALID_REQUEST') return 400;
+  if (error.code === 'BACKTEST_CANDLES_LOAD_FAILED') return 502;
+  return 422;
+}
 
 export function backtestRoutes(
-  history: BacktestHistory<BacktestParameters, BacktestCandle, Side | null>,
+  history: BacktestHistory,
   requireOwner: RequestHandler,
   loadTimeZone: () => Promise<string>,
   full?: HistoricalBacktest,
