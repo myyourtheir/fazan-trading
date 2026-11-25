@@ -7,8 +7,7 @@ import type { BacktestReport } from '../api/backtest-api';
 import { calendarDay } from '../lib/calendar-day';
 import { BacktestCoverageNotice } from './BacktestCoverageNotice';
 
-const HistoryChart = lazy(() => import('./HistoryChart'));
-const EquityChart = lazy(() => import('./EquityChart'));
+const BacktestCharts = lazy(() => import('./BacktestCharts'));
 const reasons = {
   entry: 'Вход',
   'add-on': 'Добор',
@@ -104,14 +103,7 @@ export function BacktestReportCard({
           Используются параметры контракта на момент прогона.
         </p>
         <Suspense fallback={<p role="status">Загружаем график…</p>}>
-          <EquityChart points={report.equity} dark={dark} timeZone={timeZone} />
-          <HistoryChart
-            candles={report.candles}
-            executions={executions}
-            dark={dark}
-            timeZone={timeZone}
-            timeframe={parameters.timeframe}
-          />
+          <BacktestCharts report={report} dark={dark} timeZone={timeZone} />
         </Suspense>
         {executions.length === 0 ? (
           <p className="text-sm text-muted-foreground">Исполнений за период нет.</p>

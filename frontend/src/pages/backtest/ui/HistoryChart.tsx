@@ -18,6 +18,7 @@ import {
 } from '@/shared/lib/price-chart';
 import type { BacktestExecution, HistoricalCandle } from '../api/backtest-api';
 import type { Timeframe } from '@/entities/strategy';
+import type { BacktestChartLink } from '../lib/link-backtest-charts';
 
 const intervalMs: Record<Timeframe, number> = {
   '5m': 300_000,
@@ -32,12 +33,14 @@ export default function HistoryChart({
   dark,
   timeZone,
   timeframe,
+  link,
 }: {
   candles: HistoricalCandle[];
   executions: BacktestExecution[];
   dark: boolean;
   timeZone: string;
   timeframe: Timeframe;
+  link?: BacktestChartLink;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
@@ -56,14 +59,16 @@ export default function HistoryChart({
     barsRef.current = chart.addSeries(CandlestickSeries, { borderVisible: false });
     emaRef.current = chart.addSeries(LineSeries, { priceLineVisible: false });
     markersRef.current = createSeriesMarkers(barsRef.current, []);
+    const disconnect = link?.connect(chart, barsRef.current);
     return () => {
+      disconnect?.();
       chartRef.current = barsRef.current = emaRef.current = markersRef.current = null;
       chart.remove();
     };
-  }, []);
+  }, [link]);
   useEffect(() => {
     chartRef.current?.applyOptions(chartTimeOptions(timeZone));
-  }, [timeZone]);
+  }, [timeZone, link]);
   useEffect(() => {
     const precision = candlePricePrecision(candles);
     const seriesPrecision = Math.max(2, precision);
@@ -79,8 +84,8 @@ export default function HistoryChart({
         ema === null ? { time: chartTime(time) } : { time: chartTime(time), value: ema },
       ),
     );
-    chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+    if (!link) chartRef.current?.timeScale().fitContent();
+  }, [candles, link]);
   useEffect(() => {
     markersRef.current?.setMarkers(
       executions.map(({ time, direction }) => ({
@@ -90,14 +95,14 @@ export default function HistoryChart({
         color: direction === 'buy' ? '#22c55e' : '#ef4444',
       })),
     );
-  }, [executions, timeframe]);
+  }, [executions, timeframe, link]);
   useEffect(() => {
     if (!container.current) return;
     const theme = priceChartTheme(container.current);
     chartRef.current?.applyOptions(theme.chart);
     barsRef.current?.applyOptions(theme.candles);
     emaRef.current?.applyOptions({ color: theme.emaColor });
-  }, [dark]);
+  }, [dark, link]);
 
   return (
     <figure className="min-w-0">
