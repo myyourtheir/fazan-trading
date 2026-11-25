@@ -6,6 +6,7 @@ import {
   type IRange,
   type LogicalRange,
   type MouseEventParams,
+  type SeriesType,
   type Time,
 } from 'lightweight-charts';
 import { chartTime } from '@/shared/lib/price-chart';
@@ -48,7 +49,7 @@ export function linkBacktestCharts(equity: readonly { time: number }[], candles:
   }
 
   return {
-    connect(chart: IChartApi, series: ISeriesApi<'Line' | 'Candlestick'>) {
+    connect(chart: IChartApi, series: Pick<ISeriesApi<SeriesType>, 'attachPrimitive'>) {
       chart.applyOptions({
         crosshair: { mode: CrosshairMode.Normal },
         rightPriceScale: { minimumWidth: 96 },

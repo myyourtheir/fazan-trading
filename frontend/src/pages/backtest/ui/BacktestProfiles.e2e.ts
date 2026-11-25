@@ -18,14 +18,14 @@ const contract = {
   expirationDate: null,
 };
 
-function reportFor(parameters: BacktestRequest): BacktestReport {
+function reportFor(parameters: BacktestRequest, minutes = 120): BacktestReport {
   const start = Date.UTC(2026, 10, 18, 10);
   const minute = 60_000;
   return {
     parameters: { ...parameters, timeZone: 'Europe/Moscow' },
     coverage: {
       requested: { from: parameters.from, to: parameters.to },
-      actual: { from: start, to: start + 120 * minute },
+      actual: { from: start, to: start + minutes * minute },
       uncoveredStart: false,
       uncoveredEnd: false,
     },
@@ -34,7 +34,7 @@ function reportFor(parameters: BacktestRequest): BacktestReport {
     priceStep: 0.5,
     priceStepAmount: 5,
     lot: 1,
-    candles: Array.from({ length: 4 }, (_, i) => ({
+    candles: Array.from({ length: minutes / 30 }, (_, i) => ({
       time: start + i * 30 * minute,
       open: 100 + i,
       high: 104 + i,
@@ -43,7 +43,7 @@ function reportFor(parameters: BacktestRequest): BacktestReport {
       ema: 101 + i,
     })),
     executions: [],
-    equity: Array.from({ length: 121 }, (_, i) => ({
+    equity: Array.from({ length: minutes + 1 }, (_, i) => ({
       time: start + i * minute,
       value: 100_000 + i,
     })),
@@ -81,6 +81,7 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
       if (x === 0 && y === 0 && w === canvas.width && h === canvas.height) {
         delete canvas.dataset.axisTicks;
         delete canvas.dataset.hoverTime;
+        delete canvas.dataset.maxBodyWidth;
       }
     }
     CanvasRenderingContext2D.prototype.clearRect = function (x, y, w, h) {
@@ -89,6 +90,11 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
     };
     CanvasRenderingContext2D.prototype.fillRect = function (x, y, w, h) {
       reset(this.canvas, x, y, w, h);
+      if (w >= 1 && w <= 24 && h >= 3) {
+        this.canvas.dataset.maxBodyWidth = String(
+          Math.max(w, Number(this.canvas.dataset.maxBodyWidth ?? 0)),
+        );
+      }
       fillRect.call(this, x, y, w, h);
     };
     CanvasRenderingContext2D.prototype.fillText = function (text, x, y, maxWidth) {
@@ -156,7 +162,7 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
         runs.push(parameters);
         return runs.length === 1
           ? route.fulfill({ status: 422, json: { code: 'BACKTEST_NO_CONFIRMED_INTERVALS' } })
-          : route.fulfill({ json: reportFor(parameters) });
+          : route.fulfill({ json: reportFor(parameters, runs.length === 4 ? 7_200 : 120) });
       }
       default:
         return route.fulfill({ status: 404 });
@@ -224,18 +230,29 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
   }
 
   await hover(equity, 0.46);
-  await expect.poll(() => canvasText(equity, 'hoverTime')).toHaveLength(1);
-  const equityHover = await canvasText(equity, 'hoverTime');
-  expect(equityHover[0]).toMatch(/05:(?!00|30)\d{2} GMT-5$/); // No 30-minute candle starts here.
+  // No 30-minute candle starts here. Wait for the final pointer position after scrolling.
+  const equityHover = ['18.11.2026, 05:55 GMT-5'];
+  await expect.poll(() => canvasText(equity, 'hoverTime')).toEqual(equityHover);
   await expect.poll(() => canvasText(history, 'hoverTime')).toEqual(equityHover);
 
+  const candleValues = page.getByLabel('Свеча под курсором').locator('dd');
+  await hover(history, 0.5);
+  await expect(candleValues).toHaveText([/06:00 GMT-5$/, '102', '106', '101', '105', '103']);
   await hover(history, 0.67);
-  await expect.poll(() => canvasText(history, 'hoverTime')).not.toEqual(equityHover);
-  await expect.poll(() => canvasText(history, 'hoverTime')).toHaveLength(1);
+  await expect(candleValues).toHaveText(['—', '—', '—', '—', '—', '—']);
   await expect
-    .poll(() => canvasText(equity, 'hoverTime'))
-    .toEqual(await canvasText(history, 'hoverTime'));
+    .poll(async () => {
+      const [price, account] = await Promise.all([
+        canvasText(history, 'hoverTime'),
+        canvasText(equity, 'hoverTime'),
+      ]);
+      return Boolean(price[0]?.match(/06:2\d GMT-5$/) && price[0] === account[0]);
+    })
+    .toBe(true);
+  await hover(history, 0.5);
+  await expect(candleValues.first()).toHaveText(/06:00 GMT-5$/);
   await page.mouse.move(1, 1);
+  await expect(candleValues.first()).toHaveText('—');
   await expect.poll(() => canvasText(history, 'hoverTime')).toEqual([]);
   await expect.poll(() => canvasText(equity, 'hoverTime')).toEqual([]);
 
@@ -265,6 +282,10 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
   await expect.poll(() => canvasText(equity, 'axisTicks')).toEqual(fullRange);
   await expect.poll(() => canvasText(history, 'axisTicks')).toEqual(fullRange);
 
+  await run.click();
+  // On a five-day minute timeline the native renderer would draw each 30-minute candle one pixel wide.
+  await expect(history.locator('canvas').first()).toHaveAttribute('data-max-body-width', /^[2-7]$/);
+
   await kind.selectOption('surfing');
   await expect(page.getByLabel('Объём, лотов')).toHaveValue('3');
   await expect(page.getByLabel('Период EMA')).toHaveValue('44');
@@ -273,6 +294,7 @@ test('backtest uses saved profiles and links only the Improved Surfing report ch
   await expect(page.getByLabel('Проскальзывание, шагов цены')).toHaveValue('2');
   await run.click();
   await expect(page.getByText(/Surfing · 3 лот/)).toBeVisible();
+  await expect(candleValues).toHaveCount(0);
   await hover(equity, 0.46);
   await expect.poll(() => canvasText(equity, 'hoverTime')).toHaveLength(1);
   await expect.poll(() => canvasText(history, 'hoverTime')).toEqual([]);
