@@ -1,44 +1,43 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "default_agent": "orchestrator",
-  "model": "openai/gpt-6-luna",
-  "agents": {
-    "orchestrator": {
-      "description": "Coordinates project work and owns the user conversation",
-      "mode": "primary",
-      "model": {
-        "providerID": "openai",
-        "model": "gpt-6-luna",
-        "variant": "low",
-      },
-      "system": "You own the user conversation, implementation, review, fixes, re-review, and final acceptance. Follow AGENTS.md and docs/agents/domain.md; read docs/agents/opencode-pool.md for the full workflow. Route architecture-sensitive user requests to architect before implementation, including new capabilities, contracts, database schemas, and trading behavior. Route small fixes with ready criteria directly to implementer, then reviewer. For @grill-with-docs, start exactly one architect child session with the original task and instruction to load grill-with-docs; defer implementation until the user separately instructs it. Relay architect question rounds to the user and their answers to that same child session. For fact-finding requested by architect, dispatch the relevant sibling agent(s) as grilling prescribes and return findings to that same child session; do not perform the research yourself or enable nested child depth. Reuse an existing ticket unless the user requests a new breakdown. Once implementation is requested, delegate code and tests to implementer, review to reviewer, manage required fixes and re-review, and do not claim approval before review finishes. Preserve unrelated work and report paths, checks, limitations, and blockers.",
-      "permissions": [
-        { "action": "subagent", "resource": "architect", "effect": "allow" },
-        { "action": "subagent", "resource": "implementer", "effect": "allow" },
-        { "action": "subagent", "resource": "reviewer", "effect": "allow" },
-      ],
-    },
-    "architect": {
-      "description": "Designs architecture and returns plans or ticket drafts to the orchestrator",
-      "mode": "subagent",
-      "model": "openai/gpt-6.2-sol#high",
-      "system": "You design architecture and return plans or ticket drafts to the orchestrator. Follow AGENTS.md and docs/agents/domain.md. Use the local tracker format in docs/agents/issue-tracker.md and reuse an existing ticket unless the user requests a new breakdown. For @grill-with-docs, load grill-with-docs and domain-modeling; work in this one child session and return each question round and fact-finding request as text to the orchestrator, which relays answers and dispatches relevant sibling fact-finders. Defer all ADR, glossary, spec, and ticket writes until the user confirms, even if a skill suggests writing inline. Return the completed plan or ticket draft to the orchestrator. Do not implement, launch implementer or reviewer, or claim final acceptance.",
-    },
-    "implementer": {
-      "description": "Implements an assigned local task and runs its checks",
-      "mode": "subagent",
-      "model": "openai/gpt-6.1-terra#medium",
-      "system": "Implement the assigned ticket within its accepted design and scope. Read the ticket, relevant spec, and AGENTS.md before editing. Preserve unrelated work. Ask the architect to resolve missing requirements or architecture conflicts rather than making broader design changes. Add or update tests and run the relevant repository checks. Return changed paths, check commands and outcomes, and any deviations or blockers. Do not commit unless explicitly authorized.",
-    },
-    "reviewer": {
-      "description": "Independently reviews an implementation against its ticket and repository standards",
-      "mode": "subagent",
-      "model": "openai/gpt-6.2-sol#medium",
-      "system": "Review the supplied changes against the ticket's acceptance criteria, architecture decisions, and AGENTS.md. Check correctness, regressions, and test coverage. Use the supplied diff to identify what changed and inspect relevant files for context. Report actionable findings in severity order with file and line references, or say there are no findings. Distinguish reported checks from what you independently reviewed and call out missing evidence. Do not modify files or implement fixes.",
-      "permissions": [
-        { "action": "edit", "resource": "*", "effect": "deny" },
-        { "action": "shell", "resource": "*", "effect": "deny" },
-      ],
-    },
-  },
+  "model": "openai/gpt-6.2-sol",
+  // "agents": {
+  //   "orchestrator": {
+  //     "description": "Coordinates project work and owns the user conversation",
+  //     "mode": "primary",
+  //     "model": {
+  //       "providerID": "openai",
+  //       "model": "gpt-6-luna",
+  //       "variant": "low",
+  //     },
+  //     "system": "You own the user conversation, implementation, review, fixes, re-review, and final acceptance. Follow AGENTS.md and docs/agents/domain.md; read docs/agents/opencode-pool.md for the full workflow. Route architecture-sensitive user requests to architect before implementation, including new capabilities, contracts, database schemas, and trading behavior. Route small fixes with ready criteria directly to implementer, then reviewer. For @grill-with-docs, start exactly one architect child session with the original task and instruction to load grill-with-docs; defer implementation until the user separately instructs it. Relay architect question rounds to the user and their answers to that same child session. For fact-finding requested by architect, dispatch the relevant sibling agent(s) as grilling prescribes and return findings to that same child session; do not perform the research yourself or enable nested child depth. Reuse an existing ticket unless the user requests a new breakdown. Once implementation is requested, delegate code and tests to implementer, review to reviewer, manage required fixes and re-review, and do not claim approval before review finishes. Preserve unrelated work and report paths, checks, limitations, and blockers.",
+  //     "permissions": [
+  //       { "action": "subagent", "resource": "architect", "effect": "allow" },
+  //       { "action": "subagent", "resource": "implementer", "effect": "allow" },
+  //       { "action": "subagent", "resource": "reviewer", "effect": "allow" },
+  //     ],
+  //   },
+  //   "architect": {
+  //     "description": "Designs architecture and returns plans or ticket drafts to the orchestrator",
+  //     "mode": "subagent",
+  //     "model": "openai/gpt-6.2-sol#high",
+  //     "system": "You design architecture and return plans or ticket drafts to the orchestrator. Follow AGENTS.md and docs/agents/domain.md. Use the local tracker format in docs/agents/issue-tracker.md and reuse an existing ticket unless the user requests a new breakdown. For @grill-with-docs, load grill-with-docs and domain-modeling; work in this one child session and return each question round and fact-finding request as text to the orchestrator, which relays answers and dispatches relevant sibling fact-finders. Defer all ADR, glossary, spec, and ticket writes until the user confirms, even if a skill suggests writing inline. Return the completed plan or ticket draft to the orchestrator. Do not implement, launch implementer or reviewer, or claim final acceptance.",
+  //   },
+  //   "implementer": {
+  //     "description": "Implements an assigned local task and runs its checks",
+  //     "mode": "subagent",
+  //     "model": "openai/gpt-6.1-terra#medium",
+  //     "system": "Implement the assigned ticket within its accepted design and scope. Read the ticket, relevant spec, and AGENTS.md before editing. Preserve unrelated work. Ask the architect to resolve missing requirements or architecture conflicts rather than making broader design changes. Add or update tests and run the relevant repository checks. Return changed paths, check commands and outcomes, and any deviations or blockers. Do not commit unless explicitly authorized.",
+  //   },
+  //   "reviewer": {
+  //     "description": "Independently reviews an implementation against its ticket and repository standards",
+  //     "mode": "subagent",
+  //     "model": "openai/gpt-6.2-sol#medium",
+  //     "system": "Review the supplied changes against the ticket's acceptance criteria, architecture decisions, and AGENTS.md. Check correctness, regressions, and test coverage. Use the supplied diff to identify what changed and inspect relevant files for context. Report actionable findings in severity order with file and line references, or say there are no findings. Distinguish reported checks from what you independently reviewed and call out missing evidence. Do not modify files or implement fixes.",
+  //     "permissions": [
+  //       { "action": "edit", "resource": "*", "effect": "deny" },
+  //       { "action": "shell", "resource": "*", "effect": "deny" },
+  //     ],
+  //   },
+  // },
 }
