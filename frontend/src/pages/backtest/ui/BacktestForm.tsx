@@ -323,22 +323,6 @@ export function BacktestForm({
           >
             <fieldset className="min-w-0" disabled={result.isLoading}>
               <FieldGroup className="grid gap-4 sm:grid-cols-3">
-                <Field className="sm:col-span-3">
-                  <FieldLabel htmlFor="backtest-strategy">Стратегия</FieldLabel>
-                  <NativeSelect
-                    id="backtest-strategy"
-                    value={kind}
-                    onChange={(event) => {
-                      const next = event.target.value;
-                      if (next === 'surfing' || next === 'improved-surfing') changeStrategy(next);
-                    }}
-                  >
-                    <NativeSelectOption value="surfing">Surfing</NativeSelectOption>
-                    <NativeSelectOption value="improved-surfing">
-                      Улучшенный серфинг
-                    </NativeSelectOption>
-                  </NativeSelect>
-                </Field>
                 <Field className="min-w-0 sm:col-span-3">
                   <FieldLabel htmlFor="backtest-contract">Контракт</FieldLabel>
                   <NativeSelect
@@ -359,6 +343,22 @@ export function BacktestForm({
                           : ''}
                       </NativeSelectOption>
                     ))}
+                  </NativeSelect>
+                </Field>
+                <Field className="sm:col-span-3">
+                  <FieldLabel htmlFor="backtest-strategy">Стратегия</FieldLabel>
+                  <NativeSelect
+                    id="backtest-strategy"
+                    value={kind}
+                    onChange={(event) => {
+                      const next = event.target.value;
+                      if (next === 'surfing' || next === 'improved-surfing') changeStrategy(next);
+                    }}
+                  >
+                    <NativeSelectOption value="surfing">Surfing</NativeSelectOption>
+                    <NativeSelectOption value="improved-surfing">
+                      Улучшенный серфинг
+                    </NativeSelectOption>
                   </NativeSelect>
                 </Field>
                 <Field>
