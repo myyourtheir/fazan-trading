@@ -115,7 +115,7 @@ export type ProtectionCloseObservation =
   // Definitive history for this stop, not just a current list of active orders.
   | { status: 'never-triggered' }
   // The broker must prove this is the complete set and the parent cannot create more.
-  | { status: 'triggered'; childIds: string[] }
+  | { status: 'triggered'; childIds: string[]; triggeredAtMs?: number }
   | { status: 'unknown' };
 export type Protection = {
   id: string;
@@ -1344,7 +1344,7 @@ export class Robot<
     const previous = this.previousCompleted(session, opened.time);
     const side = this.protection?.direction === 'sell' ? 1 : -1;
     const live = () => this.run === run && run.session === session;
-    const protection = await this.checkLiveProtection(run, live, opened.time);
+    const protection = await this.checkLiveProtection(run, live, opened.time, true);
     if (
       !protection ||
       !previous ||
@@ -1406,6 +1406,11 @@ export class Robot<
     const current = () => live() && this.signalCurrent(run, session, time, revision, this.now());
     if (this.protection) {
       const protection = await this.checkLiveProtection(run, live, time);
+      if (!this.protection) {
+        if (crossing && time > (run.blockedThrough ?? -Infinity) && current())
+          await this.trade(run, session, crossing, revision);
+        return;
+      }
       if (!protection || !current() || time <= (run.blockedThrough ?? -Infinity)) return;
       if (!crossing || crossing.targetPosition === (protection.direction === 'sell' ? 1 : -1)) {
         await this.adjustPosition(run, session, time, revision, protection, current);
@@ -1454,7 +1459,11 @@ export class Robot<
         };
       }
       this.publish();
-      if (outcome.kind !== 'market' || !dispatch()) return;
+      if (
+        (outcome.kind !== 'market' && !this.intrabarStopClosedPosition(run, time, evidence)) ||
+        !dispatch()
+      )
+        return;
     }
     if (crossing && time > (run.blockedThrough ?? -Infinity))
       await this.trade(run, session, crossing, revision);
@@ -1513,7 +1522,12 @@ export class Robot<
       await this.trade(run, session, deferred.reverse.signal, deferred.reverse.revision);
   }
 
-  private async checkLiveProtection(run: Run<C, H>, live: () => boolean, time: number) {
+  private async checkLiveProtection(
+    run: Run<C, H>,
+    live: () => boolean,
+    time: number,
+    atOpening = false,
+  ) {
     const { protection, observation } = await this.lookupProtection(run.config);
     if (!live()) return;
     if (protection.pendingAttempt || protection.evidenceConflict)
@@ -1540,8 +1554,14 @@ export class Robot<
       (observation.status === 'triggered' && observation.childStatus !== 'terminal')
     )
       return;
-    run.blockedThrough = Math.max(run.blockedThrough ?? -Infinity, time);
     const evidence = await this.proveStopInactive(run.config, protection, live, false, true);
+    // The next opening can be processed before the preceding close signal is drained.
+    const previousTime = time - timeframeMs[run.config.timeframe];
+    if (
+      !this.intrabarStopClosedPosition(run, time, evidence) &&
+      !(atOpening && this.intrabarStopClosedPosition(run, previousTime, evidence))
+    )
+      run.blockedThrough = Math.max(run.blockedThrough ?? -Infinity, time);
     if (
       live() &&
       !run.stopRecoveryAttempted &&
@@ -1560,6 +1580,22 @@ export class Robot<
     if (outcome.kind === 'pending' && live()) run.deferredClose = { id: outcome.id };
     run.improvedPosition = undefined;
     this.publish();
+  }
+
+  private intrabarStopClosedPosition(
+    run: Run<C, H>,
+    time: number,
+    evidence: Awaited<ReturnType<Robot<C, HistoryEntry, H>['proveStopInactive']>>,
+  ) {
+    const parent = evidence.current.closeObservation;
+    const triggeredAt = parent?.status === 'triggered' ? parent.triggeredAtMs : undefined;
+    return (
+      evidence.fromPosition === 0 &&
+      triggeredAt !== undefined &&
+      triggeredAt > time &&
+      triggeredAt < time + timeframeMs[run.config.timeframe] &&
+      triggeredAt <= this.now()
+    );
   }
 
   private async adjustPosition(

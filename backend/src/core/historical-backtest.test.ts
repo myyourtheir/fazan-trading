@@ -154,6 +154,29 @@ test('a stop skipped at the opening wins over a simultaneous adverse gap', async
   );
 });
 
+test('a closing crossing can open a new position after an intrabar stop', async () => {
+  const stoppedCandle = start + hour;
+  const { backtest, minutes } = historicalFixture([
+    ...warmup,
+    cross,
+    bar(stoppedCandle, 101, 98, 92),
+    bar(stoppedCandle + hour, 98),
+  ]);
+  const stopTime = stoppedCandle + 9 * 60_000;
+  minutes.find((bar) => bar.time === stoppedCandle)!.low = 98;
+  minutes.find((bar) => bar.time === stopTime)!.low = 92;
+  const report = await backtest.run(improvedRun);
+  assert.deepEqual(
+    report.executions.map(({ reason, time, direction }) => [reason, time, direction]),
+    [
+      ['entry', stoppedCandle, 'buy'],
+      ['stop', stopTime, 'sell'],
+      ['entry', stoppedCandle + hour, 'sell'],
+    ],
+  );
+  assert.ok(report.result.position < 0);
+});
+
 test('trailing protection uses only completed closes and never gives back a better level', async () => {
   const { backtest } = historicalFixture([
     ...warmup,

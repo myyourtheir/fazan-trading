@@ -174,24 +174,26 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
     }
 
     mark(open);
-    const protect = (reason: 'stop' | 'gap', base: number) => {
+    const atBucketOpen = bucket !== lastBucket;
+    const protect = (reason: 'stop' | 'gap', base: number, blocksClose: boolean) => {
       fill(time, base, -position, reason);
       model = null;
-      blockedBar = bucket;
+      if (blocksClose) blockedBar = bucket;
     };
     // Protection already in force has priority at the opening print, including after breaks.
-    if (model && model.side * (open - model.stop) <= 0) protect('stop', open);
+    const stoppedAtOpen = model !== null && model.side * (open - model.stop) <= 0;
+    if (stoppedAtOpen) protect('stop', open, atBucketOpen);
     else if (
       model &&
-      bucket !== lastBucket &&
+      atBucketOpen &&
       previousEma !== undefined &&
       gapAgainstPosition(model.side, open, previousEma)
     )
-      protect('gap', open);
+      protect('gap', open, true);
     if (model && simultaneousTrail) model = simultaneousTrail;
     lastBucket = bucket;
 
-    if (signalAtOpen && blockedBar < bucket) {
+    if (signalAtOpen && !stoppedAtOpen && blockedBar < bucket) {
       if (signalAtOpen.kind === 'add-on' && model) {
         const delta = model.side * model.entryLots;
         if (Math.abs(position + delta) <= 2_147_483_647 && affordable(open, delta)) {
@@ -219,8 +221,8 @@ export function simulateHistory(parameters: FullBacktestParameters, data: Histor
 
     if (model) {
       const stop = model.stop;
-      if (model.side * (open - stop) <= 0) protect('stop', open);
-      else if (model.side === 1 ? low <= stop : high >= stop) protect('stop', stop);
+      if (model.side * (open - stop) <= 0) protect('stop', open, atBucketOpen);
+      else if (model.side === 1 ? low <= stop : high >= stop) protect('stop', stop, false);
     }
     equity.push({ time: time + minute, value: mark(bar.close) });
   }

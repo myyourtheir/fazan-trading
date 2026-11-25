@@ -571,6 +571,60 @@ test('a native stop at the opening takes priority over the gap and suppresses th
   assert.equal(h.robot.status().protection, null);
 });
 
+for (const { offset, nextOpening } of [
+  { offset: hour / 2, nextOpening: false },
+  { offset: hour / 2, nextOpening: true },
+  { offset: 0, nextOpening: false },
+  { offset: hour, nextOpening: false },
+  { offset: undefined, nextOpening: false },
+]) {
+  test(`a closing crossing requires a proven intrabar stop (offset ${offset}, next opening ${nextOpening})`, async () => {
+    let hit = false;
+    const time = start + 2 * hour;
+    const h = setup({
+      nativeProtection: true,
+      submitProtection: 'confirmed',
+      lookup: () =>
+        hit
+          ? { status: 'triggered', childId: 'native', childStatus: 'terminal' }
+          : { status: 'active' },
+      closeEvidence: async () => ({
+        status: 'triggered',
+        childIds: ['native'],
+        triggeredAtMs: offset === undefined ? undefined : time + offset,
+      }),
+      childEvidence: async () => ({ terminal: true, executedLots: 8 }),
+    });
+    await enterLong(h);
+    hit = true;
+    h.setPosition(0);
+    const stopped = { ...candle(time, 90), open: 101, high: 102 };
+    const nextTime = time + hour;
+    if (nextOpening) {
+      h.emit({
+        stream: 'live',
+        history: history([stopped, { ...candle(nextTime, 90), complete: false }]),
+        freshCandleTime: time,
+        openedCandleTime: nextTime,
+      });
+      await setImmediate();
+    } else {
+      await complete(h, stopped);
+    }
+
+    assert.deepEqual(
+      h.orders.map(({ direction, fromPosition }) => [direction, fromPosition]),
+      offset === hour / 2
+        ? [
+            ['buy', 0],
+            ['sell', 0],
+          ]
+        : [['buy', 0]],
+    );
+    assert.equal(h.events.includes('cancel-stop'), false);
+  });
+}
+
 for (const when of ['within the candle', 'after the next close', 'after reconnect'] as const) {
   test(`a deferred reversal reconciles the same order ${when}`, async () => {
     let completeExit = false;
