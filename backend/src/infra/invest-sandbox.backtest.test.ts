@@ -2,6 +2,8 @@ import { surfingBacktest } from '../core/surfing-backtest.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { BacktestHistory, backtestLimits } from '../core/backtest-history.js';
+import { HistoricalBacktest } from '../core/historical-backtest.js';
+import { improvedDefaults } from '../core/strategy-settings.js';
 import { timeframeMs } from '../core/timeframe.js';
 import { InvestSandbox } from './invest-sandbox.js';
 
@@ -9,7 +11,32 @@ const {
   SERFING_TEST_SANDBOX_TOKEN: token,
   SERFING_TEST_FUTURE_UID: instrumentUid,
   SERFING_TEST_BACKTEST_TO: lastDate,
+  SERFING_TEST_BACKTEST_FROM: firstDate,
 } = process.env;
+
+test(
+  'sandbox has full historical coverage for the chosen contract and range',
+  {
+    skip: !token || !instrumentUid || !firstDate || !lastDate,
+    timeout: 180_000,
+  },
+  async () => {
+    assert.ok(token && instrumentUid && firstDate && lastDate);
+    const { ticker: _ticker, ...defaults } = improvedDefaults;
+    const backtest = new HistoricalBacktest(new InvestSandbox(), async () => token, Date.now);
+    const result = await backtest.check({
+      ...defaults,
+      kind: 'improved-surfing',
+      instrumentUid,
+      from: firstDate,
+      to: lastDate,
+      initialMoney: 100_000,
+      commission: 0,
+      slippage: 0,
+    });
+    assert.ok(result.candles.length > 0, 'Choose a period with trading sessions');
+  },
+);
 
 test(
   'sandbox supports the requested historical coverage and exposes futures pricing metadata',

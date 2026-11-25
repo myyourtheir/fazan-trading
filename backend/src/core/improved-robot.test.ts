@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
+import {
+  historicalBar,
+  historicalFixture,
+  improvedRun,
+  moscowMidnight,
+} from './historical-backtest.test-support.js';
 import type { MarketHistory } from './market-data.js';
 import {
   MemoryProtectionTransactions,
@@ -71,6 +77,7 @@ function setup(
     observeOrder?: (order: OrderIntent) => 'filled' | 'new' | 'terminal-partial';
     deferSubmit?: (order: OrderIntent) => boolean;
     tradeWeekends?: boolean;
+    fill?: (order: OrderIntent) => { price: number; time: number };
   } = {},
 ) {
   let listener!: (update: FeedUpdate<MarketHistory>) => void;
@@ -205,7 +212,13 @@ function setup(
           return { brokerOrderId: 'broker', brokerStatus: 'cancelled', executedLots: 0 };
         if (options.partial)
           return { brokerOrderId: 'broker', brokerStatus: options.partial, executedLots: 1 };
-        return { brokerOrderId: 'broker', brokerStatus: 'filled', executedLots: order.lots };
+        const execution = options.fill?.(order);
+        return {
+          brokerOrderId: 'broker',
+          brokerStatus: 'filled',
+          executedLots: order.lots,
+          ...(execution && { executions: [{ ...execution, lots: order.lots, tradeId: order.id }] }),
+        };
       },
       async orderState(_token, order) {
         events.push('lookup-order:' + order.id);
@@ -305,6 +318,74 @@ function setup(
     },
   };
 }
+
+test('the public historical run and Robot agree on entry, add-on, reversal and gap at the same fills', async () => {
+  const bars = [
+    historicalBar(moscowMidnight - 2 * hour, 97),
+    historicalBar(moscowMidnight - hour, 99),
+    historicalBar(start, 99, 101),
+    historicalBar(start + hour, 101, 110),
+    historicalBar(start + 2 * hour, 110, 99),
+    historicalBar(start + 3 * hour, 100, 99),
+    historicalBar(start + 4 * hour, 102),
+  ];
+  const pointValue = 3;
+  const { backtest } = historicalFixture(bars, { pointValue });
+  const report = await backtest.run(improvedRun);
+  assert.deepEqual(
+    report.executions.map(({ reason }) => reason),
+    ['entry', 'add-on', 'reversal-exit', 'reversal-entry', 'gap'],
+  );
+
+  let realized = 0;
+  let position = 0;
+  let entryCost = 0;
+  const fills: { time: number; price: number; lots: number; direction: 'buy' | 'sell' }[] = [];
+  const { robot, emit } = setup({
+    nativeProtection: true,
+    submitProtection: 'confirmed',
+    margin: () => true,
+    sizing: async () => ({ freeMoney: 1000 + realized, pointValue }),
+    session: async () => ({ start, end: start + 5 * hour }),
+    fill(order) {
+      assert.equal(order.context.type, 'signal');
+      const time = order.context.signalTime;
+      const price = bars.find((bar) => bar.time === time)!.open;
+      fills.push({ time, price, direction: order.direction, lots: order.lots });
+      if (order.targetPosition === 0) {
+        realized += (price * position - entryCost) * pointValue;
+        entryCost = 0;
+      } else {
+        entryCost += price * (order.targetPosition - position);
+      }
+      position = order.targetPosition;
+      return { time, price };
+    },
+  });
+  const prepared = bars.map((bar) => ({ ...bar, confirmedEma: bar.ema, previewEma: null }));
+  await robot.start();
+  emit({ stream: 'live', history: history(prepared.slice(0, 2)) }, start);
+  for (const candle of prepared.slice(2, -1)) {
+    emit({ stream: 'live', history: history([candle]), freshCandleTime: candle.time });
+    await setImmediate();
+  }
+  const opening = prepared.at(-1)!;
+  emit(
+    {
+      stream: 'live',
+      history: history([{ ...opening, complete: false }]),
+      openedCandleTime: opening.time,
+    },
+    opening.time,
+  );
+  await setImmediate();
+  assert.deepEqual(
+    fills,
+    report.executions.map(({ time, price, lots, direction }) => ({ time, price, lots, direction })),
+  );
+  assert.equal(robot.status().position, report.result.position);
+  assert.equal(realized, report.result.closed);
+});
 
 test('an opposing close exits through the guarded stop path, then sizes the reverse entry anew', async () => {
   let reads = 0;

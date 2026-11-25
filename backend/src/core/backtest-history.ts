@@ -36,6 +36,10 @@ type BacktestErrorCode =
   | 'BACKTEST_PERIOD_TOO_LONG'
   | 'BACKTEST_CONTRACT_PERIOD'
   | 'BACKTEST_CANDLES_MISSING'
+  | 'BACKTEST_MINUTES_MISSING'
+  | 'BACKTEST_EMA_MISSING'
+  | 'BACKTEST_PERIOD_UNFINISHED'
+  | 'BACKTEST_EXECUTION_PRICE_INVALID'
   | 'BACKTEST_WARMUP_MISSING'
   | 'BACKTEST_HISTORY_CONFLICT'
   | 'BACKTEST_CONTRACT_PARAMS_MISSING';
@@ -71,7 +75,7 @@ export class BacktestError extends Error {
   }
 }
 
-function parseDate(value: string) {
+export function parseBacktestDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw new BacktestError('INVALID_REQUEST');
   try {
     return Temporal.PlainDate.from(value);
@@ -137,8 +141,8 @@ export class BacktestHistory<
 
   private async gather(parameters: P): Promise<RawBacktestDataset<P, C, S>> {
     const { timeZone } = parameters;
-    const fromDay = parseDate(parameters.from);
-    const toDay = parseDate(parameters.to);
+    const fromDay = parseBacktestDate(parameters.from);
+    const toDay = parseBacktestDate(parameters.to);
     const now = this.now();
     const localDay = (time: number) =>
       Temporal.Instant.fromEpochMilliseconds(time).toZonedDateTimeISO(timeZone).toPlainDate();

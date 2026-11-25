@@ -136,6 +136,8 @@ test('the SDK adapter uses the selected interval for history, EMA and streaming'
     assert.deepEqual(events, [{ kind: 'subscribed' }]);
     assert.deepEqual([candleInterval, emaInterval, streamInterval], expected);
   }
+  await broker.minuteCandles('fake-token', 'future', from, to);
+  assert.equal(candleInterval, CandleInterval.CANDLE_INTERVAL_1_MIN);
 });
 
 test(

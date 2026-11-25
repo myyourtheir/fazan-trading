@@ -1,16 +1,18 @@
 import { mutationHeaders, rootApi } from '@/shared/api';
-import type { Timeframe } from '@/entities/strategy';
+import type { ImprovedParameters, Timeframe } from '@/entities/strategy';
+
+export const backtestTimeZone = 'Europe/Moscow';
 
 export type BacktestRequest = {
   instrumentUid: string;
   timeframe: Timeframe;
   emaPeriod: number;
-  lots: number;
   from: string;
   to: string;
   commission: number;
   slippage: number;
-};
+  initialMoney: number;
+} & ({ kind: 'surfing'; lots: number } | ({ kind: 'improved-surfing' } & ImprovedParameters));
 export type BacktestParameters = BacktestRequest & { timeZone: string };
 export type HistoricalCandle = {
   time: number;
@@ -26,12 +28,9 @@ export type BacktestExecution = {
   lots: number;
   price: number;
   commission: number;
+  reason: 'entry' | 'add-on' | 'reversal-exit' | 'reversal-entry' | 'gap' | 'stop';
 };
-export type BacktestSignal = {
-  candleTime: number;
-  direction: 'buy' | 'sell';
-  targetPosition: number;
-};
+export type EquityPoint = { time: number; value: number };
 export type BacktestReport = {
   parameters: BacktestParameters;
   currency: string;
@@ -41,9 +40,17 @@ export type BacktestReport = {
   lot: number;
   candles: HistoricalCandle[];
   executions: BacktestExecution[];
-  finalSignal: BacktestSignal | null;
-  result: { closed: number; open: number; total: number; position: number; maxDrawdown: number };
-  cutoff: number | null;
+  equity: EquityPoint[];
+  model: { missingMinutes: number; marginPerLotAtClose: number };
+  result: {
+    closed: number;
+    open: number;
+    total: number;
+    position: number;
+    maxDrawdown: number;
+    commission: number;
+    returnPercent: number;
+  };
 };
 type BacktestLimits = { maxDays: number; maxEmaPeriod: number };
 

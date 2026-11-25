@@ -70,7 +70,7 @@ export function DateRangePicker({
           locale={ru}
           timeZone="UTC"
           today={today}
-          disabled={today ? { after: today } : undefined}
+          disabled={today ? { after: new Date(+today - 86_400_000) } : undefined}
           mode="range"
           month={month ?? today}
           onMonthChange={setMonth}

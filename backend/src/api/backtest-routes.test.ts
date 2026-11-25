@@ -5,6 +5,14 @@ import { test, type TestContext } from 'node:test';
 import { OwnerAuth, type SessionStore } from '../core/auth.js';
 import { BacktestHistory, type BacktestBroker } from '../core/backtest-history.js';
 import { DisplaySettings } from '../core/display-settings.js';
+import type { HistoricalBacktest } from '../core/historical-backtest.js';
+import {
+  historicalBar,
+  historicalFixture,
+  historyStart,
+  improvedRun,
+  moscowMidnight,
+} from '../core/historical-backtest.test-support.js';
 import { createApp } from './app.js';
 
 const password = 'backtest-test-owner-password';
@@ -37,7 +45,12 @@ const warmup = (last: number) =>
     ),
   );
 
-async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * hour) {
+async function serve(
+  t: TestContext,
+  broker: BacktestBroker,
+  now = start + 25 * hour,
+  historicalBacktest?: HistoricalBacktest,
+) {
   const sessions = new Map<string, Date>();
   const store: SessionStore = {
     async create(digest, expiresAt) {
@@ -64,6 +77,7 @@ async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * 
     auth,
     secureCookies: false,
     displaySettings,
+    historicalBacktest,
     backtest: new BacktestHistory(
       broker,
       async () => 'private-test-token',
@@ -108,6 +122,53 @@ async function serve(t: TestContext, broker: BacktestBroker, now = start + 25 * 
     },
   };
 }
+
+test('explicit strategies run strict Moscow history with cost defaults, never the legacy fallback', async (t) => {
+  const fixture = historicalFixture([
+    historicalBar(moscowMidnight - 2 * hour, 97),
+    historicalBar(moscowMidnight - hour, 99),
+    historicalBar(historyStart, 99, 101),
+    historicalBar(historyStart + hour, 101),
+  ]);
+  const { request, authorize } = await serve(t, data().broker, undefined, fixture.backtest);
+  const {
+    initialMoney: _money,
+    commission: _commission,
+    slippage: _slippage,
+    ...draft
+  } = improvedRun;
+  assert.equal((await request('backtest/run', draft)).status, 401);
+  const cookie = await authorize();
+  await request('settings/display', { timeZone: 'America/New_York' }, cookie, 'PUT');
+  const response = await request('backtest/run', draft, cookie);
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.parameters, {
+    ...draft,
+    timeZone: 'Europe/Moscow',
+    initialMoney: 100_000,
+    commission: 0,
+    slippage: 0,
+  });
+  assert.equal(response.body.executions[0].reason, 'entry');
+  const surf = { ...form, instrumentUid: draft.instrumentUid, emaPeriod: 1, kind: 'surfing' };
+  const other = await request('backtest/run', surf, cookie);
+  assert.equal(other.status, 200);
+  assert.equal(other.body.executions[0].lots, form.lots);
+  for (const invalid of [
+    { kind: 'another' },
+    { atrPeriod: 0 },
+    { tradeWeekends: 'false' },
+    { slippage: 0.5 },
+    { initialMoney: 0 },
+    { initialMoney: null },
+    { commission: 101 },
+  ])
+    assert.equal((await request('backtest/run', { ...draft, ...invalid }, cookie)).status, 400);
+  fixture.minutes.splice(0, 60);
+  assert.deepEqual((await request('backtest/run', surf, cookie)).body, {
+    code: 'BACKTEST_MINUTES_MISSING',
+  });
+});
 
 function data() {
   const candles = [

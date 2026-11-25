@@ -10,6 +10,7 @@ import { brokerIdLimit, isPrintableAscii } from './request-validation.js';
 import { StrategySettingsError, type StrategySettings } from '../core/strategy-settings.js';
 import type { BacktestHistory } from '../core/backtest-history.js';
 import { backtestRoutes } from './backtest-routes.js';
+import type { HistoricalBacktest } from '../core/historical-backtest.js';
 import { defaultTimeZone, type DisplaySettings } from '../core/display-settings.js';
 
 export function createApp({
@@ -21,6 +22,7 @@ export function createApp({
   marketSocket,
   robot,
   backtest,
+  historicalBacktest,
 }: {
   auth: OwnerAuth;
   secureCookies: boolean;
@@ -33,6 +35,7 @@ export function createApp({
   market?: MarketData;
   robot?: RobotService;
   backtest?: BacktestHistory;
+  historicalBacktest?: HistoricalBacktest;
   marketSocket?: { revoke(token: string | undefined): void; reload(): void };
 }) {
   const app = express();
@@ -152,6 +155,7 @@ export function createApp({
         backtest,
         requireOwner,
         async () => (await displaySettings?.get())?.timeZone ?? defaultTimeZone,
+        historicalBacktest,
       ),
     );
   if (market)

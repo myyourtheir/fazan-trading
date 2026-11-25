@@ -36,7 +36,7 @@ import type {
   RecoveryAccount,
 } from '../core/robot.js';
 import type { Timeframe } from '../core/timeframe.js';
-import type { BacktestBroker } from '../core/backtest-history.js';
+import type { HistoricalBroker } from '../core/historical-backtest.js';
 
 const sandboxUrl = 'https://sandbox-invest-public-api.tbank.ru:443';
 const requestOptions = (signal?: AbortSignal, timeoutMs = 8_000) => {
@@ -111,7 +111,7 @@ const brokerStatuses: Partial<Record<ReportStatus, BrokerOrder['brokerStatus']>>
   [ReportStatus.EXECUTION_REPORT_STATUS_PARTIALLYFILL]: 'partial',
 };
 
-export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, BacktestBroker {
+export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, HistoricalBroker {
   private current?: { token: string; client: NodeApiClient };
 
   public accounts(token: string) {
@@ -339,20 +339,24 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     to: Date,
     signal?: AbortSignal,
   ) {
-    return this.call(token, async ({ marketdata }) => {
-      const { candles } = await marketdata.getCandles(
-        {
-          instrumentId,
-          from,
-          to,
-          interval: intervals[timeframe].candles,
-        },
-        requestOptions(signal),
-      );
-      return candles
-        .map((candle) => marketCandle(candle, candle.isComplete))
-        .filter((candle) => candle !== null);
-    });
+    return this.historicalCandles(
+      token,
+      instrumentId,
+      intervals[timeframe].candles,
+      from,
+      to,
+      signal,
+    );
+  }
+
+  public minuteCandles(token: string, instrumentId: string, from: Date, to: Date) {
+    return this.historicalCandles(
+      token,
+      instrumentId,
+      CandleInterval.CANDLE_INTERVAL_1_MIN,
+      from,
+      to,
+    );
   }
 
   public ema(
@@ -428,6 +432,25 @@ export class InvestSandbox implements SandboxBroker, MarketBroker, Broker, Backt
     } finally {
       clearTimeout(watchdog);
     }
+  }
+
+  private historicalCandles(
+    token: string,
+    instrumentId: string,
+    interval: CandleInterval,
+    from: Date,
+    to: Date,
+    signal?: AbortSignal,
+  ) {
+    return this.call(token, async ({ marketdata }) => {
+      const { candles } = await marketdata.getCandles(
+        { instrumentId, from, to, interval },
+        requestOptions(signal),
+      );
+      return candles
+        .map((candle) => marketCandle(candle, candle.isComplete))
+        .filter((candle) => candle !== null);
+    });
   }
 
   private async call<T>(token: string, operation: (client: NodeApiClient) => Promise<T>) {

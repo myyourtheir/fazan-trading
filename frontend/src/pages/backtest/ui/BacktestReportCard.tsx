@@ -7,6 +7,15 @@ import type { BacktestReport } from '../api/backtest-api';
 import { calendarDay } from '../lib/calendar-day';
 
 const HistoryChart = lazy(() => import('./HistoryChart'));
+const EquityChart = lazy(() => import('./EquityChart'));
+const reasons = {
+  entry: 'Вход',
+  'add-on': 'Добор',
+  'reversal-exit': 'Выход при развороте',
+  'reversal-entry': 'Вход при развороте',
+  gap: 'Гэп',
+  stop: 'Стоп',
+} as const;
 
 const moneyFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
 const preciseFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 4 });
@@ -30,22 +39,12 @@ export function BacktestReportCard({
   stale: boolean;
   dark: boolean;
 }) {
-  const {
-    parameters,
-    currency,
-    result,
-    executions,
-    finalSignal,
-    pointValue,
-    priceStep,
-    priceStepAmount,
-    lot,
-  } = report;
+  const { parameters, currency, result, executions, pointValue, priceStep, priceStepAmount, lot } =
+    report;
   const timeZone = useDisplayTimeZone();
   const formatTime = useMemo(() => displayTimeFormatter(timeZone), [timeZone]);
   const currencyCode = currency.toUpperCase();
   const money = (value: number) => `${moneyFormat.format(value)} ${currencyCode}`;
-  const noCosts = parameters.commission === 0 && parameters.slippage === 0;
   return (
     <Card>
       <CardHeader>
@@ -57,80 +56,97 @@ export function BacktestReportCard({
           {calendarDay(parameters.from)} — {calendarDay(parameters.to)} ({parameters.timeZone}) ·{' '}
           {timeframeLabels[parameters.timeframe]} · EMA {parameters.emaPeriod}
           {' · '}
-          {parameters.lots} лот.
-          {report.cutoff !== null && (
-            <> Последний день ещё не закончился: прогон до {formatTime(report.cutoff)}.</>
-          )}
+          {parameters.kind === 'surfing'
+            ? `Surfing · ${parameters.lots} лот.`
+            : `Улучшенный серфинг · ATR ${parameters.atrPeriod}`}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-4">
         <dl className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Stat label="Результат" value={money(result.total)} />
-          <Stat label="Закрытые сделки" value={money(result.closed)} />
-          <Stat label="Открытая позиция" value={money(result.open)} />
+          <Stat
+            label="Доходность после комиссии"
+            value={`${money(result.total)} (${percentFormat.format(result.returnPercent)}%)`}
+          />
+          <Stat label="Реализованный результат" value={money(result.closed)} />
+          <Stat label="Нереализованный результат" value={money(result.open)} />
           <Stat label="Остаток позиции" value={`${result.position} лот.`} />
           <Stat label="Макс. просадка" value={money(result.maxDrawdown)} />
-          <Stat label="Исполнений" value={String(executions.length)} />
+          <Stat label="Суммарная комиссия" value={money(result.commission)} />
         </dl>
         <p className="text-sm text-muted-foreground">
-          EMA рассчитана по закрытиям свечей с прогревом до начала диапазона. Сигнал определяется по
-          завершённой свече, исполнение моделируется по цене открытия следующей свечи внутри
-          периода.
+          Модель: историческая EMA брокера и завершённые свечи. Сигнал исполняется на первом
+          доступном минутном открытии той же сессии, разворот — двумя исполнениями. Гэп исполняется
+          по открытию; стоп — по уровню при касании или по открытию минуты при перескоке. Позиция в
+          конце отмечается по последнему минутному закрытию без принудительного выхода.
         </p>
         <p className="text-sm text-muted-foreground">
-          {noCosts
-            ? 'Комиссия и проскальзывание не учитываются.'
-            : `Комиссия ${preciseFormat.format(parameters.commission)}%, проскальзывание ${percentFormat.format(parameters.slippage)}%` +
-              ' от цены исполнения против владельца.'}{' '}
-          Деньги пересчитаны из пунктов цены: шаг {preciseFormat.format(priceStep)} стоит{' '}
+          Минутные свечи не показывают порядок тиков; время внутриминутного стопа указывается с
+          точностью до минуты. Модель не учитывает стакан, задержки, частичные исполнения, сбои и
+          окно без защиты при замене стопа. Просадка оценивается на открытиях, закрытиях минут и в
+          точках исполнений. Сессии определяются по свечам выбранного таймфрейма, а не по календарю
+          биржи. Внутри найденных интервалов минут без свечей: {report.model.missingMinutes}. Они не
+          считаются перерывами: порядок сделок и стопы в эти минуты неизвестны.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Модельное ГО на лот равно числу пунктов цены в рублях, одинаково для покупки и продажи.
+          Для сделки используется открытие минуты до проскальзывания. На конец периода:{' '}
+          {money(report.model.marginPerLotAtClose)}. Это не фактическое ГО брокера.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Стартовый капитал: {money(parameters.initialMoney)}. Комиссия{' '}
+          {preciseFormat.format(parameters.commission)}% номинала, проскальзывание{' '}
+          {parameters.slippage} шаг. против владельца на каждое исполнение. Деньги пересчитаны из
+          пунктов цены: шаг {preciseFormat.format(priceStep)} стоит{' '}
           {moneyFormat.format(priceStepAmount)} {currencyCode}, поэтому коэффициент{' '}
           {moneyFormat.format(pointValue)} {currencyCode} за пункт на лот (лот — {lot} контракт).{' '}
           Используются параметры контракта на момент прогона.
         </p>
-        {finalSignal && (
-          <p className="text-sm text-muted-foreground">
-            Последний сигнал без следующей свечи —{' '}
-            {finalSignal.direction === 'buy' ? 'покупка' : 'продажа'} на{' '}
-            {formatTime(finalSignal.candleTime)} — не исполнен и не меняет позицию.
-          </p>
-        )}
         <Suspense fallback={<p role="status">Загружаем график…</p>}>
+          <EquityChart points={report.equity} dark={dark} timeZone={timeZone} />
           <HistoryChart
             candles={report.candles}
             executions={executions}
             dark={dark}
             timeZone={timeZone}
+            timeframe={parameters.timeframe}
           />
         </Suspense>
         {executions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Пересечений за период не было — исполнений нет.
-          </p>
+          <p className="text-sm text-muted-foreground">Исполнений за период нет.</p>
         ) : (
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-muted-foreground">
-                <th className="py-1 pr-4 font-normal">Время ({timeZone})</th>
-                <th className="py-1 pr-4 font-normal">Направление</th>
-                <th className="py-1 pr-4 text-right font-normal">Лоты</th>
-                <th className="py-1 pr-4 text-right font-normal">Цена</th>
-                <th className="py-1 text-right font-normal">Комиссия</th>
-              </tr>
-            </thead>
-            <tbody>
-              {executions.map((execution, index) => (
-                <tr key={index} className="border-t">
-                  <td className="py-1 pr-4">{formatTime(execution.time)}</td>
-                  <td className="py-1 pr-4">
-                    {execution.direction === 'buy' ? 'Покупка' : 'Продажа'}
-                  </td>
-                  <td className="py-1 pr-4 text-right">{execution.lots}</td>
-                  <td className="py-1 pr-4 text-right">{preciseFormat.format(execution.price)}</td>
-                  <td className="py-1 text-right">{preciseFormat.format(execution.commission)}</td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <caption className="text-left font-medium">Журнал исполнений</caption>
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="py-1 pr-4 font-normal">Время ({timeZone})</th>
+                  <th className="py-1 pr-4 font-normal">Причина</th>
+                  <th className="py-1 pr-4 font-normal">Направление</th>
+                  <th className="py-1 pr-4 text-right font-normal">Лоты</th>
+                  <th className="py-1 pr-4 text-right font-normal">Цена</th>
+                  <th className="py-1 text-right font-normal">Комиссия</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {executions.map((execution, index) => (
+                  <tr key={index} className="border-t">
+                    <td className="py-1 pr-4">{formatTime(execution.time)}</td>
+                    <td className="py-1 pr-4">{reasons[execution.reason]}</td>
+                    <td className="py-1 pr-4">
+                      {execution.direction === 'buy' ? 'Покупка' : 'Продажа'}
+                    </td>
+                    <td className="py-1 pr-4 text-right">{execution.lots}</td>
+                    <td className="py-1 pr-4 text-right">
+                      {preciseFormat.format(execution.price)}
+                    </td>
+                    <td className="py-1 text-right">
+                      {preciseFormat.format(execution.commission)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </CardContent>
     </Card>

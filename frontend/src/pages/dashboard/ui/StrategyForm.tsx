@@ -17,7 +17,6 @@ import {
   strategyApi,
   timeframeLabels,
   timeframes,
-  type BacktestDraft,
   type StrategyProfiles,
   type StrategyKind,
 } from '@/entities/strategy';
@@ -99,22 +98,7 @@ export function StrategyForm({
     emaPeriod &&
     (kind === 'surfing' ? lots : atrPeriod && stopAtrMultiplier && addStepAtr && maxAddOns !== '');
 
-  // The backtest hand-off carries a snapshot of the current draft, including unsaved edits, and does
-  // not inherit the save restrictions tied to the robot or account state.
-  const openBacktest = () => {
-    void navigate({
-      to: '/backtest',
-      state: {
-        backtestDraft: {
-          instrumentUid: selectedMatch?.uid ?? '',
-          ticker: selectedMatch?.ticker ?? initialTicker,
-          timeframe,
-          emaPeriod,
-          lots,
-        } satisfies BacktestDraft,
-      },
-    });
-  };
+  const openBacktest = () => void navigate({ to: '/backtest' });
 
   return (
     <>
@@ -309,11 +293,9 @@ export function StrategyForm({
         <Button type="submit" disabled={!canSave}>
           {isLoading ? 'Сохраняем…' : 'Сохранить настройки'}
         </Button>
-        {kind === 'surfing' && (
-          <Button type="button" variant="outline" onClick={openBacktest}>
-            Бэктест
-          </Button>
-        )}
+        <Button type="button" variant="outline" disabled={isLoading} onClick={openBacktest}>
+          Бэктест
+        </Button>
         {isSuccess && (
           <p role="status" className="text-sm text-primary">
             Настройки сохранены.

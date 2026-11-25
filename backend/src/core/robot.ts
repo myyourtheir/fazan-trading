@@ -3,12 +3,14 @@ import { journalPositionDelta } from './position.js';
 import type { MarketHistory } from './market-data.js';
 import { timeframeMs, type Timeframe } from './timeframe.js';
 import {
+  actionableCrossing,
   addOnDue,
   entryLots,
   gapAgainstPosition,
   initialIndicators,
   observeCompleted,
   openImprovedPosition,
+  ordinaryTradingDay,
   trailStop,
   type ImprovedPosition,
   type IndicatorState,
@@ -1831,11 +1833,7 @@ export class Robot<
       now >= session.end
     )
       return false;
-    if (!this.improved!.parameters.tradeWeekends) {
-      const day = new Date(now + 3 * 60 * 60 * 1000).getUTCDay();
-      if (day === 0 || day === 6) return false;
-    }
-    return true;
+    return ordinaryTradingDay(now, this.improved!.parameters.tradeWeekends);
   }
 
   private findImprovedSignal(
@@ -1859,18 +1857,15 @@ export class Robot<
     const completed = this.improvedCompletion(session, freshTime);
     if (!completed) return;
     const { candle, atr, crossing } = completed;
-    if (!crossing || atr === null || !Number.isFinite(atr) || atr <= 0) return;
-    if (!this.improved.parameters.tradeWeekends) {
-      const day = new Date(
-        candle.time + timeframeMs[history.timeframe] + 3 * 60 * 60 * 1000,
-      ).getUTCDay();
-      if (day === 0 || day === 6) return;
-    }
-    const stop = candle.close - crossing * this.improved.parameters.stopAtrMultiplier * atr;
-    if (!Number.isFinite(stop) || stop <= 0) return;
+    const signalTime = candle.time + timeframeMs[history.timeframe];
+    if (
+      !actionableCrossing(crossing, candle.close, atr, this.improved.parameters) ||
+      !ordinaryTradingDay(signalTime, this.improved.parameters.tradeWeekends)
+    )
+      return;
     return {
       candleTime: candle.time,
-      signalTime: candle.time + timeframeMs[history.timeframe],
+      signalTime,
       targetPosition: crossing,
       strategy: {
         kind: 'improved-surfing',

@@ -44,13 +44,6 @@ export default [
     },
   },
   {
-    // Draft and asynchronous saved settings initialize these editable backtest forms.
-    files: ['src/pages/backtest/ui/BacktestPage.tsx'],
-    rules: {
-      'react-hooks/set-state-in-effect': 'off',
-    },
-  },
-  {
     // The controlled calendar derives "today" at render time to preserve its date-selection behavior.
     files: ['src/pages/backtest/ui/DateRangePicker.tsx'],
     rules: {

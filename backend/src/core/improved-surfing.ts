@@ -98,6 +98,22 @@ export function entryLots(freeMoney: number, close: number, pointValue: number) 
   return Number.isSafeInteger(lots) ? lots : 0;
 }
 
+export function ordinaryTradingDay(time: number, tradeWeekends: boolean) {
+  const day = new Date(time + 3 * 60 * 60 * 1000).getUTCDay();
+  return tradeWeekends || (day !== 0 && day !== 6);
+}
+
+export function actionableCrossing(
+  crossing: Side | null,
+  close: number,
+  atr: number | null,
+  parameters: ImprovedParameters,
+): crossing is Side {
+  if (!crossing || atr === null || !Number.isFinite(atr) || atr <= 0) return false;
+  const stop = close - crossing * parameters.stopAtrMultiplier * atr;
+  return Number.isFinite(stop) && stop > 0;
+}
+
 export function openImprovedPosition(
   side: Side,
   close: number,

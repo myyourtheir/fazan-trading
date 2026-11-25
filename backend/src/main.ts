@@ -5,6 +5,7 @@ import { surfingFeed } from './core/surfing-feed.js';
 import { createApp } from './api/app.js';
 import { OwnerAuth } from './core/auth.js';
 import { BacktestHistory } from './core/backtest-history.js';
+import { HistoricalBacktest } from './core/historical-backtest.js';
 import { DisplaySettings } from './core/display-settings.js';
 import { InvestSandbox } from './infra/invest-sandbox.js';
 import { MarketData } from './core/market-data.js';
@@ -69,6 +70,11 @@ async function main() {
       () => sandbox.marketDataToken(),
       Date.now,
       surfingStrategy.backtest,
+    );
+    const historicalBacktest = new HistoricalBacktest(
+      broker,
+      () => sandbox.marketDataToken(),
+      Date.now,
     );
     const strategy = new StrategySettings(
       new PostgresStrategySettings(db, auth.appAccountId!),
@@ -139,6 +145,7 @@ async function main() {
         marketSocket,
         robot,
         backtest,
+        historicalBacktest,
         secureCookies: COOKIE_SECURE === 'true',
         settings: { sandbox, strategy, change: (action) => robot.changeSettings(action) },
         displaySettings: new DisplaySettings(new PostgresDisplaySettings(db)),

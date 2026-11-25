@@ -17,17 +17,27 @@ import {
   priceChartTheme,
 } from '@/shared/lib/price-chart';
 import type { BacktestExecution, HistoricalCandle } from '../api/backtest-api';
+import type { Timeframe } from '@/entities/strategy';
+
+const intervalMs: Record<Timeframe, number> = {
+  '5m': 300_000,
+  '15m': 900_000,
+  '30m': 1_800_000,
+  '1h': 3_600_000,
+};
 
 export default function HistoryChart({
   candles,
   executions,
   dark,
   timeZone,
+  timeframe,
 }: {
   candles: HistoricalCandle[];
   executions: BacktestExecution[];
   dark: boolean;
   timeZone: string;
+  timeframe: Timeframe;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null);
@@ -72,13 +82,13 @@ export default function HistoryChart({
   useEffect(() => {
     markersRef.current?.setMarkers(
       executions.map(({ time, direction }) => ({
-        time: chartTime(time),
+        time: chartTime(Math.floor(time / intervalMs[timeframe]) * intervalMs[timeframe]),
         position: direction === 'buy' ? ('belowBar' as const) : ('aboveBar' as const),
         shape: direction === 'buy' ? ('arrowUp' as const) : ('arrowDown' as const),
         color: direction === 'buy' ? '#22c55e' : '#ef4444',
       })),
     );
-  }, [executions]);
+  }, [executions, timeframe]);
   useEffect(() => {
     if (!container.current) return;
     const theme = priceChartTheme(container.current);
